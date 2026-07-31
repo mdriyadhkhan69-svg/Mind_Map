@@ -120,6 +120,13 @@ import java.io.File
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.ui.input.pointer.positionChanged
+import kotlinx.coroutines.withTimeoutOrNull
 // ---- preset color swatches for node color / glow color pickers ----
 private val ColorSwatches = listOf(
     0xFF64FFDAL, 0xFFBB86FCL, 0xFFFF6E6EL, 0xFFFFD166L,
@@ -2104,6 +2111,7 @@ private fun MediaThumbnail(
     }
 }
 
+@androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.P)
 private fun loadAttachmentBitmap(context: android.content.Context, uri: Uri, maxSide: Int): Bitmap {
     val source = ImageDecoder.createSource(context.contentResolver, uri)
     return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
@@ -2696,7 +2704,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     LaunchedEffect(pageSwipeVersion) {
         delay(100)
         val distance = swipeDistance
-        if (abs(distance) < 1f || zoom > 1.01f || markerEnabled) return@LaunchedEffect
+        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked) || markerEnabled) return@LaunchedEffect
         val currentPreview = pagePreview ?: return@LaunchedEffect
         val navigationSize = (
             if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
@@ -2802,11 +2810,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     else -> null
                 }
                 val adjacentPreview = adjacentPage?.let(pageCache::get)
-                if (adjacentPreview != null && zoom <= 1.01f) {
+                if (adjacentPreview != null) {
                     val swipeProgress = (
-                        abs(swipeDistance) /
-                            (if (pageNavigationIsVertical) readerSize.height else readerSize.width).toFloat().coerceAtLeast(1f)
-                        ).coerceIn(0f, 1f)
+                            abs(swipeDistance) /
+                                    (if (pageNavigationIsVertical) readerSize.height else readerSize.width).toFloat().coerceAtLeast(1f)
+                            ).coerceIn(0f, 1f)
                     Image(
                         bitmap = adjacentPreview.bitmap.asImageBitmap(),
                         contentDescription = "Next PDF page",
@@ -2815,22 +2823,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             .fillMaxSize()
                             .padding(12.dp)
                             .graphicsLayer {
-                                if (pageNavigationIsVertical) {
-                                    translationY = if (swipeDistance < 0f) {
-                                        readerSize.height + swipeDistance
-                                    } else {
-                                        -readerSize.height + swipeDistance
-                                    }
-                                } else {
-                                    translationX = if (swipeDistance < 0f) {
-                                        readerSize.width + swipeDistance
-                                    } else {
-                                        -readerSize.width + swipeDistance
-                                    }
-                                }
-                                alpha = 0.45f + swipeProgress * 0.55f
-                                scaleX = 0.985f + swipeProgress * 0.015f
-                                scaleY = 0.985f + swipeProgress * 0.015f
+                                scaleX = zoom
+                                scaleY = zoom
+                                translationX = panOffset.x
+                                translationY = panOffset.y
+                                alpha = (0.15f + swipeProgress * 0.8f).coerceIn(0f, 0.95f)
                                 rotationZ = rotation
                             }
                     )
@@ -2877,92 +2874,131 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                         }
                                     )
                                 }
-                                .pointerInput("pdf-text-selection-${media.uri}", it.pageIndex, markerEnabled, pageContainerSize) {
-                                    if (!markerEnabled) {
-                                        detectDragGesturesAfterLongPress(
-                                            onDragStart = { start ->
-                                                val frame = pdfPageFrame(it, pageContainerSize)
-                                                activeTextSelection = frame.takeIf { it.contains(start) }?.let { start to start }
-                                            },
-                                            onDrag = { change, _ ->
-                                                activeTextSelection?.let { selection ->
-                                                    change.consume()
-                                                    val frame = pdfPageFrame(it, pageContainerSize)
-                                                    activeTextSelection = selection.first to frame.clamp(change.position)
-                                                }
-                                            },
-                                            onDragEnd = {
-                                                activeTextSelection?.let { selection ->
-                                                    val nativeSelection = selectedPdfText(it, selection.first, selection.second, pageContainerSize)
-                                                    if (nativeSelection.textBounds.isNotEmpty() && nativeSelection.selectedText.isNotBlank()) {
-                                                        selectedTextSelection = nativeSelection.copy(
-                                                            color = Color(0xFF3B82F6),
-                                                            opacity = 0.36f
-                                                        )
-                                                        selectedTextForActions = nativeSelection.selectedText
-                                                    } else {
-                                                        selectedTextSelection = null
-                                                        selectedTextForActions = null
+                                .pointerInput(
+                                    media.uri, it.pageIndex, markerEnabled, zoomLocked, rotation,
+                                    pageNavigationIsVertical, pageContainerSize
+                                ) {
+                                    val longPressTimeoutMs = 350L
+                                    val slop = viewConfiguration.touchSlop
+
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        val downTime = System.currentTimeMillis()
+                                        var multiTouch = false
+                                        var becameDrag = false
+                                        var longPressFired = false
+                                        var released = false
+
+                                        while (!multiTouch && !becameDrag && !longPressFired && !released) {
+                                            val remaining = longPressTimeoutMs - (System.currentTimeMillis() - downTime)
+                                            val event = if (remaining > 0) withTimeoutOrNull(remaining) { awaitPointerEvent() } else null
+
+                                            if (event == null) {
+                                                val stillDown = currentEvent.changes.any { it.id == down.id && it.pressed }
+                                                if (stillDown) longPressFired = true else released = true
+                                                break
+                                            }
+                                            val pressedCount = event.changes.count { it.pressed }
+                                            if (pressedCount > 1) { multiTouch = true; break }
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+                                            if (!change.pressed) { released = true; break }
+                                            if ((change.position - down.position).getDistance() > slop) { becameDrag = true; break }
+                                        }
+
+                                        when {
+                                            released -> Unit // সাধারণ tap — ওপরের tap detector এটা সামলাবে
+
+                                            longPressFired && !markerEnabled -> {
+                                                // ---- TEXT SELECTION (নীল হাইলাইট + কপি) ----
+                                                val preview = it
+                                                val frame = pdfPageFrame(preview, pageContainerSize)
+                                                if (frame.contains(down.position)) {
+                                                    activeTextSelection = down.position to down.position
+                                                    drag(down.id) { change ->
+                                                        change.consume()
+                                                        val clamped = frame.clamp(change.position)
+                                                        activeTextSelection = down.position to clamped
                                                     }
-                                                }
-                                                activeTextSelection = null
-                                            },
-                                            onDragCancel = { activeTextSelection = null }
-                                        )
-                                    }
-                                }
-                                .pointerInput(media.uri, it.pageIndex, markerEnabled, zoomLocked, rotation) {
-                                    if (markerEnabled) {
-                                        detectDragGestures(
-                                            onDragStart = { start ->
-                                                val frame = pdfPageFrame(it, pageContainerSize)
-                                                activeMarkerSelection = frame.takeIf { it.contains(start) }?.let { start to start }
-                                            },
-                                            onDrag = { change, _ ->
-                                                change.consume()
-                                                activeMarkerSelection?.let { selection ->
-                                                    activeMarkerSelection = selection.first to pdfPageFrame(it, pageContainerSize).clamp(change.position)
-                                                }
-                                            },
-                                            onDragEnd = {
-                                                activeMarkerSelection?.let { selection ->
-                                                    if (abs(selection.first.x - selection.second.x) > 8f || abs(selection.first.y - selection.second.y) > 8f) {
-                                                        val nativeSelection = selectedPdfText(it, selection.first, selection.second, pageContainerSize)
+                                                    activeTextSelection?.let { selection ->
+                                                        val nativeSelection = selectedPdfText(preview, selection.first, selection.second, pageContainerSize)
                                                         if (nativeSelection.textBounds.isNotEmpty() && nativeSelection.selectedText.isNotBlank()) {
-                                                            markerSelections = markerSelections + (
-                                                                it.pageIndex to (
-                                                                    markerSelections[it.pageIndex].orEmpty() +
-                                                                        nativeSelection.copy(color = markerColor, opacity = markerOpacity)
-                                                                    )
-                                                            )
-                                                            markerRedoSelections = markerRedoSelections + (it.pageIndex to emptyList())
+                                                            selectedTextSelection = nativeSelection.copy(color = Color(0xFF3B82F6), opacity = 0.36f)
+                                                            selectedTextForActions = nativeSelection.selectedText
+                                                        } else {
+                                                            selectedTextSelection = null
+                                                            selectedTextForActions = null
                                                         }
                                                     }
+                                                    activeTextSelection = null
                                                 }
-                                                activeMarkerSelection = null
-                                            },
-                                            onDragCancel = { activeMarkerSelection = null }
-                                        )
-                                    } else {
-                                        detectTransformGestures { _, panChange, zoomChange, _ ->
-                                            if (!zoomLocked) {
-                                                zoom = (zoom * zoomChange).coerceIn(0.7f, 5f)
                                             }
-                                            val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
-                                            val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
-                                            val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
-                                            if ((!zoomLocked && zoom > 1.01f) || (!isPrimarySwipe && abs(secondaryPan) > 0f)) {
-                                                panOffset = if (pageNavigationIsVertical) {
-                                                    panOffset.copy(x = panOffset.x + panChange.x)
-                                                } else {
-                                                    panOffset.copy(y = panOffset.y + panChange.y)
+
+                                            multiTouch -> {
+                                                // ---- দুই আঙুল: zoom + pan (marker on থাকলেও কাজ করবে) ----
+                                                do {
+                                                    val event = awaitPointerEvent()
+                                                    val zoomChange = event.calculateZoom()
+                                                    val panChange = event.calculatePan()
+                                                    if (!zoomLocked) {
+                                                        zoom = (zoom * zoomChange).coerceIn(0.7f, 5f)
+                                                    }
+                                                    panOffset += panChange
+                                                    event.changes.forEach { c -> if (c.positionChanged()) c.consume() }
+                                                } while (event.changes.any { it.pressed })
+                                            }
+
+                                            markerEnabled -> {
+                                                // ---- এক আঙুল: marker আঁকা (আগের মতোই) ----
+                                                val preview = it
+                                                val frame = pdfPageFrame(preview, pageContainerSize)
+                                                if (frame.contains(down.position)) {
+                                                    var selection = down.position to down.position
+                                                    activeMarkerSelection = selection
+                                                    drag(down.id) { change ->
+                                                        change.consume()
+                                                        selection = selection.first to frame.clamp(change.position)
+                                                        activeMarkerSelection = selection
+                                                    }
+                                                    if (abs(selection.first.x - selection.second.x) > 8f || abs(selection.first.y - selection.second.y) > 8f) {
+                                                        val nativeSelection = selectedPdfText(preview, selection.first, selection.second, pageContainerSize)
+                                                        if (nativeSelection.textBounds.isNotEmpty() && nativeSelection.selectedText.isNotBlank()) {
+                                                            markerSelections = markerSelections + (
+                                                                    preview.pageIndex to (
+                                                                            markerSelections[preview.pageIndex].orEmpty() +
+                                                                                    nativeSelection.copy(color = markerColor, opacity = markerOpacity)
+                                                                            )
+                                                                    )
+                                                            markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
+                                                        }
+                                                    }
+                                                    activeMarkerSelection = null
                                                 }
-                                            } else if (isPrimarySwipe) {
-                                                val swipeLimit = (
-                                                    if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
-                                                ).toFloat().coerceAtLeast(1f) * 0.96f
-                                                swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
-                                                pageSwipeVersion += 1
+                                            }
+
+                                            else -> {
+                                                // ---- এক আঙুল: pan (zoom করা থাকলে) অথবা swipe (আগের মতোই, transition অপরিবর্তিত) ----
+                                                var lastPos = down.position
+                                                drag(down.id) { change ->
+                                                    val panChange = change.position - lastPos
+                                                    lastPos = change.position
+                                                    change.consume()
+                                                    val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
+                                                    val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
+                                                    val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
+                                                    if ((!zoomLocked && zoom > 1.01f) || (!isPrimarySwipe && abs(secondaryPan) > 0f)) {
+                                                        panOffset = if (pageNavigationIsVertical) {
+                                                            panOffset.copy(x = panOffset.x + panChange.x)
+                                                        } else {
+                                                            panOffset.copy(y = panOffset.y + panChange.y)
+                                                        }
+                                                    } else if (isPrimarySwipe) {
+                                                        val swipeLimit = (
+                                                                if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
+                                                                ).toFloat().coerceAtLeast(1f) * 0.96f
+                                                        swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
+                                                        pageSwipeVersion += 1
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2970,8 +3006,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 .graphicsLayer {
                                     scaleX = zoom
                                     scaleY = zoom
-                                    translationX = panOffset.x + if (!pageNavigationIsVertical && zoom <= 1.01f) swipeDistance else 0f
-                                    translationY = panOffset.y + if (pageNavigationIsVertical && zoom <= 1.01f) swipeDistance else 0f
+                                    translationX = panOffset.x + if (!pageNavigationIsVertical) swipeDistance else 0f
+                                    translationY = panOffset.y + if (pageNavigationIsVertical) swipeDistance else 0f
                                     rotationZ = rotation
                                 }
                         ) {

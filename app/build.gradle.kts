@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.mindmap"
-        minSdk = 26
+        minSdk = 28
         targetSdk = 37
         versionCode = 23
         versionName = "3.2"
