@@ -2201,6 +2201,108 @@ private data class PdfTextContent(
     val text: String,
     val bounds: List<android.graphics.RectF>
 )
+private data class PositionedWord(
+    val text: String,
+    val bound: android.graphics.RectF,
+    val lineIndex: Int
+)
+
+private data class PageWordIndex(val words: List<PositionedWord>) {
+    fun nearestIndex(pagePoint: Offset): Int? {
+        if (words.isEmpty()) return null
+        return words.indices.minByOrNull { idx ->
+            val b = words[idx].bound
+            val cx = (b.left + b.right) / 2f
+            val cy = (b.top + b.bottom) / 2f
+            val dx = pagePoint.x - cx
+            val dy = pagePoint.y - cy
+            dx * dx + dy * dy
+        }
+    }
+}
+
+private data class TextSelectionRange(val anchorIndex: Int, val focusIndex: Int) {
+    val startIndex: Int get() = minOf(anchorIndex, focusIndex)
+    val endIndex: Int get() = maxOf(anchorIndex, focusIndex)
+}
+
+private fun buildPageWordIndex(textContents: List<PdfTextContent>): PageWordIndex {
+    val rawWords = textContents.flatMap { content -> content.bounds.map { bound -> content.text to bound } }
+    if (rawWords.isEmpty()) return PageWordIndex(emptyList())
+
+    val sortedByTop = rawWords.sortedBy { it.second.top }
+    val avgHeight = sortedByTop.map { it.second.height() }.average().toFloat().coerceAtLeast(1f)
+    val lineThreshold = avgHeight * 0.6f
+
+    data class LineCluster(
+        val items: MutableList<Pair<String, android.graphics.RectF>>,
+        var top: Float,
+        var bottom: Float
+    )
+
+    val clusters = mutableListOf<LineCluster>()
+    sortedByTop.forEach { item ->
+        val bound = item.second
+        val centerY = (bound.top + bound.bottom) / 2f
+        val cluster = clusters.firstOrNull { centerY in (it.top - lineThreshold)..(it.bottom + lineThreshold) }
+        if (cluster != null) {
+            cluster.items += item
+            cluster.top = minOf(cluster.top, bound.top)
+            cluster.bottom = maxOf(cluster.bottom, bound.bottom)
+        } else {
+            clusters += LineCluster(mutableListOf(item), bound.top, bound.bottom)
+        }
+    }
+
+    val orderedWords = clusters.sortedBy { it.top }.flatMapIndexed { lineIndex, cluster ->
+        cluster.items.sortedBy { it.second.left }.map { (text, bound) ->
+            PositionedWord(text, bound, lineIndex)
+        }
+    }
+    return PageWordIndex(orderedWords)
+}
+
+private fun screenToPageSpace(preview: PdfPagePreview, screenPoint: Offset, containerSize: IntSize): Offset {
+    val imageScale = minOf(
+        containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
+        containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
+    )
+    val imageLeft = (containerSize.width - preview.bitmap.width * imageScale) / 2f
+    val imageTop = (containerSize.height - preview.bitmap.height * imageScale) / 2f
+    val bitmapX = (screenPoint.x - imageLeft) / imageScale.coerceAtLeast(0.0001f)
+    val bitmapY = (screenPoint.y - imageTop) / imageScale.coerceAtLeast(0.0001f)
+    val pageX = bitmapX * preview.pageWidth / preview.bitmap.width.coerceAtLeast(1)
+    val pageY = bitmapY * preview.pageHeight / preview.bitmap.height.coerceAtLeast(1)
+    return Offset(pageX, pageY)
+}
+
+private fun pageRectToScreen(preview: PdfPagePreview, bound: android.graphics.RectF, containerSize: IntSize): android.graphics.RectF {
+    val imageScale = minOf(
+        containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
+        containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
+    )
+    val imageLeft = (containerSize.width - preview.bitmap.width * imageScale) / 2f
+    val imageTop = (containerSize.height - preview.bitmap.height * imageScale) / 2f
+    val left = imageLeft + bound.left * preview.bitmap.width / preview.pageWidth.coerceAtLeast(1) * imageScale
+    val top = imageTop + bound.top * preview.bitmap.height / preview.pageHeight.coerceAtLeast(1) * imageScale
+    val right = imageLeft + bound.right * preview.bitmap.width / preview.pageWidth.coerceAtLeast(1) * imageScale
+    val bottom = imageTop + bound.bottom * preview.bitmap.height / preview.pageHeight.coerceAtLeast(1) * imageScale
+    return android.graphics.RectF(left, top, right, bottom)
+}
+
+private fun TextSelectionRange.toMarkerSelection(
+    index: PageWordIndex,
+    preview: PdfPagePreview,
+    containerSize: IntSize,
+    color: Color,
+    opacity: Float
+): PdfMarkerSelection {
+    val safeEnd = (endIndex + 1).coerceAtMost(index.words.size)
+    val words = if (startIndex in index.words.indices) index.words.subList(startIndex, safeEnd) else emptyList()
+    val bounds = words.map { pageRectToScreen(preview, it.bound, containerSize) }
+    val text = words.joinToString(" ") { it.text }
+    return PdfMarkerSelection(color = color, start = Offset.Zero, end = Offset.Zero, opacity = opacity, textBounds = bounds, selectedText = text)
+}
 
 private data class PdfViewState(
     val isLocked: Boolean = false,
@@ -2517,66 +2619,6 @@ private fun loadPdfPage(context: android.content.Context, uri: Uri, requestedPag
     }
 }
 
-private fun selectedPdfText(
-    preview: PdfPagePreview,
-    start: Offset,
-    end: Offset,
-    containerSize: IntSize
-): PdfMarkerSelection {
-    if (preview.textContents.isEmpty() || containerSize.width <= 0 || containerSize.height <= 0) {
-        return PdfMarkerSelection(Color.Transparent, start, end, 0f)
-    }
-    val imageScale = minOf(
-        containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
-        containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
-    )
-    val imageLeft = (containerSize.width - preview.bitmap.width * imageScale) / 2f
-    val imageTop = (containerSize.height - preview.bitmap.height * imageScale) / 2f
-    val dragWidth = abs(end.x - start.x)
-    val dragHeight = abs(end.y - start.y)
-    val isPointSelection = dragWidth < 18f && dragHeight < 18f
-    val selectedLeft = min(start.x, end.x)
-    val selectedRight = maxOf(start.x, end.x)
-    val selectedTop = min(start.y, end.y)
-    val selectedBottom = maxOf(start.y, end.y)
-    val selectedCenter = Offset((start.x + end.x) / 2f, (start.y + end.y) / 2f)
-    data class PositionedText(
-        val content: PdfTextContent,
-        val bounds: android.graphics.RectF,
-        val center: Offset
-    )
-    val positionedText = preview.textContents.flatMap { content ->
-        content.bounds.map { bound ->
-            val left = imageLeft + bound.left * preview.bitmap.width / preview.pageWidth.coerceAtLeast(1) * imageScale
-            val top = imageTop + bound.top * preview.bitmap.height / preview.pageHeight.coerceAtLeast(1) * imageScale
-            val right = imageLeft + bound.right * preview.bitmap.width / preview.pageWidth.coerceAtLeast(1) * imageScale
-            val bottom = imageTop + bound.bottom * preview.bitmap.height / preview.pageHeight.coerceAtLeast(1) * imageScale
-            PositionedText(content, bound, Offset((left + right) / 2f, (top + bottom) / 2f))
-        }
-    }
-    val selectedItems = if (isPointSelection) {
-        positionedText.minByOrNull { item ->
-            val deltaX = item.center.x - selectedCenter.x
-            val deltaY = item.center.y - selectedCenter.y
-            deltaX * deltaX + deltaY * deltaY
-        }?.let(::listOf).orEmpty()
-    } else {
-        positionedText.filter { item ->
-            item.center.x in selectedLeft..selectedRight && item.center.y in selectedTop..selectedBottom
-        }
-    }
-    val selectedBounds = selectedItems.mapTo(mutableListOf()) { it.bounds }
-    val selectedWords = selectedItems.map { it.content.text }.distinct()
-    return PdfMarkerSelection(
-        color = Color.Transparent,
-        start = start,
-        end = end,
-        opacity = 0f,
-        textBounds = selectedBounds,
-        selectedText = selectedWords.joinToString(" ")
-    )
-}
-
 private data class PdfPageFrame(val left: Float, val top: Float, val right: Float, val bottom: Float) {
     fun contains(offset: Offset): Boolean = offset.x in left..right && offset.y in top..bottom
     fun clamp(offset: Offset): Offset = Offset(offset.x.coerceIn(left, right), offset.y.coerceIn(top, bottom))
@@ -2645,8 +2687,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var markerColorPaletteVisible by remember(media.uri) { mutableStateOf(false) }
     var markerSelections by remember(media.uri) { mutableStateOf<Map<Int, List<PdfMarkerSelection>>>(emptyMap()) }
     var markerRedoSelections by remember(media.uri) { mutableStateOf<Map<Int, List<PdfMarkerSelection>>>(emptyMap()) }
-    var activeMarkerSelection by remember { mutableStateOf<Pair<Offset, Offset>?>(null) }
+    var activeMarkerSelection by remember { mutableStateOf<PdfMarkerSelection?>(null) }
     var activeTextSelection by remember { mutableStateOf<Pair<Offset, Offset>?>(null) }
+    var pageWordIndex by remember(media.uri) { mutableStateOf<PageWordIndex?>(null) }
     var selectedTextSelection by remember(media.uri) { mutableStateOf<PdfMarkerSelection?>(null) }
     var selectedTextForActions by remember(media.uri) { mutableStateOf<String?>(null) }
     var copyNotice by remember(media.uri) { mutableStateOf<String?>(null) }
@@ -2785,6 +2828,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
             }
         }
     }
+    LaunchedEffect(pagePreview?.pageIndex, pagePreview?.textContents) {
+        pageWordIndex = pagePreview?.textContents?.takeIf { it.isNotEmpty() }?.let(::buildPageWordIndex)
+    }
 
     LaunchedEffect(media.uri, zoomLocked, requestedPage, zoom, panOffset, rotation) {
         if (zoomLocked) {
@@ -2909,21 +2955,29 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             released -> Unit // সাধারণ tap — ওপরের tap detector এটা সামলাবে
 
                                             longPressFired && !markerEnabled -> {
-                                                // ---- TEXT SELECTION (নীল হাইলাইট + কপি) ----
+                                                // ---- TEXT SELECTION (reading-order word-range + কপি) ----
                                                 val preview = it
                                                 val frame = pdfPageFrame(preview, pageContainerSize)
-                                                if (frame.contains(down.position)) {
-                                                    activeTextSelection = down.position to down.position
-                                                    drag(down.id) { change ->
-                                                        change.consume()
-                                                        val clamped = frame.clamp(change.position)
-                                                        activeTextSelection = down.position to clamped
-                                                    }
-                                                    activeTextSelection?.let { selection ->
-                                                        val nativeSelection = selectedPdfText(preview, selection.first, selection.second, pageContainerSize)
-                                                        if (nativeSelection.textBounds.isNotEmpty() && nativeSelection.selectedText.isNotBlank()) {
-                                                            selectedTextSelection = nativeSelection.copy(color = Color(0xFF3B82F6), opacity = 0.36f)
-                                                            selectedTextForActions = nativeSelection.selectedText
+                                                val index = pageWordIndex
+                                                if (index != null && index.words.isNotEmpty() && frame.contains(down.position)) {
+                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, down.position, pageContainerSize))
+                                                    if (anchorIdx != null) {
+                                                        var range = TextSelectionRange(anchorIdx, anchorIdx)
+                                                        activeTextSelection = down.position to down.position
+                                                        drag(down.id) { change ->
+                                                            change.consume()
+                                                            val clamped = frame.clamp(change.position)
+                                                            activeTextSelection = down.position to clamped
+                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clamped, pageContainerSize))
+                                                            if (focusIdx != null) {
+                                                                range = TextSelectionRange(anchorIdx, focusIdx)
+                                                                selectedTextSelection = range.toMarkerSelection(index, preview, pageContainerSize, Color(0xFF3B82F6), 0.36f)
+                                                            }
+                                                        }
+                                                        val finalSelection = range.toMarkerSelection(index, preview, pageContainerSize, Color(0xFF3B82F6), 0.36f)
+                                                        if (finalSelection.textBounds.isNotEmpty() && finalSelection.selectedText.isNotBlank()) {
+                                                            selectedTextSelection = finalSelection
+                                                            selectedTextForActions = finalSelection.selectedText
                                                         } else {
                                                             selectedTextSelection = null
                                                             selectedTextForActions = null
@@ -2948,30 +3002,33 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             }
 
                                             markerEnabled -> {
-                                                // ---- এক আঙুল: marker আঁকা (আগের মতোই) ----
+                                                // ---- এক আঙুল: marker (word-based reading-order selection, marker রঙে) ----
                                                 val preview = it
                                                 val frame = pdfPageFrame(preview, pageContainerSize)
-                                                if (frame.contains(down.position)) {
-                                                    var selection = down.position to down.position
-                                                    activeMarkerSelection = selection
-                                                    drag(down.id) { change ->
-                                                        change.consume()
-                                                        selection = selection.first to frame.clamp(change.position)
-                                                        activeMarkerSelection = selection
-                                                    }
-                                                    if (abs(selection.first.x - selection.second.x) > 8f || abs(selection.first.y - selection.second.y) > 8f) {
-                                                        val nativeSelection = selectedPdfText(preview, selection.first, selection.second, pageContainerSize)
-                                                        if (nativeSelection.textBounds.isNotEmpty() && nativeSelection.selectedText.isNotBlank()) {
+                                                val index = pageWordIndex
+                                                if (index != null && index.words.isNotEmpty() && frame.contains(down.position)) {
+                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, down.position, pageContainerSize))
+                                                    if (anchorIdx != null) {
+                                                        var range = TextSelectionRange(anchorIdx, anchorIdx)
+                                                        activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
+                                                        drag(down.id) { change ->
+                                                            change.consume()
+                                                            val clamped = frame.clamp(change.position)
+                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clamped, pageContainerSize))
+                                                            if (focusIdx != null) {
+                                                                range = TextSelectionRange(anchorIdx, focusIdx)
+                                                                activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
+                                                            }
+                                                        }
+                                                        val committed = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
+                                                        if (committed.textBounds.isNotEmpty() && committed.selectedText.isNotBlank()) {
                                                             markerSelections = markerSelections + (
-                                                                    preview.pageIndex to (
-                                                                            markerSelections[preview.pageIndex].orEmpty() +
-                                                                                    nativeSelection.copy(color = markerColor, opacity = markerOpacity)
-                                                                            )
+                                                                    preview.pageIndex to (markerSelections[preview.pageIndex].orEmpty() + committed)
                                                                     )
                                                             markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
                                                         }
+                                                        activeMarkerSelection = null
                                                     }
-                                                    activeMarkerSelection = null
                                                 }
                                             }
 
@@ -3019,15 +3076,10 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             )
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 (markerSelections[it.pageIndex].orEmpty() +
-                                    listOfNotNull(
-                                        selectedTextSelection,
-                                        activeMarkerSelection?.let { selection ->
-                                            PdfMarkerSelection(markerColor, selection.first, selection.second, markerOpacity)
-                                        },
-                                        activeTextSelection?.let { selection ->
-                                            PdfMarkerSelection(Color(0xFF3B82F6), selection.first, selection.second, 0.30f)
-                                        }
-                                    ))
+                                        listOfNotNull(
+                                            selectedTextSelection,
+                                            activeMarkerSelection
+                                        ))
                                     .forEach { selection ->
                                         if (selection.textBounds.isNotEmpty()) {
                                             val imageScale = minOf(
