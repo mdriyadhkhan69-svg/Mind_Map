@@ -2263,6 +2263,26 @@ private fun buildPageWordIndex(textContents: List<PdfTextContent>): PageWordInde
 }
 
 private fun screenToPageSpace(preview: PdfPagePreview, screenPoint: Offset, containerSize: IntSize): Offset {
+    private fun untransformTouchPoint(
+        point: Offset,
+        containerSize: IntSize,
+        zoom: Float,
+        panOffset: Offset,
+        rotationDegrees: Float
+    ): Offset {
+        val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+        val afterTranslation = point - panOffset
+        val relative = afterTranslation - center
+        val radians = Math.toRadians(-rotationDegrees.toDouble())
+        val cos = kotlin.math.cos(radians).toFloat()
+        val sin = kotlin.math.sin(radians).toFloat()
+        val rotated = Offset(
+            relative.x * cos - relative.y * sin,
+            relative.x * sin + relative.y * cos
+        )
+        val scaled = rotated / zoom.coerceAtLeast(0.01f)
+        return scaled + center
+    }
     val imageScale = minOf(
         containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
         containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
@@ -2299,7 +2319,7 @@ private fun TextSelectionRange.toMarkerSelection(
 ): PdfMarkerSelection {
     val safeEnd = (endIndex + 1).coerceAtMost(index.words.size)
     val words = if (startIndex in index.words.indices) index.words.subList(startIndex, safeEnd) else emptyList()
-    val bounds = words.map { pageRectToScreen(preview, it.bound, containerSize) }
+    val bounds = words.map { it.bound }
     val text = words.joinToString(" ") { it.text }
     return PdfMarkerSelection(color = color, start = Offset.Zero, end = Offset.Zero, opacity = opacity, textBounds = bounds, selectedText = text)
 }
@@ -2959,16 +2979,17 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                 val preview = it
                                                 val frame = pdfPageFrame(preview, pageContainerSize)
                                                 val index = pageWordIndex
-                                                if (index != null && index.words.isNotEmpty() && frame.contains(down.position)) {
-                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, down.position, pageContainerSize))
+                                                val touchPoint = untransformTouchPoint(down.position, pageContainerSize, zoom, panOffset, rotation)
+                                                if (index != null && index.words.isNotEmpty() && frame.contains(touchPoint)) {
+                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, touchPoint, pageContainerSize))
                                                     if (anchorIdx != null) {
                                                         var range = TextSelectionRange(anchorIdx, anchorIdx)
                                                         activeTextSelection = down.position to down.position
                                                         drag(down.id) { change ->
                                                             change.consume()
-                                                            val clamped = frame.clamp(change.position)
-                                                            activeTextSelection = down.position to clamped
-                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clamped, pageContainerSize))
+                                                            val clampedTouch = frame.clamp(untransformTouchPoint(change.position, pageContainerSize, zoom, panOffset, rotation))
+                                                            activeTextSelection = down.position to change.position
+                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clampedTouch, pageContainerSize))
                                                             if (focusIdx != null) {
                                                                 range = TextSelectionRange(anchorIdx, focusIdx)
                                                                 selectedTextSelection = range.toMarkerSelection(index, preview, pageContainerSize, Color(0xFF3B82F6), 0.36f)
@@ -3006,15 +3027,16 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                 val preview = it
                                                 val frame = pdfPageFrame(preview, pageContainerSize)
                                                 val index = pageWordIndex
-                                                if (index != null && index.words.isNotEmpty() && frame.contains(down.position)) {
-                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, down.position, pageContainerSize))
+                                                val touchPoint = untransformTouchPoint(down.position, pageContainerSize, zoom, panOffset, rotation)
+                                                if (index != null && index.words.isNotEmpty() && frame.contains(touchPoint)) {
+                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, touchPoint, pageContainerSize))
                                                     if (anchorIdx != null) {
                                                         var range = TextSelectionRange(anchorIdx, anchorIdx)
                                                         activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
                                                         drag(down.id) { change ->
                                                             change.consume()
-                                                            val clamped = frame.clamp(change.position)
-                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clamped, pageContainerSize))
+                                                            val clampedTouch = frame.clamp(untransformTouchPoint(change.position, pageContainerSize, zoom, panOffset, rotation))
+                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clampedTouch, pageContainerSize))
                                                             if (focusIdx != null) {
                                                                 range = TextSelectionRange(anchorIdx, focusIdx)
                                                                 activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
@@ -5264,20 +5286,6 @@ private fun PdfLibraryHomeDialog(
                         }
                     }
 
-                    AnimatedVisibility(
-                        visible = openedSectionId == null && selectingForSectionId == null && activeTab == "files" && isPdfSearchVisible,
-                        enter = expandVertically(tween(180)) + fadeIn(tween(160)),
-                        exit = shrinkVertically(tween(160)) + fadeOut(tween(130))
-                    ) {
-                        SmartPdfSearchBar(
-                            query = pdfSearchQuery,
-                            onQueryChange = { pdfSearchQuery = it },
-                            textColor = libraryText,
-                            surfaceColor = librarySectionBackground,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                        )
-                    }
-
                     if (!hasAllFilesAccess) {
                         Column(modifier = Modifier.padding(20.dp)) {
                             Text("Allow all-files access to browse phone PDFs", color = Color.LightGray)
@@ -5356,14 +5364,14 @@ private fun PdfLibraryHomeDialog(
                             }
                         }
                     } else {
-                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            val tabWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+                        Box(modifier = Modifier.fillMaxSize()) {
                             val previewTab = when {
                                 tabSwipeDistance < 0f && activeTab == "files" -> "sections"
                                 tabSwipeDistance > 0f && activeTab == "sections" -> "files"
                                 else -> null
                             }
                             previewTab?.let { tab ->
+                                val swipeProgress = (abs(tabSwipeDistance) / tabPageWidth).coerceIn(0f, 1f)
                                 PdfLibrarySwipePreview(
                                     tab = tab,
                                     files = files,
@@ -5374,11 +5382,7 @@ private fun PdfLibraryHomeDialog(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .graphicsLayer {
-                                            translationX = if (tabSwipeDistance < 0f) {
-                                                tabWidthPx + tabSwipeDistance
-                                            } else {
-                                                -tabWidthPx + tabSwipeDistance
-                                            }
+                                            alpha = (0.15f + swipeProgress * 0.8f).coerceIn(0f, 0.95f)
                                         }
                                 )
                             }
@@ -5499,14 +5503,31 @@ private fun PdfLibraryHomeDialog(
                             }
                         }
                             } else {
-                                PdfDeviceFileList(
-                                    files = homeFiles,
-                                    selectedPaths = emptySet(),
-                                    selectionEnabled = false,
-                                    onSelectChange = { _, _ -> },
-                                    onOpen = onFileClick,
-                                    onDoubleTap = { file -> if (file.extension == "pdf") fileActionFor = file }
-                                )
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    AnimatedVisibility(
+                                        visible = isPdfSearchVisible,
+                                        enter = expandVertically(tween(180)) + fadeIn(tween(160)),
+                                        exit = shrinkVertically(tween(160)) + fadeOut(tween(130))
+                                    ) {
+                                        SmartPdfSearchBar(
+                                            query = pdfSearchQuery,
+                                            onQueryChange = { pdfSearchQuery = it },
+                                            textColor = libraryText,
+                                            surfaceColor = librarySectionBackground,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        PdfDeviceFileList(
+                                            files = homeFiles,
+                                            selectedPaths = emptySet(),
+                                            selectionEnabled = false,
+                                            onSelectChange = { _, _ -> },
+                                            onOpen = onFileClick,
+                                            onDoubleTap = { file -> if (file.extension == "pdf") fileActionFor = file }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
