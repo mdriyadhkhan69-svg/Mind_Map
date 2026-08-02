@@ -2262,27 +2262,28 @@ private fun buildPageWordIndex(textContents: List<PdfTextContent>): PageWordInde
     return PageWordIndex(orderedWords)
 }
 
+private fun untransformTouchPoint(
+    point: Offset,
+    containerSize: IntSize,
+    zoom: Float,
+    panOffset: Offset,
+    rotationDegrees: Float
+): Offset {
+    val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+    val afterTranslation = point - panOffset
+    val relative = afterTranslation - center
+    val radians = Math.toRadians(-rotationDegrees.toDouble())
+    val cos = kotlin.math.cos(radians).toFloat()
+    val sin = kotlin.math.sin(radians).toFloat()
+    val rotated = Offset(
+        relative.x * cos - relative.y * sin,
+        relative.x * sin + relative.y * cos
+    )
+    val scaled = rotated / zoom.coerceAtLeast(0.01f)
+    return scaled + center
+}
+
 private fun screenToPageSpace(preview: PdfPagePreview, screenPoint: Offset, containerSize: IntSize): Offset {
-    private fun untransformTouchPoint(
-        point: Offset,
-        containerSize: IntSize,
-        zoom: Float,
-        panOffset: Offset,
-        rotationDegrees: Float
-    ): Offset {
-        val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-        val afterTranslation = point - panOffset
-        val relative = afterTranslation - center
-        val radians = Math.toRadians(-rotationDegrees.toDouble())
-        val cos = kotlin.math.cos(radians).toFloat()
-        val sin = kotlin.math.sin(radians).toFloat()
-        val rotated = Offset(
-            relative.x * cos - relative.y * sin,
-            relative.x * sin + relative.y * cos
-        )
-        val scaled = rotated / zoom.coerceAtLeast(0.01f)
-        return scaled + center
-    }
     val imageScale = minOf(
         containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
         containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
@@ -2553,6 +2554,87 @@ private fun clearPdfViewState(context: android.content.Context, uri: String) {
         .remove("${key}_rotation")
         .apply()
 }
+private fun pdfMarkerStorageKey(uri: String) = "pdf_markers_${uri.hashCode().toUInt().toString(16)}"
+
+private fun savePdfMarkers(context: android.content.Context, uri: String, selections: Map<Int, List<PdfMarkerSelection>>) {
+    val root = org.json.JSONObject()
+    selections.forEach { (pageIndex, list) ->
+        if (list.isEmpty()) return@forEach
+        val pageArray = org.json.JSONArray()
+        list.forEach { selection ->
+            val argb = (((selection.color.alpha * 255f).roundToInt().coerceIn(0, 255)) shl 24) or
+                    (((selection.color.red * 255f).roundToInt().coerceIn(0, 255)) shl 16) or
+                    (((selection.color.green * 255f).roundToInt().coerceIn(0, 255)) shl 8) or
+                    ((selection.color.blue * 255f).roundToInt().coerceIn(0, 255))
+            val boundsArray = org.json.JSONArray()
+            selection.textBounds.forEach { bound ->
+                val boundArray = org.json.JSONArray()
+                boundArray.put(bound.left.toDouble())
+                boundArray.put(bound.top.toDouble())
+                boundArray.put(bound.right.toDouble())
+                boundArray.put(bound.bottom.toDouble())
+                boundsArray.put(boundArray)
+            }
+            pageArray.put(
+                org.json.JSONObject()
+                    .put("colorArgb", argb.toLong() and 0xFFFFFFFFL)
+                    .put("opacity", selection.opacity.toDouble())
+                    .put("text", selection.selectedText)
+                    .put("bounds", boundsArray)
+            )
+        }
+        root.put(pageIndex.toString(), pageArray)
+    }
+    context.getSharedPreferences("pdf_markers", android.content.Context.MODE_PRIVATE)
+        .edit()
+        .putString(pdfMarkerStorageKey(uri), root.toString())
+        .apply()
+}
+
+private fun loadPdfMarkers(context: android.content.Context, uri: String): Map<Int, List<PdfMarkerSelection>> = runCatching {
+    val raw = context.getSharedPreferences("pdf_markers", android.content.Context.MODE_PRIVATE)
+        .getString(pdfMarkerStorageKey(uri), null) ?: return@runCatching emptyMap()
+    val root = org.json.JSONObject(raw)
+    val result = mutableMapOf<Int, List<PdfMarkerSelection>>()
+    root.keys().forEach { key ->
+        val pageIndex = key.toIntOrNull() ?: return@forEach
+        val pageArray = root.getJSONArray(key)
+        val list = buildList {
+            repeat(pageArray.length()) { i ->
+                val obj = pageArray.getJSONObject(i)
+                val colorArgb = obj.optLong("colorArgb", 0xFFFFEB3BL)
+                val opacity = obj.optDouble("opacity", 0.36).toFloat()
+                val text = obj.optString("text", "")
+                val boundsArray = obj.optJSONArray("bounds") ?: org.json.JSONArray()
+                val bounds = buildList {
+                    repeat(boundsArray.length()) { bi ->
+                        val boundArray = boundsArray.getJSONArray(bi)
+                        add(
+                            android.graphics.RectF(
+                                boundArray.getDouble(0).toFloat(),
+                                boundArray.getDouble(1).toFloat(),
+                                boundArray.getDouble(2).toFloat(),
+                                boundArray.getDouble(3).toFloat()
+                            )
+                        )
+                    }
+                }
+                add(
+                    PdfMarkerSelection(
+                        color = Color(colorArgb),
+                        start = Offset.Zero,
+                        end = Offset.Zero,
+                        opacity = opacity,
+                        textBounds = bounds,
+                        selectedText = text
+                    )
+                )
+            }
+        }
+        result[pageIndex] = list
+    }
+    result
+}.getOrDefault(emptyMap())
 
 private fun materializePdfForRendering(context: android.content.Context, uri: Uri): File {
     if (uri.scheme == "file") {
@@ -2705,7 +2787,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var markerOpacity by remember(media.uri) { mutableFloatStateOf(0.38f) }
     var markerToolsVisible by remember(media.uri) { mutableStateOf(false) }
     var markerColorPaletteVisible by remember(media.uri) { mutableStateOf(false) }
-    var markerSelections by remember(media.uri) { mutableStateOf<Map<Int, List<PdfMarkerSelection>>>(emptyMap()) }
+    var markerSelections by remember(media.uri) { mutableStateOf(loadPdfMarkers(context, media.uri)) }
     var markerRedoSelections by remember(media.uri) { mutableStateOf<Map<Int, List<PdfMarkerSelection>>>(emptyMap()) }
     var activeMarkerSelection by remember { mutableStateOf<PdfMarkerSelection?>(null) }
     var activeTextSelection by remember { mutableStateOf<Pair<Offset, Offset>?>(null) }
@@ -2719,6 +2801,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var pageSwipeVersion by remember(media.uri) { mutableIntStateOf(0) }
     var skipPageAnimation by remember(media.uri) { mutableStateOf(false) }
     var markerFabOffset by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    var markerFabPressed by remember(media.uri) { mutableStateOf(false) }
     var readerSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     val pageCache = remember(media.uri) { mutableStateMapOf<Int, PdfPagePreview>() }
     val pdfLoadScope = rememberCoroutineScope()
@@ -3276,6 +3359,14 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     },
                                     modifier = Modifier.size(34.dp)
                                 ) { Text("↷", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                                TextButton(
+                                    enabled = markerSelections.values.any { it.isNotEmpty() },
+                                    onClick = {
+                                        savePdfMarkers(context, media.uri, markerSelections)
+                                        copyNotice = "Saved"
+                                    },
+                                    modifier = Modifier.size(34.dp)
+                                ) { Text("💾", fontSize = 16.sp) }
                                 if (pageNavigationIsVertical) {
                                     Box(modifier = Modifier.width(74.dp)) {
                                         StyledValueSlider(
@@ -3355,16 +3446,23 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             }
                         }
                     }
+                    val markerFabScale by animateFloatAsState(if (markerFabPressed) 0.87f else 1f, label = "markerFabScale")
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .offset { IntOffset(markerFabOffset.x.roundToInt(), markerFabOffset.y.roundToInt()) }
                             .size(54.dp)
+                            .graphicsLayer { scaleX = markerFabScale; scaleY = markerFabScale }
+                            .shadow(elevation = 12.dp, shape = CircleShape, ambientColor = markerColor, spotColor = markerColor)
                             .clip(CircleShape)
-                            .background(markerColor)
-                            .border(2.dp, Color.White.copy(alpha = 0.86f), CircleShape)
+                            .background(Brush.linearGradient(listOf(markerColor.copy(alpha = 0.82f), markerColor)))
+                            .border(2.dp, Color.White.copy(alpha = 0.9f), CircleShape)
                             .pointerInput("marker-drag-${media.uri}") {
-                                detectDragGestures { change, amount ->
+                                detectDragGestures(
+                                    onDragStart = { markerFabPressed = true },
+                                    onDragEnd = { markerFabPressed = false },
+                                    onDragCancel = { markerFabPressed = false }
+                                ) { change, amount ->
                                     change.consume()
                                     markerFabOffset = Offset(
                                         (markerFabOffset.x + amount.x).coerceIn((-readerSize.width + markerFabSizePx).coerceAtMost(0f), 0f),
@@ -3373,10 +3471,17 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 }
                             }
                             .pointerInput("marker-tap-${media.uri}") {
-                                detectTapGestures(onTap = {
-                                    markerToolsVisible = !markerToolsVisible
-                                    markerColorPaletteVisible = false
-                                })
+                                detectTapGestures(
+                                    onPress = {
+                                        markerFabPressed = true
+                                        tryAwaitRelease()
+                                        markerFabPressed = false
+                                    },
+                                    onTap = {
+                                        markerToolsVisible = !markerToolsVisible
+                                        markerColorPaletteVisible = false
+                                    }
+                                )
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -4936,6 +5041,7 @@ private fun PdfLibrarySwipePreview(
     backgroundColor: Color,
     textColor: Color,
     sectionTextColor: Color,
+    searchBarVisible: Boolean,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -4944,6 +5050,16 @@ private fun PdfLibrarySwipePreview(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
+        if (tab == "files" && searchBarVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(backgroundColor.copy(alpha = 0.001f))
+            )
+            Spacer(Modifier.height(4.dp))
+        }
         if (tab == "sections") {
             sections.forEach { section ->
                 Row(
@@ -5179,14 +5295,18 @@ private fun PdfLibraryHomeDialog(
                                         }
                                         tabSwipeScope.launch {
                                             val animation = Animatable(tabSwipeDistance)
-                                            val targetOffset = targetTab?.let {
+                                            val edgeOffset = targetTab?.let {
                                                 if (tabSwipeDistance < 0f) -tabPageWidth else tabPageWidth
                                             } ?: 0f
-                                            animation.animateTo(targetOffset, tween(190)) { tabSwipeDistance = value }
+                                            animation.animateTo(edgeOffset, tween(160)) { tabSwipeDistance = value }
                                             if (targetTab != null) {
                                                 tabDirection = if (targetTab == "sections") 1 else -1
                                                 skipTabAnimation = true
                                                 activeTab = targetTab
+                                                // পুরনো content edge-এ পৌঁছানোর পরপরই নতুন content
+                                                // একই edge থেকে position 0-তে smoothly slide করবে —
+                                                // কোনো instant snap হবে না
+                                                animation.animateTo(0f, tween(160)) { tabSwipeDistance = value }
                                             }
                                             tabSwipeDistance = 0f
                                         }
@@ -5379,6 +5499,7 @@ private fun PdfLibraryHomeDialog(
                                     backgroundColor = libraryBackground,
                                     textColor = libraryText,
                                     sectionTextColor = librarySectionText,
+                                    searchBarVisible = isPdfSearchVisible,
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .graphicsLayer {
