@@ -478,9 +478,26 @@ fun MindMapScreen(
     var mediaPickerRequest by remember { mutableStateOf<MediaPickerRequest?>(null) }
     var mediaViewer by remember { mutableStateOf<MediaEntity?>(null) }
     var pdfViewer by remember { mutableStateOf<MediaEntity?>(null) }
+    var docxViewer by remember { mutableStateOf<MediaEntity?>(null) }
+    var pptxViewer by remember { mutableStateOf<MediaEntity?>(null) }
     var mediaFocusNodeId by remember { mutableStateOf<Long?>(null) }
     var attachmentErrorMessage by remember { mutableStateOf<String?>(null) }
     val mediaPickerScope = rememberCoroutineScope()
+    val pendingExternalPdfUri by com.example.mindmap.ExternalOpenState.pendingPdfUri
+    LaunchedEffect(pendingExternalPdfUri) {
+        val uriString = pendingExternalPdfUri ?: return@LaunchedEffect
+        val externalUri = Uri.parse(uriString)
+        val displayName = resolveAttachmentDisplayName(context, externalUri)
+        pdfViewer = MediaEntity(
+            sectionId = 0,
+            nodeId = 0,
+            type = MediaType.FILE,
+            uri = uriString,
+            displayName = displayName,
+            mimeType = "application/pdf"
+        )
+        com.example.mindmap.ExternalOpenState.pendingPdfUri.value = null
+    }
 
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val request = mediaPickerRequest
@@ -782,10 +799,15 @@ fun MindMapScreen(
                 copiedUri?.let { media.copy(uri = it.toString()) } ?: media
             }
             if (resolvedMedia.uri != media.uri) mediaViewModel.update(resolvedMedia)
+            val extension = resolvedMedia.displayName.substringAfterLast('.', "").lowercase()
             if (resolvedMedia.type == MediaType.IMAGE) {
                 mediaViewer = resolvedMedia
             } else if (resolvedMedia.mimeType == "application/pdf" || resolvedMedia.displayName.endsWith(".pdf", ignoreCase = true)) {
                 pdfViewer = resolvedMedia
+            } else if (extension == "docx" || extension == "doc") {
+                docxViewer = resolvedMedia
+            } else if (extension == "pptx" || extension == "ppt") {
+                pptxViewer = resolvedMedia
             } else {
                 runCatching {
                     val attachmentUri = Uri.parse(resolvedMedia.uri)
@@ -1587,6 +1609,12 @@ fun MindMapScreen(
 
         pdfViewer?.let { media ->
             PdfViewerDialog(media = media, onDismiss = { pdfViewer = null })
+        }
+        docxViewer?.let { media ->
+            DocxViewerDialog(media = media, onDismiss = { docxViewer = null })
+        }
+        pptxViewer?.let { media ->
+            PptxViewerDialog(media = media, onDismiss = { pptxViewer = null })
         }
 
         attachmentErrorMessage?.let { message ->

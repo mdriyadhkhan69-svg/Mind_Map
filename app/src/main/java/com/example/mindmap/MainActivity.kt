@@ -1,6 +1,7 @@
 package com.example.mindmap
 
 import android.os.Bundle
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,7 +31,7 @@ import com.example.mindmap.ui.viewmodel.SettingsViewModelFactory
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
+        handleViewIntent(intent)
         val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "mindmap_db")
             .addMigrations(AppDatabase.MIGRATION_4_5)
             .addMigrations(AppDatabase.MIGRATION_5_6)
@@ -59,6 +60,22 @@ class MainActivity : ComponentActivity() {
                     val settingsViewModel: SettingsViewModel = viewModel(factory = settingsFactory)
                     MindMapApp(viewModel, settingsViewModel, sectionViewModel, lineViewModel, mediaViewModel)
                 }
+            }
+        }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleViewIntent(intent)
+    }
+
+    private fun handleViewIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) {
+            intent.data?.let { uri ->
+                runCatching {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ExternalOpenState.pendingPdfUri.value = uri.toString()
             }
         }
     }
