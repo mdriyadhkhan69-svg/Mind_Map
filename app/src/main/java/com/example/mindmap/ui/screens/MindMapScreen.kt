@@ -338,10 +338,27 @@ fun MindMapApp(
     }
     var activeHome by remember { mutableStateOf(homePreferences.getString("last_home", "mind_map") ?: "mind_map") }
     var libraryPdf by remember { mutableStateOf<MediaEntity?>(null) }
+    var externalPdfViewer by remember { mutableStateOf<MediaEntity?>(null) }
 
     fun openHome(home: String) {
         activeHome = home
         homePreferences.edit().putString("last_home", home).apply()
+    }
+
+    val pendingExternalPdfUri by com.example.mindmap.ExternalOpenState.pendingPdfUri
+    LaunchedEffect(pendingExternalPdfUri) {
+        val uriString = pendingExternalPdfUri ?: return@LaunchedEffect
+        val externalUri = Uri.parse(uriString)
+        val displayName = resolveAttachmentDisplayName(context, externalUri)
+        externalPdfViewer = MediaEntity(
+            sectionId = 0,
+            nodeId = 0,
+            type = MediaType.FILE,
+            uri = uriString,
+            displayName = displayName,
+            mimeType = "application/pdf"
+        )
+        com.example.mindmap.ExternalOpenState.pendingPdfUri.value = null
     }
 
     if (activeHome == "pdf_library") {
@@ -375,6 +392,10 @@ fun MindMapApp(
             mediaViewModel = mediaViewModel,
             onOpenPdfHome = { openHome("pdf_library") }
         )
+    }
+
+    externalPdfViewer?.let { media ->
+        PdfViewerDialog(media = media, onDismiss = { externalPdfViewer = null })
     }
 }
 
@@ -483,21 +504,7 @@ fun MindMapScreen(
     var mediaFocusNodeId by remember { mutableStateOf<Long?>(null) }
     var attachmentErrorMessage by remember { mutableStateOf<String?>(null) }
     val mediaPickerScope = rememberCoroutineScope()
-    val pendingExternalPdfUri by com.example.mindmap.ExternalOpenState.pendingPdfUri
-    LaunchedEffect(pendingExternalPdfUri) {
-        val uriString = pendingExternalPdfUri ?: return@LaunchedEffect
-        val externalUri = Uri.parse(uriString)
-        val displayName = resolveAttachmentDisplayName(context, externalUri)
-        pdfViewer = MediaEntity(
-            sectionId = 0,
-            nodeId = 0,
-            type = MediaType.FILE,
-            uri = uriString,
-            displayName = displayName,
-            mimeType = "application/pdf"
-        )
-        com.example.mindmap.ExternalOpenState.pendingPdfUri.value = null
-    }
+
 
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val request = mediaPickerRequest
@@ -2408,6 +2415,80 @@ private object DeviceFileCache {
 private fun cachedDeviceFiles(): List<DeviceFile>? = DeviceFileCache.files.takeIf {
     it.isNotEmpty() && System.currentTimeMillis() - DeviceFileCache.updatedAtMillis < 10 * 60 * 1000L
 }
+private object PdfThumbnailCache {
+    private const val MAX_ENTRIES = 240
+    private val cache = object : LinkedHashMap<String, Bitmap>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean {
+            return size > MAX_ENTRIES
+        }
+    }
+
+    @Synchronized
+    fun get(key: String): Bitmap? = cache[key]
+
+    @Synchronized
+    fun put(key: String, bitmap: Bitmap) {
+        cache[key] = bitmap
+    }
+}
+
+private fun pdfThumbnailCacheKey(file: DeviceFile): String = "${file.file.path}:${file.file.lastModified()}"
+
+private fun loadPdfThumbnailBitmap(file: DeviceFile, maxSide: Int = 160): Bitmap? = runCatching {
+    if (!file.file.isFile) return@runCatching null
+    val descriptor = android.os.ParcelFileDescriptor.open(file.file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+    descriptor.use { fileDescriptor ->
+        PdfRenderer(fileDescriptor).use { renderer ->
+            if (renderer.pageCount <= 0) return@runCatching null
+            renderer.openPage(0).use { page ->
+                val scale = minOf(1f, maxSide.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1))
+                val bitmap = Bitmap.createBitmap(
+                    (page.width * scale).toInt().coerceAtLeast(1),
+                    (page.height * scale).toInt().coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888
+                )
+                bitmap.eraseColor(AndroidColor.WHITE)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmap
+            }
+        }
+    }
+}.getOrNull()
+
+@Composable
+private fun PdfThumbnail(file: DeviceFile, modifier: Modifier = Modifier) {
+    val cacheKey = remember(file.file.path, file.file.lastModified()) { pdfThumbnailCacheKey(file) }
+    var bitmap by remember(cacheKey) { mutableStateOf(PdfThumbnailCache.get(cacheKey)) }
+
+    LaunchedEffect(cacheKey) {
+        if (bitmap == null) {
+            val loaded = withContext(Dispatchers.IO) { loadPdfThumbnailBitmap(file) }
+            if (loaded != null) {
+                PdfThumbnailCache.put(cacheKey, loaded)
+                bitmap = loaded
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.White.copy(alpha = 0.08f)),
+        contentAlignment = Alignment.Center
+    ) {
+        val currentBitmap = bitmap
+        if (currentBitmap != null) {
+            Image(
+                bitmap = currentBitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+        }
+    }
+}
 
 private fun formatDeviceFileTime(file: File): String = java.text.SimpleDateFormat(
     "dd MMM yyyy, hh:mm a",
@@ -2720,11 +2801,10 @@ private fun loadPdfPage(context: android.content.Context, uri: Uri, requestedPag
             check(renderer.pageCount > 0) { "PDF has no pages" }
             val pageIndex = requestedPage.coerceIn(0, renderer.pageCount - 1)
             renderer.openPage(pageIndex).use { page ->
-                val maximumDimension = 2_048
-                val scale = minOf(
-                    1f,
-                    maximumDimension.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1)
-                )
+                val maximumDimension = 2_600
+                val scale = (
+                        maximumDimension.toFloat() / maxOf(page.width, page.height).coerceAtLeast(1)
+                        ).coerceIn(1f, 5f)
                 val bitmap = Bitmap.createBitmap(
                     (page.width * scale).toInt().coerceAtLeast(1),
                     (page.height * scale).toInt().coerceAtLeast(1),
@@ -6044,11 +6124,13 @@ private fun PdfDeviceFileList(
     onOpen: (DeviceFile) -> Unit,
     onDoubleTap: (DeviceFile) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         if (files.isEmpty()) {
-            Text("No files found", color = Color.LightGray, modifier = Modifier.padding(top = 20.dp))
+            item {
+                Text("No files found", color = Color.LightGray, modifier = Modifier.padding(top = 20.dp))
+            }
         } else {
-            files.forEach { file ->
+            items(files, key = { it.file.path }) { file ->
                 var pressed by remember(file.file.path, selectionEnabled) { mutableStateOf(false) }
                 val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "deviceFilePress")
                 Row(
@@ -6075,8 +6157,10 @@ private fun PdfDeviceFileList(
                 ) {
                     if (selectionEnabled) {
                         Checkbox(checked = file.file.path in selectedPaths, onCheckedChange = { onSelectChange(file, it) })
+                    } else if (file.extension == "pdf") {
+                        PdfThumbnail(file = file, modifier = Modifier.size(width = 34.dp, height = 40.dp))
                     } else {
-                        Icon(Icons.Default.InsertDriveFile, null, tint = if (file.extension == "pdf") AccentCyan else Color.LightGray)
+                        Icon(Icons.Default.InsertDriveFile, null, tint = Color.LightGray)
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
