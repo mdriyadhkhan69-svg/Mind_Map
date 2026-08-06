@@ -5576,14 +5576,17 @@ private fun PdfLibraryHomeDialog(
                                             if (targetTab != null) {
                                                 val exitEdge = if (tabSwipeDistance < 0f) -tabPageWidth else tabPageWidth
                                                 animation.animateTo(exitEdge, tween(220)) { tabSwipeDistance = value }
-                                                tabDirection = if (targetTab == "sections") 1 else -1
-                                                skipTabAnimation = true
-                                                activeTab = targetTab
-                                                tabSwipeDistance = 0f
+                                                androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                                                    tabDirection = if (targetTab == "sections") 1 else -1
+                                                    skipTabAnimation = true
+                                                    activeTab = targetTab
+                                                    tabSwipeDistance = 0f
+                                                    isTabSwipeActive = false
+                                                }
                                             } else {
                                                 animation.animateTo(0f, tween(200)) { tabSwipeDistance = value }
+                                                isTabSwipeActive = false
                                             }
-                                            isTabSwipeActive = false
                                         }
                                     }
                                 )
@@ -5768,12 +5771,12 @@ private fun PdfLibraryHomeDialog(
                                 }
                             } else null
                             previewTab?.let { tab ->
-                                val edgeOffset = if (tabSwipeDistance < 0f) tabPageWidth else -tabPageWidth
+                                val swipeProgress = (abs(tabSwipeDistance) / tabPageWidth).coerceIn(0f, 1f)
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .background(libraryBackground)
-                                        .graphicsLayer { translationX = tabSwipeDistance + edgeOffset }
+                                        .graphicsLayer { alpha = (0.15f + swipeProgress * 0.85f).coerceIn(0f, 1f) }
                                 ) {
                                     if (tab == "sections") {
                                         PdfSectionsList(
