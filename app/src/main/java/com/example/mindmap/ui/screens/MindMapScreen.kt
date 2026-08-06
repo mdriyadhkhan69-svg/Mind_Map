@@ -2932,6 +2932,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var copyNotice by remember(media.uri) { mutableStateOf<String?>(null) }
     var pageContainerSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var swipeDistance by remember(media.uri) { mutableFloatStateOf(0f) }
+    var isPageSwipeActive by remember(media.uri) { mutableStateOf(false) }
     var pageDirection by remember(media.uri) { mutableIntStateOf(1) }
     var pageSwipeVersion by remember(media.uri) { mutableIntStateOf(0) }
     var skipPageAnimation by remember(media.uri) { mutableStateOf(false) }
@@ -2985,17 +2986,21 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     LaunchedEffect(pageSwipeVersion) {
         delay(100)
         val distance = swipeDistance
-        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked) || markerEnabled) return@LaunchedEffect
+        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked) || markerEnabled) {
+            isPageSwipeActive = false
+            return@LaunchedEffect
+        }
         val currentPreview = pagePreview ?: return@LaunchedEffect
         val navigationSize = (
-            if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
-        ).toFloat().coerceAtLeast(1f)
+                if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
+                ).toFloat().coerceAtLeast(1f)
         val targetPage = when {
             distance <= -pageSwipeThreshold && currentPreview.pageIndex < currentPreview.pageCount - 1 -> currentPreview.pageIndex + 1
             distance >= pageSwipeThreshold && currentPreview.pageIndex > 0 -> currentPreview.pageIndex - 1
             else -> null
         }
-        val snapTarget = targetPage?.let { target -> if (distance < 0f) -navigationSize else navigationSize } ?: 0f
+        val exitEdge = if (distance < 0f) -navigationSize else navigationSize
+        val snapTarget = targetPage?.let { exitEdge } ?: 0f
         val snapAnimation = Animatable(distance)
         snapAnimation.animateTo(snapTarget, tween(190)) {
             swipeDistance = value
@@ -3005,8 +3010,15 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
             pageCache[targetPage]?.let { pagePreview = it }
             skipPageAnimation = true
             requestedPage = targetPage
+            val enterEdge = -exitEdge
+            snapAnimation.snapTo(enterEdge)
+            swipeDistance = enterEdge
+            snapAnimation.animateTo(0f, tween(190)) {
+                swipeDistance = value
+            }
         }
         swipeDistance = 0f
+        isPageSwipeActive = false
     }
 
     LaunchedEffect(requestedPage) {
@@ -3094,7 +3106,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     else -> null
                 }
                 val adjacentPreview = adjacentPage?.let(pageCache::get)
-                if (adjacentPreview != null) {
+                if (isPageSwipeActive && adjacentPreview != null) {
                     val swipeProgress = (
                             abs(swipeDistance) /
                                     (if (pageNavigationIsVertical) readerSize.height else readerSize.width).toFloat().coerceAtLeast(1f)
@@ -3226,22 +3238,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                 }
                                             }
 
-                                            multiTouch -> {
-                                                // ---- দুই আঙুল: zoom + pan (marker on থাকলেও কাজ করবে) ----
-                                                do {
-                                                    val event = awaitPointerEvent()
-                                                    val zoomChange = event.calculateZoom()
-                                                    val panChange = event.calculatePan()
-                                                    if (!zoomLocked) {
-                                                        zoom = (zoom * zoomChange).coerceIn(0.7f, 5f)
-                                                    }
-                                                    panOffset += panChange
-                                                    event.changes.forEach { c -> if (c.positionChanged()) c.consume() }
-                                                } while (event.changes.any { it.pressed })
-                                            }
-
-                                            markerEnabled -> {
-                                                // ---- এক আঙুল: marker (word-based reading-order selection, marker রঙে) ----
+                                            longPressFired && markerEnabled -> {
+                                                // ---- এক আঙুল, long-press পরে drag: marker (word-based reading-order selection) ----
                                                 val preview = it
                                                 val frame = pdfPageFrame(preview, pageContainerSize)
                                                 val index = pageWordIndex
@@ -3272,6 +3270,20 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                 }
                                             }
 
+                                            multiTouch -> {
+                                                // ---- দুই আঙুল: zoom + pan (marker on থাকলেও কাজ করবে) ----
+                                                do {
+                                                    val event = awaitPointerEvent()
+                                                    val zoomChange = event.calculateZoom()
+                                                    val panChange = event.calculatePan()
+                                                    if (!zoomLocked) {
+                                                        zoom = (zoom * zoomChange).coerceIn(0.7f, 5f)
+                                                    }
+                                                    panOffset += panChange
+                                                    event.changes.forEach { c -> if (c.positionChanged()) c.consume() }
+                                                } while (event.changes.any { it.pressed })
+                                            }
+
                                             else -> {
                                                 // ---- এক আঙুল: pan (zoom করা থাকলে) অথবা swipe (আগের মতোই, transition অপরিবর্তিত) ----
                                                 var lastPos = down.position
@@ -3289,6 +3301,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                             panOffset.copy(y = panOffset.y + panChange.y)
                                                         }
                                                     } else if (isPrimarySwipe) {
+                                                        isPageSwipeActive = true
                                                         val swipeLimit = (
                                                                 if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
                                                                 ).toFloat().coerceAtLeast(1f) * 0.96f
@@ -5176,6 +5189,7 @@ private fun PdfLibrarySwipePreview(
     backgroundColor: Color,
     textColor: Color,
     sectionTextColor: Color,
+    surfaceColor: Color,
     searchBarVisible: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -5186,13 +5200,19 @@ private fun PdfLibrarySwipePreview(
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         if (tab == "files" && searchBarVisible) {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
                     .clip(RoundedCornerShape(18.dp))
-                    .background(backgroundColor.copy(alpha = 0.001f))
-            )
+                    .background(surfaceColor.copy(alpha = 0.86f))
+                    .padding(horizontal = 15.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("⌕", color = AccentCyan, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp))
+                Text("Smart search PDFs", color = textColor.copy(alpha = 0.52f), fontSize = 15.sp)
+            }
             Spacer(Modifier.height(4.dp))
         }
         if (tab == "sections") {
@@ -5215,7 +5235,11 @@ private fun PdfLibrarySwipePreview(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan)
+                    if (file.extension == "pdf") {
+                        PdfThumbnail(file = file, modifier = Modifier.size(width = 34.dp, height = 40.dp))
+                    } else {
+                        Icon(Icons.Default.InsertDriveFile, null, tint = Color.LightGray)
+                    }
                     Spacer(Modifier.width(10.dp))
                     Text(file.name, color = textColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -5313,6 +5337,7 @@ private fun PdfLibraryHomeDialog(
     var tabDirection by remember { mutableIntStateOf(1) }
     var skipTabAnimation by remember { mutableStateOf(false) }
     var tabPageWidth by remember { mutableFloatStateOf(1f) }
+    var isTabSwipeActive by remember { mutableStateOf(false) }
     val tabSwipeScope = rememberCoroutineScope()
     val tabSwipeThreshold = with(LocalDensity.current) { 72.dp.toPx() }
     val libraryBackground = Color(libraryStyle.backgroundArgb ?: 0xFF101822)
@@ -5411,15 +5436,19 @@ private fun PdfLibraryHomeDialog(
                         .pointerInput(openedSectionId, selectingForSectionId, activeTab) {
                             if (openedSectionId == null && selectingForSectionId == null) {
                                 detectHorizontalDragGestures(
-                                    onDragStart = { tabSwipeDistance = 0f },
+                                    onDragStart = {
+                                        isTabSwipeActive = true
+                                        tabSwipeDistance = 0f
+                                    },
                                     onHorizontalDrag = { change, amount ->
                                         change.consume()
-                                        tabSwipeDistance += amount
+                                        tabSwipeDistance = (tabSwipeDistance + amount).coerceIn(-tabPageWidth, tabPageWidth)
                                     },
                                     onDragCancel = {
                                         tabSwipeScope.launch {
                                             val animation = Animatable(tabSwipeDistance)
                                             animation.animateTo(0f, tween(170)) { tabSwipeDistance = value }
+                                            isTabSwipeActive = false
                                         }
                                     },
                                     onDragEnd = {
@@ -5430,20 +5459,19 @@ private fun PdfLibraryHomeDialog(
                                         }
                                         tabSwipeScope.launch {
                                             val animation = Animatable(tabSwipeDistance)
-                                            val edgeOffset = targetTab?.let {
-                                                if (tabSwipeDistance < 0f) -tabPageWidth else tabPageWidth
-                                            } ?: 0f
-                                            animation.animateTo(edgeOffset, tween(160)) { tabSwipeDistance = value }
+                                            val exitEdge = if (tabSwipeDistance < 0f) -tabPageWidth else tabPageWidth
+                                            animation.animateTo(exitEdge, tween(160)) { tabSwipeDistance = value }
                                             if (targetTab != null) {
                                                 tabDirection = if (targetTab == "sections") 1 else -1
                                                 skipTabAnimation = true
                                                 activeTab = targetTab
-                                                // পুরনো content edge-এ পৌঁছানোর পরপরই নতুন content
-                                                // একই edge থেকে position 0-তে smoothly slide করবে —
-                                                // কোনো instant snap হবে না
+                                                val enterEdge = -exitEdge
+                                                animation.snapTo(enterEdge)
+                                                tabSwipeDistance = enterEdge
                                                 animation.animateTo(0f, tween(160)) { tabSwipeDistance = value }
                                             }
                                             tabSwipeDistance = 0f
+                                            isTabSwipeActive = false
                                         }
                                     }
                                 )
@@ -5608,7 +5636,7 @@ private fun PdfLibraryHomeDialog(
                                             .padding(horizontal = 10.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan)
+                                        PdfThumbnail(file = file, modifier = Modifier.size(width = 34.dp, height = 40.dp))
                                         Spacer(Modifier.width(10.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(entry.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -5620,11 +5648,13 @@ private fun PdfLibraryHomeDialog(
                         }
                     } else {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            val previewTab = when {
-                                tabSwipeDistance < 0f && activeTab == "files" -> "sections"
-                                tabSwipeDistance > 0f && activeTab == "sections" -> "files"
-                                else -> null
-                            }
+                            val previewTab = if (isTabSwipeActive) {
+                                when {
+                                    tabSwipeDistance < 0f && activeTab == "files" -> "sections"
+                                    tabSwipeDistance > 0f && activeTab == "sections" -> "files"
+                                    else -> null
+                                }
+                            } else null
                             previewTab?.let { tab ->
                                 val swipeProgress = (abs(tabSwipeDistance) / tabPageWidth).coerceIn(0f, 1f)
                                 PdfLibrarySwipePreview(
@@ -5634,12 +5664,11 @@ private fun PdfLibraryHomeDialog(
                                     backgroundColor = libraryBackground,
                                     textColor = libraryText,
                                     sectionTextColor = librarySectionText,
+                                    surfaceColor = librarySectionBackground,
                                     searchBarVisible = isPdfSearchVisible,
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .graphicsLayer {
-                                            alpha = (0.15f + swipeProgress * 0.8f).coerceIn(0f, 0.95f)
-                                        }
+                                        .graphicsLayer { alpha = swipeProgress }
                                 )
                             }
                         AnimatedContent(
@@ -5683,51 +5712,55 @@ private fun PdfLibraryHomeDialog(
                                                 translationY = if (draggingSectionId == section.id) sectionDragOffset else 0f
                                             }
                                             .pointerInput(section.id) {
-                                                detectDragGesturesAfterLongPress(
-                                                    onDragStart = {
-                                                        sectionPressed = false
-                                                        draggingSectionId = section.id
-                                                        sectionReorderDistance[section.id] = 0f
-                                                    },
-                                                    onDragEnd = {
-                                                        draggingSectionId = null
-                                                        sectionReorderDistance.remove(section.id)
-                                                    },
-                                                    onDragCancel = {
-                                                        draggingSectionId = null
-                                                        sectionReorderDistance.remove(section.id)
+                                                coroutineScope {
+                                                    launch {
+                                                        detectTapGestures(
+                                                            onPress = {
+                                                                sectionPressed = true
+                                                                tryAwaitRelease()
+                                                                sectionPressed = false
+                                                            },
+                                                            onTap = { openedSectionId = section.id },
+                                                            onDoubleTap = { sectionActionFor = section }
+                                                        )
                                                     }
-                                                ) { change, amount ->
-                                                    change.consume()
-                                                    val sourceIndex = currentSections.indexOfFirst { it.id == section.id }
-                                                    if (sourceIndex < 0) return@detectDragGesturesAfterLongPress
-                                                    val accumulated = (sectionReorderDistance[section.id] ?: 0f) + amount.y
-                                                    val direction = when {
-                                                        accumulated >= reorderThreshold && sourceIndex < currentSections.lastIndex -> 1
-                                                        accumulated <= -reorderThreshold && sourceIndex > 0 -> -1
-                                                        else -> 0
-                                                    }
-                                                    if (direction == 0) {
-                                                        sectionReorderDistance[section.id] = accumulated
-                                                    } else {
-                                                        val reordered = currentSections.toMutableList()
-                                                        val moved = reordered.removeAt(sourceIndex)
-                                                        reordered.add(sourceIndex + direction, moved)
-                                                        updateSections(reordered)
-                                                        sectionReorderDistance[section.id] = accumulated - direction * reorderThreshold
+                                                    launch {
+                                                        detectDragGesturesAfterLongPress(
+                                                            onDragStart = {
+                                                                sectionPressed = false
+                                                                draggingSectionId = section.id
+                                                                sectionReorderDistance[section.id] = 0f
+                                                            },
+                                                            onDragEnd = {
+                                                                draggingSectionId = null
+                                                                sectionReorderDistance.remove(section.id)
+                                                            },
+                                                            onDragCancel = {
+                                                                draggingSectionId = null
+                                                                sectionReorderDistance.remove(section.id)
+                                                            }
+                                                        ) { change, amount ->
+                                                            change.consume()
+                                                            val sourceIndex = currentSections.indexOfFirst { it.id == section.id }
+                                                            if (sourceIndex < 0) return@detectDragGesturesAfterLongPress
+                                                            val accumulated = (sectionReorderDistance[section.id] ?: 0f) + amount.y
+                                                            val direction = when {
+                                                                accumulated >= reorderThreshold && sourceIndex < currentSections.lastIndex -> 1
+                                                                accumulated <= -reorderThreshold && sourceIndex > 0 -> -1
+                                                                else -> 0
+                                                            }
+                                                            if (direction == 0) {
+                                                                sectionReorderDistance[section.id] = accumulated
+                                                            } else {
+                                                                val reordered = currentSections.toMutableList()
+                                                                val moved = reordered.removeAt(sourceIndex)
+                                                                reordered.add(sourceIndex + direction, moved)
+                                                                updateSections(reordered)
+                                                                sectionReorderDistance[section.id] = accumulated - direction * reorderThreshold
+                                                            }
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            .pointerInput("pdf-section-tap-${section.id}") {
-                                                detectTapGestures(
-                                                    onPress = {
-                                                        sectionPressed = true
-                                                        tryAwaitRelease()
-                                                        sectionPressed = false
-                                                    },
-                                                    onTap = { openedSectionId = section.id },
-                                                    onDoubleTap = { sectionActionFor = section }
-                                                )
                                             }
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(
@@ -5762,8 +5795,10 @@ private fun PdfLibraryHomeDialog(
                                 Column(modifier = Modifier.fillMaxSize()) {
                                     AnimatedVisibility(
                                         visible = isPdfSearchVisible,
-                                        enter = expandVertically(tween(180)) + fadeIn(tween(160)),
-                                        exit = shrinkVertically(tween(160)) + fadeOut(tween(130))
+                                        enter = if (skipTabAnimation) androidx.compose.animation.EnterTransition.None
+                                        else expandVertically(tween(180)) + fadeIn(tween(160)),
+                                        exit = if (skipTabAnimation) androidx.compose.animation.ExitTransition.None
+                                        else shrinkVertically(tween(160)) + fadeOut(tween(130))
                                     ) {
                                         SmartPdfSearchBar(
                                             query = pdfSearchQuery,
@@ -5789,12 +5824,22 @@ private fun PdfLibraryHomeDialog(
                     }
                     }
                 }
-
-                if (openedSectionId == null && selectingForSectionId == null && activeTab == "sections" && hasAllFilesAccess) {
-                    GlassFab(
-                        onClick = { createSectionMode = "select" },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp)
-                    )
+                if (openedSectionId == null && selectingForSectionId == null && hasAllFilesAccess) {
+                    val fabProgress = (abs(tabSwipeDistance) / tabPageWidth).coerceIn(0f, 1f)
+                    val fabVisibleForSections = activeTab == "sections" && (!isTabSwipeActive || tabSwipeDistance <= 0f)
+                    val fabVisibleForFilesEntering = activeTab == "files" && isTabSwipeActive && tabSwipeDistance > 0f
+                    if (fabVisibleForSections || fabVisibleForFilesEntering) {
+                        GlassFab(
+                            onClick = { createSectionMode = "select" },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(22.dp)
+                                .graphicsLayer {
+                                    translationX = if (isTabSwipeActive) tabSwipeDistance else 0f
+                                    alpha = if (isTabSwipeActive) (1f - fabProgress) else 1f
+                                }
+                        )
+                    }
                 }
             }
         }
