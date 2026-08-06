@@ -27,7 +27,9 @@ import com.example.mindmap.data.extractDocx
 import com.example.mindmap.data.extractPptx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.border
 private val AccentCyan = Color(0xFF64FFDA)
 
 @Composable
@@ -219,6 +221,104 @@ fun PptxViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             }
                             TextButton(enabled = currentSlide < slides.lastIndex, onClick = { currentSlide++ }) {
                                 Text("পরের >", color = if (currentSlide < slides.lastIndex) AccentCyan else Color.White.copy(alpha = 0.3f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+@Composable
+fun XlsxViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var sheets by remember(media.uri) { mutableStateOf<List<com.example.mindmap.data.ExtractedSheet>>(emptyList()) }
+    var currentSheet by remember(media.uri) { mutableStateOf(0) }
+    var isLoading by remember(media.uri) { mutableStateOf(true) }
+    var errorMessage by remember(media.uri) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(media.uri) {
+        isLoading = true
+        errorMessage = null
+        val result = withContext(Dispatchers.IO) {
+            runCatching { com.example.mindmap.data.extractXlsx(context, Uri.parse(media.uri)) }
+        }
+        result.onSuccess { sheets = it.sheets }
+            .onFailure { errorMessage = "ফাইলটি পড়া যাচ্ছে না" }
+        isLoading = false
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(color = Color(0xFF101822), modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF171A2B))
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Back", color = Color.White) }
+                    Text(
+                        text = media.displayName,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 4.dp)
+                    )
+                }
+                when {
+                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = AccentCyan)
+                    }
+                    errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(errorMessage!!, color = Color.White)
+                    }
+                    sheets.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("কোনো ডেটা পাওয়া যায়নি", color = Color.LightGray)
+                    }
+                    else -> {
+                        if (sheets.size > 1) {
+                            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp)) {
+                                sheets.forEachIndexed { index, sheet ->
+                                    val selected = index == currentSheet
+                                    Text(
+                                        text = sheet.name,
+                                        color = if (selected) Color(0xFF0F1020) else Color.White,
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (selected) AccentCyan else Color.White.copy(alpha = 0.08f))
+                                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                                            .clickable { currentSheet = index }
+                                    )
+                                }
+                            }
+                        }
+                        val sheet = sheets[currentSheet]
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .verticalScroll(rememberScrollState())
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                sheet.rows.forEach { row ->
+                                    Row {
+                                        row.forEach { cell ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .widthIn(min = 90.dp)
+                                                    .border(0.5.dp, Color.White.copy(alpha = 0.15f))
+                                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                                            ) {
+                                                Text(cell, color = Color.White, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

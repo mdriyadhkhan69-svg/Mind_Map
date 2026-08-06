@@ -338,6 +338,9 @@ fun MindMapApp(
     }
     var activeHome by remember { mutableStateOf(homePreferences.getString("last_home", "mind_map") ?: "mind_map") }
     var libraryPdf by remember { mutableStateOf<MediaEntity?>(null) }
+    var libraryDocx by remember { mutableStateOf<MediaEntity?>(null) }
+    var libraryPptx by remember { mutableStateOf<MediaEntity?>(null) }
+    var libraryXlsx by remember { mutableStateOf<MediaEntity?>(null) }
     var externalPdfViewer by remember { mutableStateOf<MediaEntity?>(null) }
 
     fun openHome(home: String) {
@@ -366,22 +369,40 @@ fun MindMapApp(
             onDismiss = { (context as? android.app.Activity)?.finish() },
             onNavigateToMindMap = { openHome("mind_map") },
             onFileClick = { file ->
-                if (file.extension == "pdf") {
-                    libraryPdf = MediaEntity(
-                        sectionId = 0,
-                        nodeId = 0,
-                        type = MediaType.FILE,
-                        uri = Uri.fromFile(file.file).toString(),
-                        displayName = file.name,
-                        mimeType = resolveAttachmentMimeType(file.name, "application/pdf")
+                val uriString = Uri.fromFile(file.file).toString()
+                val mimeType = resolveAttachmentMimeType(file.name, null)
+                when (file.extension) {
+                    "pdf" -> libraryPdf = MediaEntity(
+                        sectionId = 0, nodeId = 0, type = MediaType.FILE,
+                        uri = uriString, displayName = file.name, mimeType = mimeType
                     )
-                } else {
-                    openDeviceFileExternally(context, file)
+                    "doc", "docx" -> libraryDocx = MediaEntity(
+                        sectionId = 0, nodeId = 0, type = MediaType.FILE,
+                        uri = uriString, displayName = file.name, mimeType = mimeType
+                    )
+                    "ppt", "pptx" -> libraryPptx = MediaEntity(
+                        sectionId = 0, nodeId = 0, type = MediaType.FILE,
+                        uri = uriString, displayName = file.name, mimeType = mimeType
+                    )
+                    "xls", "xlsx" -> libraryXlsx = MediaEntity(
+                        sectionId = 0, nodeId = 0, type = MediaType.FILE,
+                        uri = uriString, displayName = file.name, mimeType = mimeType
+                    )
+                    else -> openDeviceFileExternally(context, file)
                 }
             }
         )
         libraryPdf?.let { media ->
             PdfViewerDialog(media = media, onDismiss = { libraryPdf = null })
+        }
+        libraryDocx?.let { media ->
+            DocxViewerDialog(media = media, onDismiss = { libraryDocx = null })
+        }
+        libraryPptx?.let { media ->
+            PptxViewerDialog(media = media, onDismiss = { libraryPptx = null })
+        }
+        libraryXlsx?.let { media ->
+            XlsxViewerDialog(media = media, onDismiss = { libraryXlsx = null })
         }
     } else {
         MindMapScreen(
@@ -501,6 +522,7 @@ fun MindMapScreen(
     var pdfViewer by remember { mutableStateOf<MediaEntity?>(null) }
     var docxViewer by remember { mutableStateOf<MediaEntity?>(null) }
     var pptxViewer by remember { mutableStateOf<MediaEntity?>(null) }
+    var xlsxViewer by remember { mutableStateOf<MediaEntity?>(null) }
     var mediaFocusNodeId by remember { mutableStateOf<Long?>(null) }
     var attachmentErrorMessage by remember { mutableStateOf<String?>(null) }
     val mediaPickerScope = rememberCoroutineScope()
@@ -815,6 +837,8 @@ fun MindMapScreen(
                 docxViewer = resolvedMedia
             } else if (extension == "pptx" || extension == "ppt") {
                 pptxViewer = resolvedMedia
+            } else if (extension == "xlsx" || extension == "xls") {
+                xlsxViewer = resolvedMedia
             } else {
                 runCatching {
                     val attachmentUri = Uri.parse(resolvedMedia.uri)
@@ -1622,6 +1646,9 @@ fun MindMapScreen(
         }
         pptxViewer?.let { media ->
             PptxViewerDialog(media = media, onDismiss = { pptxViewer = null })
+        }
+        xlsxViewer?.let { media ->
+            XlsxViewerDialog(media = media, onDismiss = { xlsxViewer = null })
         }
 
         attachmentErrorMessage?.let { message ->

@@ -139,3 +139,113 @@ fun extractPptx(context: Context, uri: Uri): ExtractedPresentation {
 
     return ExtractedPresentation(slides)
 }
+data class ExtractedSheet(
+    val name: String,
+    val rows: List<List<String>>
+)
+
+data class ExtractedWorkbook(
+    val sheets: List<ExtractedSheet>
+)
+
+fun extractXlsx(context: Context, uri: Uri): ExtractedWorkbook {
+    val entries = readZipEntries(context, uri)
+
+    // shared strings (xlsx text গুলো আলাদা ফাইলে থাকে, cell শুধু index রাখে)
+    val sharedStrings = mutableListOf<String>()
+    entries["xl/sharedStrings.xml"]?.let { bytes ->
+        val parser: XmlPullParser = Xml.newPullParser()
+        parser.setInput(bytes.inputStream(), "UTF-8")
+        var eventType = parser.eventType
+        var insideSi = false
+        val currentText = StringBuilder()
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            when (eventType) {
+                XmlPullParser.START_TAG -> {
+                    when (parser.name) {
+                        "si" -> { insideSi = true; currentText.clear() }
+                        "t" -> if (insideSi) {
+                            val text = if (parser.next() == XmlPullParser.TEXT) parser.text else ""
+                            currentText.append(text)
+                        }
+                    }
+                }
+                XmlPullParser.END_TAG -> {
+                    if (parser.name == "si") {
+                        sharedStrings += currentText.toString()
+                        insideSi = false
+                    }
+                }
+            }
+            eventType = parser.next()
+        }
+    }
+
+    // sheet-এর নাম workbook.xml থেকে
+    val sheetNames = mutableListOf<String>()
+    entries["xl/workbook.xml"]?.let { bytes ->
+        val parser: XmlPullParser = Xml.newPullParser()
+        parser.setInput(bytes.inputStream(), "UTF-8")
+        var eventType = parser.eventType
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            if (eventType == XmlPullParser.START_TAG && parser.name == "sheet") {
+                sheetNames += (parser.getAttributeValue(null, "name") ?: "Sheet")
+            }
+            eventType = parser.next()
+        }
+    }
+
+    val sheetFileEntries = entries.keys
+        .filter { it.matches(Regex("xl/worksheets/sheet\\d+\\.xml")) }
+        .sortedBy { name -> Regex("sheet(\\d+)\\.xml").find(name)?.groupValues?.get(1)?.toIntOrNull() ?: 0 }
+
+    val sheets = sheetFileEntries.mapIndexed { sheetIndex, sheetFileName ->
+        val bytes = entries[sheetFileName]!!
+        val rows = mutableListOf<List<String>>()
+        var currentRow = mutableListOf<String>()
+        var currentCellType: String? = null
+        var currentCellText = StringBuilder()
+
+        val parser: XmlPullParser = Xml.newPullParser()
+        parser.setInput(bytes.inputStream(), "UTF-8")
+        var eventType = parser.eventType
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            when (eventType) {
+                XmlPullParser.START_TAG -> {
+                    when (parser.name) {
+                        "row" -> currentRow = mutableListOf()
+                        "c" -> {
+                            currentCellType = parser.getAttributeValue(null, "t")
+                            currentCellText = StringBuilder()
+                        }
+                        "v", "t" -> {
+                            val text = if (parser.next() == XmlPullParser.TEXT) parser.text else ""
+                            currentCellText.append(text)
+                        }
+                    }
+                }
+                XmlPullParser.END_TAG -> {
+                    if (parser.name == "c") {
+                        val rawValue = currentCellText.toString()
+                        val displayValue = if (currentCellType == "s") {
+                            rawValue.toIntOrNull()?.let { sharedStrings.getOrNull(it) } ?: rawValue
+                        } else {
+                            rawValue
+                        }
+                        currentRow += displayValue
+                    } else if (parser.name == "row") {
+                        rows += currentRow
+                    }
+                }
+            }
+            eventType = parser.next()
+        }
+
+        ExtractedSheet(
+            name = sheetNames.getOrNull(sheetIndex) ?: "Sheet ${sheetIndex + 1}",
+            rows = rows
+        )
+    }
+
+    return ExtractedWorkbook(sheets)
+}
