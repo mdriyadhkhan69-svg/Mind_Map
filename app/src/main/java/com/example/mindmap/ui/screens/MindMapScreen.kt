@@ -2932,7 +2932,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var copyNotice by remember(media.uri) { mutableStateOf<String?>(null) }
     var pageContainerSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var swipeDistance by remember(media.uri) { mutableFloatStateOf(0f) }
-    var isPageSwipeActive by remember(media.uri) { mutableStateOf(false) }
     var pageDirection by remember(media.uri) { mutableIntStateOf(1) }
     var pageSwipeVersion by remember(media.uri) { mutableIntStateOf(0) }
     var skipPageAnimation by remember(media.uri) { mutableStateOf(false) }
@@ -2986,21 +2985,17 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     LaunchedEffect(pageSwipeVersion) {
         delay(100)
         val distance = swipeDistance
-        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked) || markerEnabled) {
-            isPageSwipeActive = false
-            return@LaunchedEffect
-        }
+        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked) || markerEnabled) return@LaunchedEffect
         val currentPreview = pagePreview ?: return@LaunchedEffect
         val navigationSize = (
-                if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
-                ).toFloat().coerceAtLeast(1f)
+            if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
+        ).toFloat().coerceAtLeast(1f)
         val targetPage = when {
             distance <= -pageSwipeThreshold && currentPreview.pageIndex < currentPreview.pageCount - 1 -> currentPreview.pageIndex + 1
             distance >= pageSwipeThreshold && currentPreview.pageIndex > 0 -> currentPreview.pageIndex - 1
             else -> null
         }
-        val exitEdge = if (distance < 0f) -navigationSize else navigationSize
-        val snapTarget = targetPage?.let { exitEdge } ?: 0f
+        val snapTarget = targetPage?.let { target -> if (distance < 0f) -navigationSize else navigationSize } ?: 0f
         val snapAnimation = Animatable(distance)
         snapAnimation.animateTo(snapTarget, tween(190)) {
             swipeDistance = value
@@ -3010,15 +3005,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
             pageCache[targetPage]?.let { pagePreview = it }
             skipPageAnimation = true
             requestedPage = targetPage
-            val enterEdge = -exitEdge
-            snapAnimation.snapTo(enterEdge)
-            swipeDistance = enterEdge
-            snapAnimation.animateTo(0f, tween(190)) {
-                swipeDistance = value
-            }
         }
         swipeDistance = 0f
-        isPageSwipeActive = false
     }
 
     LaunchedEffect(requestedPage) {
@@ -3106,7 +3094,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     else -> null
                 }
                 val adjacentPreview = adjacentPage?.let(pageCache::get)
-                if (isPageSwipeActive && adjacentPreview != null) {
+                if (adjacentPreview != null) {
                     val swipeProgress = (
                             abs(swipeDistance) /
                                     (if (pageNavigationIsVertical) readerSize.height else readerSize.width).toFloat().coerceAtLeast(1f)
@@ -3284,6 +3272,38 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                 } while (event.changes.any { it.pressed })
                                             }
 
+                                            markerEnabled -> {
+                                                // ---- এক আঙুল: marker (word-based reading-order selection, marker রঙে) ----
+                                                val preview = it
+                                                val frame = pdfPageFrame(preview, pageContainerSize)
+                                                val index = pageWordIndex
+                                                val touchPoint = untransformTouchPoint(down.position, pageContainerSize, zoom, panOffset, rotation)
+                                                if (index != null && index.words.isNotEmpty() && frame.contains(touchPoint)) {
+                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, touchPoint, pageContainerSize))
+                                                    if (anchorIdx != null) {
+                                                        var range = TextSelectionRange(anchorIdx, anchorIdx)
+                                                        activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
+                                                        drag(down.id) { change ->
+                                                            change.consume()
+                                                            val clampedTouch = frame.clamp(untransformTouchPoint(change.position, pageContainerSize, zoom, panOffset, rotation))
+                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clampedTouch, pageContainerSize))
+                                                            if (focusIdx != null) {
+                                                                range = TextSelectionRange(anchorIdx, focusIdx)
+                                                                activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
+                                                            }
+                                                        }
+                                                        val committed = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
+                                                        if (committed.textBounds.isNotEmpty() && committed.selectedText.isNotBlank()) {
+                                                            markerSelections = markerSelections + (
+                                                                    preview.pageIndex to (markerSelections[preview.pageIndex].orEmpty() + committed)
+                                                                    )
+                                                            markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
+                                                        }
+                                                        activeMarkerSelection = null
+                                                    }
+                                                }
+                                            }
+
                                             else -> {
                                                 // ---- এক আঙুল: pan (zoom করা থাকলে) অথবা swipe (আগের মতোই, transition অপরিবর্তিত) ----
                                                 var lastPos = down.position
@@ -3301,7 +3321,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                             panOffset.copy(y = panOffset.y + panChange.y)
                                                         }
                                                     } else if (isPrimarySwipe) {
-                                                        isPageSwipeActive = true
                                                         val swipeLimit = (
                                                                 if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
                                                                 ).toFloat().coerceAtLeast(1f) * 0.96f
@@ -5636,7 +5655,7 @@ private fun PdfLibraryHomeDialog(
                                             .padding(horizontal = 10.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        PdfThumbnail(file = file, modifier = Modifier.size(width = 34.dp, height = 40.dp))
+                                        Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan)
                                         Spacer(Modifier.width(10.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(entry.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -5712,55 +5731,51 @@ private fun PdfLibraryHomeDialog(
                                                 translationY = if (draggingSectionId == section.id) sectionDragOffset else 0f
                                             }
                                             .pointerInput(section.id) {
-                                                coroutineScope {
-                                                    launch {
-                                                        detectTapGestures(
-                                                            onPress = {
-                                                                sectionPressed = true
-                                                                tryAwaitRelease()
-                                                                sectionPressed = false
-                                                            },
-                                                            onTap = { openedSectionId = section.id },
-                                                            onDoubleTap = { sectionActionFor = section }
-                                                        )
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = {
+                                                        sectionPressed = false
+                                                        draggingSectionId = section.id
+                                                        sectionReorderDistance[section.id] = 0f
+                                                    },
+                                                    onDragEnd = {
+                                                        draggingSectionId = null
+                                                        sectionReorderDistance.remove(section.id)
+                                                    },
+                                                    onDragCancel = {
+                                                        draggingSectionId = null
+                                                        sectionReorderDistance.remove(section.id)
                                                     }
-                                                    launch {
-                                                        detectDragGesturesAfterLongPress(
-                                                            onDragStart = {
-                                                                sectionPressed = false
-                                                                draggingSectionId = section.id
-                                                                sectionReorderDistance[section.id] = 0f
-                                                            },
-                                                            onDragEnd = {
-                                                                draggingSectionId = null
-                                                                sectionReorderDistance.remove(section.id)
-                                                            },
-                                                            onDragCancel = {
-                                                                draggingSectionId = null
-                                                                sectionReorderDistance.remove(section.id)
-                                                            }
-                                                        ) { change, amount ->
-                                                            change.consume()
-                                                            val sourceIndex = currentSections.indexOfFirst { it.id == section.id }
-                                                            if (sourceIndex < 0) return@detectDragGesturesAfterLongPress
-                                                            val accumulated = (sectionReorderDistance[section.id] ?: 0f) + amount.y
-                                                            val direction = when {
-                                                                accumulated >= reorderThreshold && sourceIndex < currentSections.lastIndex -> 1
-                                                                accumulated <= -reorderThreshold && sourceIndex > 0 -> -1
-                                                                else -> 0
-                                                            }
-                                                            if (direction == 0) {
-                                                                sectionReorderDistance[section.id] = accumulated
-                                                            } else {
-                                                                val reordered = currentSections.toMutableList()
-                                                                val moved = reordered.removeAt(sourceIndex)
-                                                                reordered.add(sourceIndex + direction, moved)
-                                                                updateSections(reordered)
-                                                                sectionReorderDistance[section.id] = accumulated - direction * reorderThreshold
-                                                            }
-                                                        }
+                                                ) { change, amount ->
+                                                    change.consume()
+                                                    val sourceIndex = currentSections.indexOfFirst { it.id == section.id }
+                                                    if (sourceIndex < 0) return@detectDragGesturesAfterLongPress
+                                                    val accumulated = (sectionReorderDistance[section.id] ?: 0f) + amount.y
+                                                    val direction = when {
+                                                        accumulated >= reorderThreshold && sourceIndex < currentSections.lastIndex -> 1
+                                                        accumulated <= -reorderThreshold && sourceIndex > 0 -> -1
+                                                        else -> 0
+                                                    }
+                                                    if (direction == 0) {
+                                                        sectionReorderDistance[section.id] = accumulated
+                                                    } else {
+                                                        val reordered = currentSections.toMutableList()
+                                                        val moved = reordered.removeAt(sourceIndex)
+                                                        reordered.add(sourceIndex + direction, moved)
+                                                        updateSections(reordered)
+                                                        sectionReorderDistance[section.id] = accumulated - direction * reorderThreshold
                                                     }
                                                 }
+                                            }
+                                            .pointerInput("pdf-section-tap-${section.id}") {
+                                                detectTapGestures(
+                                                    onPress = {
+                                                        sectionPressed = true
+                                                        tryAwaitRelease()
+                                                        sectionPressed = false
+                                                    },
+                                                    onTap = { openedSectionId = section.id },
+                                                    onDoubleTap = { sectionActionFor = section }
+                                                )
                                             }
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(
