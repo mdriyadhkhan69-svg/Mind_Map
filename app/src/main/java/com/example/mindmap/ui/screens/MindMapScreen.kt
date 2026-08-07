@@ -2997,7 +2997,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     LaunchedEffect(pageSwipeVersion) {
         delay(100)
         val distance = swipeDistance
-        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked) || markerEnabled) return@LaunchedEffect
+        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked)) return@LaunchedEffect
         val currentPreview = pagePreview ?: return@LaunchedEffect
         val navigationSize = (
             if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
