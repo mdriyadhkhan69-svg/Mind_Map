@@ -5580,6 +5580,9 @@ private fun PdfLibraryHomeDialog(
                                                     tabDirection = if (targetTab == "sections") 1 else -1
                                                     skipTabAnimation = true
                                                     activeTab = targetTab
+                                                }
+                                                delay(32)
+                                                androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                                                     tabSwipeDistance = 0f
                                                     isTabSwipeActive = false
                                                 }
