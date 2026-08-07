@@ -2958,9 +2958,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val markerFabTopPx = readerSize.height - markerFabSizePx + markerFabOffset.y
     val markerToolsPanelFitsLeft = markerFabLeftPx >= markerToolsPanelWidthPx
     val markerPalettePanelFitsAbove = markerFabTopPx >= markerPalettePanelHeightPx
-    var colorSwatchPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
-    var colorSwatchSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
-    var readerPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    var colorPalettePanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
     var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
     val pageSwipeThreshold = (
@@ -3573,22 +3571,16 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
 
                     if (markerToolsVisible) {
                         val localDensity = LocalDensity.current
-                        val swatchLocalPos = colorSwatchPositionInWindow - readerPositionInWindow
-                        val paletteSizePx = if (pageNavigationIsVertical) {
-                            IntSize(with(localDensity) { 64.dp.roundToPx() }, with(localDensity) { 232.dp.roundToPx() })
-                        } else {
-                            IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
-                        }
+                        val paletteSizePx = colorPalettePanelSize.takeIf { it.width > 0 && it.height > 0 }
+                            ?: if (pageNavigationIsVertical) {
+                                IntSize(with(localDensity) { 64.dp.roundToPx() }, with(localDensity) { 232.dp.roundToPx() })
+                            } else {
+                                IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
+                            }
                         val gapPx = with(localDensity) { 10.dp.toPx() }
-                        val fitsRight = swatchLocalPos.x + colorSwatchSize.width + gapPx + paletteSizePx.width <= readerSize.width
-                        val targetPaletteX = if (fitsRight) {
-                            swatchLocalPos.x + colorSwatchSize.width + gapPx
-                        } else {
-                            (swatchLocalPos.x - gapPx - paletteSizePx.width).coerceAtLeast(0f)
-                        }
-                        val swatchCenterY = swatchLocalPos.y + colorSwatchSize.height / 2f
-                        val maxY = (readerSize.height - paletteSizePx.height).coerceAtLeast(0).toFloat()
-                        val targetPaletteY = (swatchCenterY - paletteSizePx.height / 2f).coerceIn(0f, maxY)
+                        val targetPaletteX = (markerFabOffset.x + markerFabSizePx / 2f - paletteSizePx.width / 2f)
+                            .coerceIn(-(readerSize.width.toFloat() - paletteSizePx.width).coerceAtLeast(0f), 0f)
+                        val targetPaletteY = markerFabOffset.y - paletteSizePx.height - gapPx
                         val animatedPaletteOffset by animateOffsetAsState(
                             targetValue = Offset(targetPaletteX, targetPaletteY),
                             animationSpec = tween(220),
@@ -3597,11 +3589,18 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
 
                         AnimatedVisibility(
                             visible = markerColorPaletteVisible,
-                            modifier = Modifier.offset { IntOffset(animatedPaletteOffset.x.roundToInt(), animatedPaletteOffset.y.roundToInt()) },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .offset { IntOffset(animatedPaletteOffset.x.roundToInt(), animatedPaletteOffset.y.roundToInt()) },
                             enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.85f),
                             exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.85f)
                         ) {
-                            Surface(shape = RoundedCornerShape(15.dp), color = Color(0xEE171A2B), shadowElevation = 10.dp) {
+                            Surface(
+                                shape = RoundedCornerShape(15.dp),
+                                color = Color(0xEE171A2B),
+                                shadowElevation = 10.dp,
+                                modifier = Modifier.onGloballyPositioned { colorPalettePanelSize = it.size }
+                            ) {
                                 if (!pageNavigationIsVertical) {
                                     Column(modifier = Modifier.width(186.dp).padding(10.dp)) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
