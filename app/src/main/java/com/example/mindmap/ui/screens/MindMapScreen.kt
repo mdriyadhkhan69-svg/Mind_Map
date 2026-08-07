@@ -2962,6 +2962,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var colorPalettePanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var colorSwatchPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
     var colorSwatchSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
+    var markerToolsPanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
     var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
     val pageSwipeThreshold = (
@@ -3440,27 +3441,39 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     }
                 }
 
-                AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.TopCenter)) {
-                    Surface(color = Color(0xEE171A2B), shadowElevation = 8.dp) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(onClick = onDismiss) { Text("Back", color = Color.White) }
-                            Text(
-                                text = media.displayName,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            pagePreview?.let { preview ->
-                                Text("${preview.pageIndex + 1}/${preview.pageCount}", color = Color.White.copy(alpha = 0.8f))
+                undoMarkerCandidate?.let { (candidatePageIndex, overlappingSelection) ->
+                    val popupPosition = undoMarkerPopupPosition ?: Offset.Zero
+                    val popupDensity = LocalDensity.current
+                    val popupPaddingPx = with(popupDensity) { 12.dp.toPx() }
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset {
+                                val maxX = (readerSize.width - with(popupDensity) { 64.dp.roundToPx() }).coerceAtLeast(0)
+                                val maxY = (readerSize.height - with(popupDensity) { 32.dp.roundToPx() }).coerceAtLeast(0)
+                                IntOffset(
+                                    (popupPosition.x + popupPaddingPx - 32f).roundToInt().coerceIn(0, maxX),
+                                    (popupPosition.y + popupPaddingPx - 50f).roundToInt().coerceIn(0, maxY)
+                                )
                             }
+                            .zIndex(45f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xEE171A2B),
+                        shadowElevation = 10.dp
+                    ) {
+                        TextButton(
+                            onClick = {
+                                val existing = markerSelections[candidatePageIndex].orEmpty()
+                                markerSelections = markerSelections + (candidatePageIndex to existing.filterNot { it == overlappingSelection })
+                                undoMarkerCandidate = null
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Undo", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
-
                 AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.BottomCenter)) {
                     Surface(color = Color(0xEE171A2B), shadowElevation = 10.dp) {
                         Row(
@@ -3489,18 +3502,40 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                 }
 
                 if (markerEnabled && controlsVisible) {
+                    val toolsDensity = LocalDensity.current
+                    val toolsGapPx = with(toolsDensity) { 8.dp.toPx() }
+                    val toolsSizePx = markerToolsPanelSize.takeIf { it.width > 0 && it.height > 0 }
+                        ?: IntSize(with(toolsDensity) { 202.dp.roundToPx() }, with(toolsDensity) { 44.dp.roundToPx() })
+                    val targetHorizontalToolsOffset = run {
+                        val fabAbsLeft = readerSize.width - markerFabSizePx + markerFabOffset.x
+                        val fabAbsRight = readerSize.width.toFloat() + markerFabOffset.x
+                        val fabAbsTop = readerSize.height - markerFabSizePx + markerFabOffset.y
+                        val fitsLeft = fabAbsLeft - toolsGapPx - toolsSizePx.width >= 0f
+                        val maxLeft = (readerSize.width - toolsSizePx.width).toFloat().coerceAtLeast(0f)
+                        val toolsAbsLeft = (if (fitsLeft) {
+                            fabAbsLeft - toolsGapPx - toolsSizePx.width
+                        } else {
+                            fabAbsRight + toolsGapPx
+                        }).coerceIn(0f, maxLeft)
+                        val maxTop = (readerSize.height - toolsSizePx.height).toFloat().coerceAtLeast(0f)
+                        val toolsAbsTop = (fabAbsTop - 4f).coerceIn(0f, maxTop)
+                        Offset(
+                            toolsAbsLeft - (readerSize.width - toolsSizePx.width),
+                            toolsAbsTop - (readerSize.height - toolsSizePx.height)
+                        )
+                    }
+                    val animatedHorizontalToolsOffset by animateOffsetAsState(
+                        targetValue = targetHorizontalToolsOffset,
+                        animationSpec = tween(220),
+                        label = "markerToolsOffset"
+                    )
                     AnimatedVisibility(
                         visible = markerToolsVisible,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .offset {
                                 if (pageNavigationIsVertical) {
-                                    val xBase = if (markerToolsPanelFitsLeft) {
-                                        markerFabOffset.x - 176f
-                                    } else {
-                                        markerFabOffset.x + markerFabSizePx + 8f
-                                    }
-                                    IntOffset(xBase.roundToInt(), markerFabOffset.y.roundToInt() - 4)
+                                    IntOffset(animatedHorizontalToolsOffset.x.roundToInt(), animatedHorizontalToolsOffset.y.roundToInt())
                                 } else {
                                     IntOffset(markerFabOffset.x.roundToInt() - 4, markerFabOffset.y.roundToInt() - 134)
                                 }
@@ -3508,7 +3543,12 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                         enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.85f),
                         exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.85f)
                     ) {
-                        Surface(shape = RoundedCornerShape(16.dp), color = Color(0xEE171A2B), shadowElevation = 10.dp) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xEE171A2B),
+                            shadowElevation = 10.dp,
+                            modifier = Modifier.onGloballyPositioned { markerToolsPanelSize = it.size }
+                        ) {
                             val isMarkingInProgress = activeMarkerSelection != null
                             val toolContent: @Composable () -> Unit = {
                                 Box(
@@ -3581,11 +3621,31 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
                             }
                         val gapPx = with(localDensity) { 10.dp.toPx() }
-                        val targetPaletteX = (markerFabOffset.x + markerFabSizePx / 2f - paletteSizePx.width / 2f)
-                            .coerceIn(-(readerSize.width.toFloat() - paletteSizePx.width).coerceAtLeast(0f), 0f)
-                        val targetPaletteY = markerFabOffset.y - paletteSizePx.height - gapPx
+                        val targetPaletteOffset = if (pageNavigationIsVertical) {
+                            val swatchAbsLeft = colorSwatchPositionInWindow.x - readerPositionInWindow.x
+                            val swatchAbsTop = colorSwatchPositionInWindow.y - readerPositionInWindow.y
+                            val maxLeft = (readerSize.width - paletteSizePx.width).toFloat().coerceAtLeast(0f)
+                            val fitsRight = swatchAbsLeft + colorSwatchSize.width + gapPx + paletteSizePx.width <= readerSize.width
+                            val paletteAbsLeft = (if (fitsRight) {
+                                swatchAbsLeft + colorSwatchSize.width + gapPx
+                            } else {
+                                swatchAbsLeft - gapPx - paletteSizePx.width
+                            }).coerceIn(0f, maxLeft)
+                            val maxTop = (readerSize.height - paletteSizePx.height).toFloat().coerceAtLeast(0f)
+                            val paletteAbsTop = (swatchAbsTop + colorSwatchSize.height / 2f - paletteSizePx.height / 2f)
+                                .coerceIn(0f, maxTop)
+                            Offset(
+                                paletteAbsLeft - (readerSize.width - paletteSizePx.width),
+                                paletteAbsTop - (readerSize.height - paletteSizePx.height)
+                            )
+                        } else {
+                            val targetPaletteX = (markerFabOffset.x + markerFabSizePx / 2f - paletteSizePx.width / 2f)
+                                .coerceIn(-(readerSize.width.toFloat() - paletteSizePx.width).coerceAtLeast(0f), 0f)
+                            val targetPaletteY = markerFabOffset.y - paletteSizePx.height - gapPx
+                            Offset(targetPaletteX, targetPaletteY)
+                        }
                         val animatedPaletteOffset by animateOffsetAsState(
-                            targetValue = Offset(targetPaletteX, targetPaletteY),
+                            targetValue = targetPaletteOffset,
                             animationSpec = tween(220),
                             label = "colorPaletteOffset"
                         )
