@@ -2422,7 +2422,8 @@ private data class PdfLibrarySection(
     val title: String,
     val entries: List<PdfLibraryEntry> = emptyList(),
     val backgroundArgb: Long? = null,
-    val textArgb: Long? = null
+    val textArgb: Long? = null,
+    val iconUri: String? = null
 )
 
 private data class PdfLibraryStyle(
@@ -2549,7 +2550,8 @@ private fun loadPdfLibrarySections(context: android.content.Context): List<PdfLi
                     backgroundArgb = jsonSection.takeIf { it.has("backgroundArgb") && !it.isNull("backgroundArgb") }
                         ?.getLong("backgroundArgb"),
                     textArgb = jsonSection.takeIf { it.has("textArgb") && !it.isNull("textArgb") }
-                        ?.getLong("textArgb")
+                        ?.getLong("textArgb"),
+                    iconUri = jsonSection.optString("iconUri").takeIf { it.isNotBlank() }
                 )
             )
         }
@@ -2575,6 +2577,7 @@ private fun savePdfLibrarySections(context: android.content.Context, sections: L
                 .put("entries", entries)
                 .put("backgroundArgb", section.backgroundArgb)
                 .put("textArgb", section.textArgb)
+                .put("iconUri", section.iconUri)
         )
     }
     context.getSharedPreferences("pdf_library", android.content.Context.MODE_PRIVATE)
@@ -5211,109 +5214,324 @@ private fun PdfSectionsList(
     onReorder: (List<PdfLibrarySection>) -> Unit,
     onOpenSection: (String) -> Unit,
     onSectionAction: (PdfLibrarySection) -> Unit,
+    onIconClick: (PdfLibrarySection) -> Unit,
     interactive: Boolean = true
 ) {
-    val currentSections by rememberUpdatedState(sections)
     if (sections.isEmpty()) {
         Text("Create a PDF section with +", color = Color.LightGray, modifier = Modifier.padding(20.dp))
-    } else {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            items(sections, key = { it.id }) { section ->
-                var sectionPressed by remember(section.id) { mutableStateOf(false) }
-                val sectionScale by animateFloatAsState(
-                    targetValue = when {
-                        draggingSectionId == section.id -> 1.025f
-                        sectionPressed -> 0.975f
-                        else -> 1f
-                    },
-                    label = "pdfSectionPress"
-                )
-                val sectionDragOffset = sectionReorderDistance[section.id] ?: 0f
-                var rowModifier = Modifier
-                    .fillMaxWidth()
-                    .animateItem()
-                    .graphicsLayer {
-                        scaleX = sectionScale
-                        scaleY = sectionScale
-                        translationY = if (draggingSectionId == section.id) sectionDragOffset else 0f
+        return
+    }
+
+    var localList by remember { mutableStateOf(sections) }
+    val itemHeight = 70.dp
+    val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    var orderChangedDuringDrag by remember { mutableStateOf(false) }
+    var dragStartOrder by remember { mutableStateOf<List<PdfLibrarySection>>(emptyList()) }
+    val releaseOffset = remember { Animatable(0f) }
+    var settlingDrag by remember { mutableStateOf(false) }
+    var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val dragScope = rememberCoroutineScope()
+    var pressedId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(sections, draggingId, settlingDrag) {
+        if (draggingId == null && !settlingDrag) {
+            localList = sections
+        }
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        items(localList, key = { it.id }) { section ->
+            val isDragging = draggingId == section.id
+            val offsetY = when {
+                isDragging && settlingDrag -> releaseOffset.value
+                isDragging -> dragOffset
+                else -> 0f
+            }
+            val rowScale by animateFloatAsState(
+                targetValue = if (pressedId == section.id || isDragging) 0.98f else 1f,
+                animationSpec = tween(120),
+                label = "pdfSectionPress"
+            )
+            var rowModifier = Modifier
+                .fillMaxWidth()
+                .then(if (isDragging) Modifier else Modifier.animateItem())
+                .zIndex(if (isDragging) 2f else 0f)
+                .graphicsLayer { translationY = offsetY; scaleX = rowScale; scaleY = rowScale }
+            if (interactive) {
+                rowModifier = rowModifier
+                    .pointerInput(section.id) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                settleJob?.cancel()
+                                settlingDrag = false
+                                val originIndex = localList.indexOfFirst { it.id == section.id }
+                                if (originIndex < 0) return@detectDragGesturesAfterLongPress
+                                draggingId = section.id
+                                dragStartOrder = localList
+                                dragOffset = 0f
+                                orderChangedDuringDrag = false
+                                pressedId = section.id
+                                onDraggingSectionIdChange(section.id)
+                            },
+                            onDragEnd = {
+                                if (draggingId != section.id) return@detectDragGesturesAfterLongPress
+                                if (orderChangedDuringDrag) onReorder(localList)
+                                settleJob = dragScope.launch {
+                                    releaseOffset.snapTo(dragOffset)
+                                    settlingDrag = true
+                                    releaseOffset.animateTo(0f, tween(150))
+                                    if (draggingId == section.id) {
+                                        draggingId = null
+                                        settlingDrag = false
+                                        dragOffset = 0f
+                                        orderChangedDuringDrag = false
+                                        pressedId = null
+                                        onDraggingSectionIdChange(null)
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                if (draggingId != section.id) return@detectDragGesturesAfterLongPress
+                                localList = dragStartOrder
+                                settleJob = dragScope.launch {
+                                    releaseOffset.snapTo(dragOffset)
+                                    settlingDrag = true
+                                    releaseOffset.animateTo(0f, tween(160))
+                                    if (draggingId == section.id) {
+                                        draggingId = null
+                                        settlingDrag = false
+                                        dragOffset = 0f
+                                        orderChangedDuringDrag = false
+                                        pressedId = null
+                                        onDraggingSectionIdChange(null)
+                                    }
+                                }
+                            }
+                        ) { change, amount ->
+                            change.consume()
+                            if (draggingId != section.id) return@detectDragGesturesAfterLongPress
+                            dragOffset += amount.y
+                            val currentIndex = localList.indexOfFirst { it.id == section.id }
+                            val direction = when {
+                                dragOffset >= itemHeightPx / 2 && currentIndex < localList.lastIndex -> 1
+                                dragOffset <= -itemHeightPx / 2 && currentIndex > 0 -> -1
+                                else -> 0
+                            }
+                            if (direction != 0) {
+                                val reordered = localList.toMutableList()
+                                val moved = reordered.removeAt(currentIndex)
+                                reordered.add(currentIndex + direction, moved)
+                                localList = reordered
+                                dragOffset -= direction * itemHeightPx
+                                orderChangedDuringDrag = true
+                            }
+                        }
                     }
-                if (interactive) {
-                    rowModifier = rowModifier
-                        .pointerInput(section.id) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    sectionPressed = false
-                                    onDraggingSectionIdChange(section.id)
-                                    sectionReorderDistance[section.id] = 0f
-                                },
-                                onDragEnd = {
-                                    onDraggingSectionIdChange(null)
-                                    sectionReorderDistance.remove(section.id)
-                                },
-                                onDragCancel = {
-                                    onDraggingSectionIdChange(null)
-                                    sectionReorderDistance.remove(section.id)
-                                }
-                            ) { change, amount ->
-                                change.consume()
-                                val sourceIndex = currentSections.indexOfFirst { it.id == section.id }
-                                if (sourceIndex < 0) return@detectDragGesturesAfterLongPress
-                                val accumulated = (sectionReorderDistance[section.id] ?: 0f) + amount.y
-                                val direction = when {
-                                    accumulated >= reorderThreshold && sourceIndex < currentSections.lastIndex -> 1
-                                    accumulated <= -reorderThreshold && sourceIndex > 0 -> -1
-                                    else -> 0
-                                }
-                                if (direction == 0) {
-                                    sectionReorderDistance[section.id] = accumulated
-                                } else {
-                                    val reordered = currentSections.toMutableList()
-                                    val moved = reordered.removeAt(sourceIndex)
-                                    reordered.add(sourceIndex + direction, moved)
-                                    onReorder(reordered)
-                                    sectionReorderDistance[section.id] = accumulated - direction * reorderThreshold
-                                }
-                            }
-                        }
-                        .pointerInput("pdf-section-tap-${section.id}") {
-                            detectTapGestures(
-                                onPress = {
-                                    sectionPressed = true
-                                    tryAwaitRelease()
-                                    sectionPressed = false
-                                },
-                                onTap = { onOpenSection(section.id) },
-                                onDoubleTap = { onSectionAction(section) }
-                            )
-                        }
-                }
-                Row(
-                    modifier = rowModifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (sectionPressed || draggingSectionId == section.id) {
-                                AccentCyan.copy(alpha = 0.14f)
-                            } else {
-                                Color.Transparent
-                            }
+                    .pointerInput("pdf-section-tap-${section.id}") {
+                        detectTapGestures(
+                            onPress = {
+                                pressedId = section.id
+                                tryAwaitRelease()
+                                if (draggingId != section.id) pressedId = null
+                            },
+                            onTap = { onOpenSection(section.id) },
+                            onDoubleTap = { onSectionAction(section) }
                         )
-                        .padding(horizontal = 14.dp, vertical = 13.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    }
+            }
+            Row(
+                modifier = rowModifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (pressedId == section.id || isDragging) {
+                            AccentCyan.copy(alpha = 0.14f)
+                        } else {
+                            Color.Transparent
+                        }
+                    )
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .then(
+                            if (interactive) {
+                                Modifier.pointerInput(section.id) {
+                                    detectTapGestures(onTap = { onIconClick(section) })
+                                }
+                            } else Modifier
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan)
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            section.title,
-                            color = Color(section.textArgb ?: libraryStyle.sectionTextArgb ?: libraryStyle.textArgb ?: 0xFFFFFFFF),
-                            fontWeight = FontWeight.SemiBold
+                    if (section.iconUri != null) {
+                        MediaThumbnail(
+                            uri = section.iconUri,
+                            maxSide = 320,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp))
                         )
-                        Text(
-                            "${section.entries.size} PDF",
-                            color = Color(section.textArgb ?: libraryStyle.sectionTextArgb ?: libraryStyle.textArgb ?: 0xFFFFFFFF).copy(alpha = 0.66f),
-                            fontSize = 12.sp
+                    } else {
+                        Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        section.title,
+                        color = Color(section.textArgb ?: libraryStyle.sectionTextArgb ?: libraryStyle.textArgb ?: 0xFFFFFFFF),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${section.entries.size} PDF",
+                        color = Color(section.textArgb ?: libraryStyle.sectionTextArgb ?: libraryStyle.textArgb ?: 0xFFFFFFFF).copy(alpha = 0.66f),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+    }
+}
+@Composable
+private fun PdfSectionEntriesList(
+    entries: List<PdfLibraryEntry>,
+    onOpen: (PdfLibraryEntry) -> Unit,
+    onEntryAction: (PdfLibraryEntry) -> Unit,
+    onReorder: (List<PdfLibraryEntry>) -> Unit
+) {
+    if (entries.isEmpty()) {
+        Text("No PDFs in this section", color = Color.LightGray, modifier = Modifier.padding(20.dp))
+        return
+    }
+
+    var localList by remember { mutableStateOf(entries) }
+    val itemHeight = 64.dp
+    val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
+    var draggingPath by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    var orderChangedDuringDrag by remember { mutableStateOf(false) }
+    var dragStartOrder by remember { mutableStateOf<List<PdfLibraryEntry>>(emptyList()) }
+    val releaseOffset = remember { Animatable(0f) }
+    var settlingDrag by remember { mutableStateOf(false) }
+    var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val dragScope = rememberCoroutineScope()
+    var pressedPath by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(entries, draggingPath, settlingDrag) {
+        if (draggingPath == null && !settlingDrag) {
+            localList = entries
+        }
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        items(localList, key = { it.path }) { entry ->
+            val file = DeviceFile(File(entry.path), entry.displayName, "pdf")
+            val isDragging = draggingPath == entry.path
+            val offsetY = when {
+                isDragging && settlingDrag -> releaseOffset.value
+                isDragging -> dragOffset
+                else -> 0f
+            }
+            val scale by animateFloatAsState(
+                targetValue = if (pressedPath == entry.path || isDragging) 0.97f else 1f,
+                label = "pdfEntryPress"
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (isDragging) Modifier else Modifier.animateItem())
+                    .zIndex(if (isDragging) 2f else 0f)
+                    .graphicsLayer { translationY = offsetY; scaleX = scale; scaleY = scale }
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (pressedPath == entry.path || isDragging) AccentCyan.copy(alpha = 0.13f) else Color.Transparent)
+                    .pointerInput(entry.path) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                settleJob?.cancel()
+                                settlingDrag = false
+                                draggingPath = entry.path
+                                dragStartOrder = localList
+                                dragOffset = 0f
+                                orderChangedDuringDrag = false
+                                pressedPath = entry.path
+                            },
+                            onDragEnd = {
+                                if (draggingPath != entry.path) return@detectDragGesturesAfterLongPress
+                                if (orderChangedDuringDrag) onReorder(localList)
+                                settleJob = dragScope.launch {
+                                    releaseOffset.snapTo(dragOffset)
+                                    settlingDrag = true
+                                    releaseOffset.animateTo(0f, tween(150))
+                                    if (draggingPath == entry.path) {
+                                        draggingPath = null
+                                        settlingDrag = false
+                                        dragOffset = 0f
+                                        orderChangedDuringDrag = false
+                                        pressedPath = null
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                if (draggingPath != entry.path) return@detectDragGesturesAfterLongPress
+                                localList = dragStartOrder
+                                settleJob = dragScope.launch {
+                                    releaseOffset.snapTo(dragOffset)
+                                    settlingDrag = true
+                                    releaseOffset.animateTo(0f, tween(160))
+                                    if (draggingPath == entry.path) {
+                                        draggingPath = null
+                                        settlingDrag = false
+                                        dragOffset = 0f
+                                        orderChangedDuringDrag = false
+                                        pressedPath = null
+                                    }
+                                }
+                            }
+                        ) { change, amount ->
+                            change.consume()
+                            if (draggingPath != entry.path) return@detectDragGesturesAfterLongPress
+                            dragOffset += amount.y
+                            val currentIndex = localList.indexOfFirst { it.path == entry.path }
+                            val direction = when {
+                                dragOffset >= itemHeightPx / 2 && currentIndex < localList.lastIndex -> 1
+                                dragOffset <= -itemHeightPx / 2 && currentIndex > 0 -> -1
+                                else -> 0
+                            }
+                            if (direction != 0) {
+                                val reordered = localList.toMutableList()
+                                val moved = reordered.removeAt(currentIndex)
+                                reordered.add(currentIndex + direction, moved)
+                                localList = reordered
+                                dragOffset -= direction * itemHeightPx
+                                orderChangedDuringDrag = true
+                            }
+                        }
+                    }
+                    .pointerInput("pdf-entry-tap-${entry.path}") {
+                        detectTapGestures(
+                            onPress = {
+                                pressedPath = entry.path
+                                tryAwaitRelease()
+                                if (draggingPath != entry.path) pressedPath = null
+                            },
+                            onTap = { onOpen(entry) },
+                            onDoubleTap = { onEntryAction(entry) }
                         )
                     }
+                    .padding(horizontal = 10.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PdfThumbnail(file = file, modifier = Modifier.size(width = 34.dp, height = 40.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(entry.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(formatDeviceFileTime(file.file), color = Color.LightGray, fontSize = 12.sp)
                 }
             }
         }
@@ -5374,7 +5592,8 @@ private fun SmartPdfSearchBar(
         value = query,
         onValueChange = onQueryChange,
         singleLine = true,
-        textStyle = androidx.compose.ui.text.TextStyle(color = textColor, fontSize = 15.sp),
+        textStyle = androidx.compose.ui.text.TextStyle(color = textColor, fontSize = 15.sp, lineHeight = 15.sp),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(AccentCyan.copy(alpha = 0.7f)),
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
@@ -5386,7 +5605,7 @@ private fun SmartPdfSearchBar(
             ) {
                 Text("⌕", color = AccentCyan, fontSize = 23.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(10.dp))
-                Box(modifier = Modifier.weight(1f)) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     if (query.isBlank()) {
                         Text("Smart search PDFs", color = textColor.copy(alpha = 0.52f), fontSize = 15.sp)
                     }
@@ -5442,6 +5661,7 @@ private fun PdfLibraryHomeDialog(
     var showLibrarySettings by remember { mutableStateOf(false) }
     var sectionBackgroundColorFor by remember { mutableStateOf<PdfLibrarySection?>(null) }
     var sectionTextColorFor by remember { mutableStateOf<PdfLibrarySection?>(null) }
+    var sectionIconPickerFor by remember { mutableStateOf<PdfLibrarySection?>(null) }
     var libraryStyle by remember { mutableStateOf(loadPdfLibraryStyle(context)) }
     var draggingSectionId by remember { mutableStateOf<String?>(null) }
     val sectionReorderDistance = remember { mutableStateMapOf<String, Float>() }
@@ -5476,6 +5696,7 @@ private fun PdfLibraryHomeDialog(
         savePdfLibraryStyle(context, updatedStyle)
     }
 
+
     fun addPdfToSection(sectionId: String, file: DeviceFile) {
         updateSections(sections.map { section ->
             if (section.id != sectionId || section.entries.any { it.path == file.file.path }) section
@@ -5483,6 +5704,37 @@ private fun PdfLibraryHomeDialog(
         })
     }
 
+    val sectionIconPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val targetSection = sectionIconPickerFor
+        if (uri != null && targetSection != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val displayName = resolveAttachmentDisplayName(context, uri)
+            val savedUri = runCatching { copyAttachmentToAppStorage(context, uri, displayName) }.getOrNull()
+            val newIconUri = (savedUri ?: uri).toString()
+            updateSections(sections.map { if (it.id == targetSection.id) it.copy(iconUri = newIconUri) else it })
+        }
+        sectionIconPickerFor = null
+    }
+
+    LaunchedEffect(sectionIconPickerFor) {
+        if (sectionIconPickerFor != null) {
+            sectionIconPicker.launch(arrayOf("image/*"))
+        }
+    }
+    fun switchTab(targetTab: String) {
+        if (activeTab == targetTab) return
+        tabSwipeScope.launch {
+            val startDistance = if (targetTab == "sections") tabPageWidth else -tabPageWidth
+            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                activeTab = targetTab
+                tabSwipeDistance = startDistance
+            }
+            val animation = Animatable(startDistance)
+            animation.animateTo(0f, tween(250)) { tabSwipeDistance = value }
+        }
+    }
     fun navigateBack() {
         when {
             selectingForSectionId != null -> {
@@ -5572,21 +5824,21 @@ private fun PdfLibraryHomeDialog(
                                             else -> null
                                         }
                                         tabSwipeScope.launch {
-                                            val animation = Animatable(tabSwipeDistance)
                                             if (targetTab != null) {
-                                                val exitEdge = if (tabSwipeDistance < 0f) -tabPageWidth else tabPageWidth
-                                                animation.animateTo(exitEdge, tween(220)) { tabSwipeDistance = value }
+                                                val continuedDistance = if (targetTab == "sections") {
+                                                    tabSwipeDistance + tabPageWidth
+                                                } else {
+                                                    tabSwipeDistance - tabPageWidth
+                                                }
                                                 androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                                                    tabDirection = if (targetTab == "sections") 1 else -1
-                                                    skipTabAnimation = true
                                                     activeTab = targetTab
+                                                    tabSwipeDistance = continuedDistance
                                                 }
-                                                delay(32)
-                                                androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                                                    tabSwipeDistance = 0f
-                                                    isTabSwipeActive = false
-                                                }
+                                                val animation = Animatable(continuedDistance)
+                                                animation.animateTo(0f, tween(220)) { tabSwipeDistance = value }
+                                                isTabSwipeActive = false
                                             } else {
+                                                val animation = Animatable(tabSwipeDistance)
                                                 animation.animateTo(0f, tween(200)) { tabSwipeDistance = value }
                                                 isTabSwipeActive = false
                                             }
@@ -5641,20 +5893,12 @@ private fun PdfLibraryHomeDialog(
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(onClick = {
-                                if (activeTab != "files") {
-                                    tabDirection = -1
-                                    skipTabAnimation = false
-                                }
-                                activeTab = "files"
-                            }) { Text("Files", color = if (activeTab == "files") AccentCyan else libraryText) }
-                            TextButton(onClick = {
-                                if (activeTab != "sections") {
-                                    tabDirection = 1
-                                    skipTabAnimation = false
-                                }
-                                activeTab = "sections"
-                            }) { Text("PDF Sections", color = if (activeTab == "sections") AccentCyan else libraryText) }
+                            TextButton(onClick = { switchTab("files") }) {
+                                Text("Files", color = if (activeTab == "files") AccentCyan else libraryText)
+                            }
+                            TextButton(onClick = { switchTab("sections") }) {
+                                Text("PDF Sections", color = if (activeTab == "sections") AccentCyan else libraryText)
+                            }
                             Spacer(
                                 Modifier
                                     .weight(1f)
@@ -5725,107 +5969,47 @@ private fun PdfLibraryHomeDialog(
                             onDoubleTap = {}
                         )
                     } else if (openedSectionId != null) {
-                        val openedSection = sections.firstOrNull { it.id == openedSectionId }
-                        if (openedSection == null || openedSection.entries.isEmpty()) {
-                            Text("No PDFs in this section", color = Color.LightGray, modifier = Modifier.padding(20.dp))
-                        } else {
-                            Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                                openedSection.entries.forEach { entry ->
-                                    val file = DeviceFile(File(entry.path), entry.displayName, "pdf")
-                                    var pressed by remember(entry.path, entry.displayName) { mutableStateOf(false) }
-                                    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "pdfEntryPress")
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer { scaleX = scale; scaleY = scale }
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(if (pressed) AccentCyan.copy(alpha = 0.13f) else Color.Transparent)
-                                            .pointerInput(entry.path, entry.displayName) {
-                                                detectTapGestures(
-                                                    onPress = {
-                                                        pressed = true
-                                                        tryAwaitRelease()
-                                                        pressed = false
-                                                    },
-                                                    onTap = { onFileClick(file) },
-                                                    onDoubleTap = { entryActionFor = openedSection.id to entry }
-                                                )
-                                            }
-                                            .padding(horizontal = 10.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(Icons.Default.InsertDriveFile, null, tint = AccentCyan)
-                                        Spacer(Modifier.width(10.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(entry.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(formatDeviceFileTime(file.file), color = Color.LightGray, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
+                        val currentOpenedSectionId = openedSectionId!!
+                        val openedSection = sections.firstOrNull { it.id == currentOpenedSectionId }
+                        PdfSectionEntriesList(
+                            entries = openedSection?.entries.orEmpty(),
+                            onOpen = { entry -> onFileClick(DeviceFile(File(entry.path), entry.displayName, "pdf")) },
+                            onEntryAction = { entry -> entryActionFor = currentOpenedSectionId to entry },
+                            onReorder = { reordered ->
+                                updateSections(sections.map { section ->
+                                    if (section.id == currentOpenedSectionId) section.copy(entries = reordered) else section
+                                })
                             }
-                        }
-                    } else {
+                        )
+                    }else {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            val previewTab = if (isTabSwipeActive) {
-                                when {
-                                    tabSwipeDistance < 0f && activeTab == "files" -> "sections"
-                                    tabSwipeDistance > 0f && activeTab == "sections" -> "files"
-                                    else -> null
-                                }
-                            } else null
-                            previewTab?.let { tab ->
-                                val swipeProgress = (abs(tabSwipeDistance) / tabPageWidth).coerceIn(0f, 1f)
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(libraryBackground)
-                                        .graphicsLayer { alpha = (0.15f + swipeProgress * 0.85f).coerceIn(0f, 1f) }
-                                ) {
-                                    if (tab == "sections") {
-                                        PdfSectionsList(
-                                            sections = sections,
-                                            libraryStyle = libraryStyle,
-                                            draggingSectionId = null,
-                                            onDraggingSectionIdChange = {},
-                                            sectionReorderDistance = sectionReorderDistance,
-                                            reorderThreshold = reorderThreshold,
-                                            onReorder = {},
-                                            onOpenSection = {},
-                                            onSectionAction = {},
-                                            interactive = false
-                                        )
-                                    } else {
-                                        PdfFilesTabBody(
-                                            files = homeFiles,
-                                            query = pdfSearchQuery,
-                                            onQueryChange = {},
-                                            searchBarVisible = isPdfSearchVisible,
-                                            skipVisibilityAnimation = true,
-                                            textColor = libraryText,
-                                            surfaceColor = librarySectionBackground,
-                                            onOpen = {},
-                                            onLongPressFile = {},
-                                            interactive = false
-                                        )
-                                    }
-                                }
+                            val filesOffset = (if (activeTab == "files") 0f else -tabPageWidth) + tabSwipeDistance
+                            val sectionsOffset = (if (activeTab == "sections") 0f else tabPageWidth) + tabSwipeDistance
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { translationX = filesOffset }
+                            ) {
+                                PdfFilesTabBody(
+                                    files = homeFiles,
+                                    query = pdfSearchQuery,
+                                    onQueryChange = { pdfSearchQuery = it },
+                                    searchBarVisible = isPdfSearchVisible,
+                                    skipVisibilityAnimation = true,
+                                    textColor = libraryText,
+                                    surfaceColor = librarySectionBackground,
+                                    onOpen = onFileClick,
+                                    onLongPressFile = { file -> fileActionFor = file },
+                                    interactive = activeTab == "files"
+                                )
                             }
-                        AnimatedContent(
-                            targetState = activeTab,
-                            transitionSpec = {
-                                if (skipTabAnimation) {
-                                    androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None
-                                } else {
-                                    (slideInHorizontally(tween(250)) { fullWidth -> tabDirection * fullWidth } + fadeIn(tween(180))) togetherWith
-                                        (slideOutHorizontally(tween(220)) { fullWidth -> -tabDirection * fullWidth } + fadeOut(tween(140)))
-                                }
-                            },
-                            label = "pdfLibraryTabSwipe",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { translationX = tabSwipeDistance }
-                        ) { tab ->
-                            if (tab == "sections") {
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { translationX = sectionsOffset }
+                            ) {
                                 PdfSectionsList(
                                     sections = sections,
                                     libraryStyle = libraryStyle,
@@ -5835,23 +6019,11 @@ private fun PdfLibraryHomeDialog(
                                     reorderThreshold = reorderThreshold,
                                     onReorder = ::updateSections,
                                     onOpenSection = { openedSectionId = it },
-                                    onSectionAction = { sectionActionFor = it }
-                                )
-                            } else {
-                                PdfFilesTabBody(
-                                    files = homeFiles,
-                                    query = pdfSearchQuery,
-                                    onQueryChange = { pdfSearchQuery = it },
-                                    searchBarVisible = isPdfSearchVisible,
-                                    skipVisibilityAnimation = skipTabAnimation,
-                                    textColor = libraryText,
-                                    surfaceColor = librarySectionBackground,
-                                    onOpen = onFileClick,
-                                    onLongPressFile = { file -> fileActionFor = file }
+                                    onSectionAction = { sectionActionFor = it },
+                                    onIconClick = { sectionIconPickerFor = it }
                                 )
                             }
                         }
-                    }
                     }
                 }
                 if (openedSectionId == null && selectingForSectionId == null && hasAllFilesAccess) {
@@ -5874,6 +6046,7 @@ private fun PdfLibraryHomeDialog(
             }
         }
     }
+
 
     if (showLibrarySettings) {
         PdfLibrarySettingsDialog(
