@@ -2387,6 +2387,9 @@ private fun TextSelectionRange.toMarkerSelection(
     return PdfMarkerSelection(color = color, start = Offset.Zero, end = Offset.Zero, opacity = opacity, textBounds = bounds, selectedText = text)
 }
 
+private fun boundsOverlap(a: List<android.graphics.RectF>, b: List<android.graphics.RectF>): Boolean {
+    return a.any { rectA -> b.any { rectB -> android.graphics.RectF.intersects(rectA, rectB) } }
+}
 private data class PdfViewState(
     val isLocked: Boolean = false,
     val pageIndex: Int = 0,
@@ -2945,7 +2948,13 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val pdfLoadScope = rememberCoroutineScope()
     val activePageIndex = pagePreview?.pageIndex ?: requestedPage
     val pageNavigationIsVertical = abs(rotation % 180f) > 45f
-    val markerFabSizePx = with(LocalDensity.current) { 54.dp.toPx() }
+    val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
+    val markerToolsPanelWidthPx = with(LocalDensity.current) { 210.dp.toPx() }
+    val markerPalettePanelHeightPx = with(LocalDensity.current) { 232.dp.toPx() }
+    val markerFabLeftPx = readerSize.width - markerFabSizePx + markerFabOffset.x
+    val markerFabTopPx = readerSize.height - markerFabSizePx + markerFabOffset.y
+    val markerToolsPanelFitsLeft = markerFabLeftPx >= markerToolsPanelWidthPx
+    val markerPalettePanelFitsAbove = markerFabTopPx >= markerPalettePanelHeightPx
     val pageSwipeThreshold = (
         if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
     ).toFloat().times(0.22f).coerceAtLeast(140f)
@@ -3143,14 +3152,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 .onGloballyPositioned { pageContainerSize = it.size }
                                 .pointerInput(media.uri, it.pageIndex, markerEnabled, zoom, panOffset) {
                                     detectTapGestures(
-                                        onTap = {
-                                            if (selectedTextForActions != null || selectedTextSelection != null) {
-                                                selectedTextForActions = null
-                                                selectedTextSelection = null
-                                            } else {
-                                                controlsVisible = !controlsVisible
-                                            }
-                                        },
                                         onDoubleTap = {
                                             if (zoom > 1.01f || panOffset != Offset.Zero) {
                                                 zoom = 1f
@@ -3193,8 +3194,15 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                         }
 
                                         when {
-                                            released -> Unit // সাধারণ tap — ওপরের tap detector এটা সামলাবে
-
+                                            released -> {
+                                                // ---- সাধারণ tap: controls toggle / selection clear (আলাদা detector সরিয়ে এখানেই আনা হলো, race এড়াতে) ----
+                                                if (selectedTextForActions != null || selectedTextSelection != null) {
+                                                    selectedTextForActions = null
+                                                    selectedTextSelection = null
+                                                } else {
+                                                    controlsVisible = !controlsVisible
+                                                }
+                                            }
                                             longPressFired && !markerEnabled -> {
                                                 // ---- TEXT SELECTION (reading-order word-range + কপি) ----
                                                 val preview = it
@@ -3251,10 +3259,24 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                         }
                                                         val committed = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
                                                         if (committed.textBounds.isNotEmpty() && committed.selectedText.isNotBlank()) {
-                                                            markerSelections = markerSelections + (
-                                                                    preview.pageIndex to (markerSelections[preview.pageIndex].orEmpty() + committed)
-                                                                    )
-                                                            markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
+                                                            val existingOnPage = markerSelections[preview.pageIndex].orEmpty()
+                                                            val overlapping = existingOnPage.firstOrNull { existing ->
+                                                                boundsOverlap(existing.textBounds, committed.textBounds)
+                                                            }
+                                                            if (overlapping != null) {
+                                                                // আগে থেকে মার্ক করা text আবার select করা হলো — নতুন মার্ক না বসিয়ে আগের মার্কটা সরিয়ে দাও (undo-এর মতো), redo-তে জমা রাখো
+                                                                markerSelections = markerSelections + (
+                                                                        preview.pageIndex to (existingOnPage - overlapping)
+                                                                        )
+                                                                markerRedoSelections = markerRedoSelections + (
+                                                                        preview.pageIndex to (markerRedoSelections[preview.pageIndex].orEmpty() + overlapping)
+                                                                        )
+                                                            } else {
+                                                                markerSelections = markerSelections + (
+                                                                        preview.pageIndex to (existingOnPage + committed)
+                                                                        )
+                                                                markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
+                                                            }
                                                         }
                                                         activeMarkerSelection = null
                                                     }
@@ -3273,38 +3295,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     panOffset += panChange
                                                     event.changes.forEach { c -> if (c.positionChanged()) c.consume() }
                                                 } while (event.changes.any { it.pressed })
-                                            }
-
-                                            markerEnabled -> {
-                                                // ---- এক আঙুল: marker (word-based reading-order selection, marker রঙে) ----
-                                                val preview = it
-                                                val frame = pdfPageFrame(preview, pageContainerSize)
-                                                val index = pageWordIndex
-                                                val touchPoint = untransformTouchPoint(down.position, pageContainerSize, zoom, panOffset, rotation)
-                                                if (index != null && index.words.isNotEmpty() && frame.contains(touchPoint)) {
-                                                    val anchorIdx = index.nearestIndex(screenToPageSpace(preview, touchPoint, pageContainerSize))
-                                                    if (anchorIdx != null) {
-                                                        var range = TextSelectionRange(anchorIdx, anchorIdx)
-                                                        activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
-                                                        drag(down.id) { change ->
-                                                            change.consume()
-                                                            val clampedTouch = frame.clamp(untransformTouchPoint(change.position, pageContainerSize, zoom, panOffset, rotation))
-                                                            val focusIdx = index.nearestIndex(screenToPageSpace(preview, clampedTouch, pageContainerSize))
-                                                            if (focusIdx != null) {
-                                                                range = TextSelectionRange(anchorIdx, focusIdx)
-                                                                activeMarkerSelection = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
-                                                            }
-                                                        }
-                                                        val committed = range.toMarkerSelection(index, preview, pageContainerSize, markerColor, markerOpacity)
-                                                        if (committed.textBounds.isNotEmpty() && committed.selectedText.isNotBlank()) {
-                                                            markerSelections = markerSelections + (
-                                                                    preview.pageIndex to (markerSelections[preview.pageIndex].orEmpty() + committed)
-                                                                    )
-                                                            markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
-                                                        }
-                                                        activeMarkerSelection = null
-                                                    }
-                                                }
                                             }
 
                                             else -> {
@@ -3489,7 +3479,12 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 .align(Alignment.BottomEnd)
                                 .offset {
                                     if (pageNavigationIsVertical) {
-                                        IntOffset(markerFabOffset.x.roundToInt() - 176, markerFabOffset.y.roundToInt() - 4)
+                                        val xBase = if (markerToolsPanelFitsLeft) {
+                                            markerFabOffset.x - 176f
+                                        } else {
+                                            markerFabOffset.x + markerFabSizePx + 8f
+                                        }
+                                        IntOffset(xBase.roundToInt(), markerFabOffset.y.roundToInt() - 4)
                                     } else {
                                         IntOffset(markerFabOffset.x.roundToInt() - 4, markerFabOffset.y.roundToInt() - 134)
                                     }
@@ -3498,6 +3493,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             color = Color(0xEE171A2B),
                             shadowElevation = 10.dp
                         ) {
+                            val isMarkingInProgress = activeMarkerSelection != null
                             val toolContent: @Composable () -> Unit = {
                                 Box(
                                     modifier = Modifier
@@ -3509,50 +3505,32 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             detectTapGestures(onTap = { markerColorPaletteVisible = !markerColorPaletteVisible })
                                         }
                                 )
-                                TextButton(
-                                    enabled = markerSelections[activePageIndex].orEmpty().isNotEmpty(),
-                                    onClick = {
-                                        val selections = markerSelections[activePageIndex].orEmpty()
-                                        val lastSelection = selections.last()
-                                        markerSelections = markerSelections + (activePageIndex to selections.dropLast(1))
-                                        markerRedoSelections = markerRedoSelections + (activePageIndex to (markerRedoSelections[activePageIndex].orEmpty() + lastSelection))
-                                    },
-                                    modifier = Modifier.size(34.dp)
-                                ) { Text("↶", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-                                TextButton(
-                                    enabled = markerRedoSelections[activePageIndex].orEmpty().isNotEmpty(),
-                                    onClick = {
-                                        val selections = markerRedoSelections[activePageIndex].orEmpty()
-                                        val restoredSelection = selections.last()
-                                        markerSelections = markerSelections + (activePageIndex to (markerSelections[activePageIndex].orEmpty() + restoredSelection))
-                                        markerRedoSelections = markerRedoSelections + (activePageIndex to selections.dropLast(1))
-                                    },
-                                    modifier = Modifier.size(34.dp)
-                                ) { Text("↷", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-                                TextButton(
-                                    enabled = markerSelections.values.any { it.isNotEmpty() },
-                                    onClick = {
-                                        savePdfMarkers(context, media.uri, markerSelections)
-                                        copyNotice = "Saved"
-                                    },
-                                    modifier = Modifier.size(34.dp)
-                                ) { Text("💾", fontSize = 16.sp) }
-                                if (pageNavigationIsVertical) {
-                                    Box(modifier = Modifier.width(74.dp)) {
-                                        StyledValueSlider(
-                                            value = markerOpacity,
-                                            valueRange = 0.14f..0.72f,
-                                            trackBrush = Brush.horizontalGradient(listOf(markerColor.copy(alpha = 0.2f), markerColor)),
-                                            thumbColor = markerColor,
-                                            onValueChange = { markerOpacity = it }
-                                        )
-                                    }
-                                } else {
-                                    VerticalMarkerOpacitySlider(
-                                        value = markerOpacity,
-                                        onValueChange = { markerOpacity = it },
-                                        color = markerColor
-                                    )
+                                if (!isMarkingInProgress) {
+                                    TextButton(
+                                        enabled = markerSelections[activePageIndex].orEmpty().isNotEmpty(),
+                                        onClick = {
+                                            val selections = markerSelections[activePageIndex].orEmpty()
+                                            val lastSelection = selections.last()
+                                            markerSelections = markerSelections + (activePageIndex to selections.dropLast(1))
+                                            markerRedoSelections = markerRedoSelections + (activePageIndex to (markerRedoSelections[activePageIndex].orEmpty() + lastSelection))
+                                        }
+                                    ) { Text("Undo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                                    TextButton(
+                                        enabled = markerRedoSelections[activePageIndex].orEmpty().isNotEmpty(),
+                                        onClick = {
+                                            val selections = markerRedoSelections[activePageIndex].orEmpty()
+                                            val restoredSelection = selections.last()
+                                            markerSelections = markerSelections + (activePageIndex to (markerSelections[activePageIndex].orEmpty() + restoredSelection))
+                                            markerRedoSelections = markerRedoSelections + (activePageIndex to selections.dropLast(1))
+                                        }
+                                    ) { Text("Redo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                                    TextButton(
+                                        enabled = markerSelections.values.any { it.isNotEmpty() },
+                                        onClick = {
+                                            savePdfMarkers(context, media.uri, markerSelections)
+                                            copyNotice = "Saved"
+                                        }
+                                    ) { Text("Save", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
                                 }
                             }
                             if (pageNavigationIsVertical) {
@@ -3575,43 +3553,83 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     .align(Alignment.BottomEnd)
                                     .offset {
                                         if (pageNavigationIsVertical) {
-                                            IntOffset(markerFabOffset.x.roundToInt() - 176, markerFabOffset.y.roundToInt() - 52)
+                                            val xBase = if (markerToolsPanelFitsLeft) {
+                                                markerFabOffset.x - 176f
+                                            } else {
+                                                markerFabOffset.x + markerFabSizePx + 8f
+                                            }
+                                            val yBase = if (markerPalettePanelFitsAbove) {
+                                                markerFabOffset.y - markerPalettePanelHeightPx
+                                            } else {
+                                                markerFabOffset.y + markerFabSizePx + 8f
+                                            }
+                                            IntOffset(xBase.roundToInt(), yBase.roundToInt())
                                         } else {
-                                            IntOffset(markerFabOffset.x.roundToInt() - 48, markerFabOffset.y.roundToInt() - 134)
+                                            IntOffset(markerFabOffset.x.roundToInt() - 4 - 196, markerFabOffset.y.roundToInt() - 134)
                                         }
                                     },
                                 shape = RoundedCornerShape(15.dp),
                                 color = Color(0xEE171A2B),
                                 shadowElevation = 10.dp
                             ) {
-                                val palette: @Composable () -> Unit = {
-                                    listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .background(color)
-                                                .border(if (color == markerColor) 2.dp else 1.dp, Color.White, CircleShape)
-                                                .pointerInput(color) {
-                                                    detectTapGestures(onTap = {
-                                                        markerColor = color
-                                                        markerColorPaletteVisible = false
-                                                        markerToolsVisible = false
-                                                    })
-                                                }
+                                if (!pageNavigationIsVertical) {
+                                    Column(modifier = Modifier.width(186.dp).padding(10.dp)) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        .clip(CircleShape)
+                                                        .background(color)
+                                                        .border(if (color == markerColor) 2.dp else 1.dp, Color.White, CircleShape)
+                                                        .pointerInput(color) {
+                                                            detectTapGestures(onTap = {
+                                                                markerColor = color
+                                                                markerColorPaletteVisible = false
+                                                                markerToolsVisible = false
+                                                            })
+                                                        }
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.height(10.dp))
+                                        StyledValueSlider(
+                                            value = markerOpacity,
+                                            valueRange = 0.14f..0.72f,
+                                            trackBrush = Brush.horizontalGradient(listOf(markerColor.copy(alpha = 0.2f), markerColor)),
+                                            thumbColor = markerColor,
+                                            onValueChange = { markerOpacity = it }
                                         )
                                     }
-                                }
-                                if (pageNavigationIsVertical) {
-                                    Row(
-                                        modifier = Modifier.padding(7.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) { palette() }
                                 } else {
                                     Column(
-                                        modifier = Modifier.padding(7.dp),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) { palette() }
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .clip(CircleShape)
+                                                    .background(color)
+                                                    .border(if (color == markerColor) 2.dp else 1.dp, Color.White, CircleShape)
+                                                    .pointerInput(color) {
+                                                        detectTapGestures(onTap = {
+                                                            markerColor = color
+                                                            markerColorPaletteVisible = false
+                                                            markerToolsVisible = false
+                                                        })
+                                                    }
+                                            )
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        VerticalMarkerOpacitySlider(
+                                            value = markerOpacity,
+                                            onValueChange = { markerOpacity = it },
+                                            color = markerColor
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -3621,7 +3639,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .offset { IntOffset(markerFabOffset.x.roundToInt(), markerFabOffset.y.roundToInt()) }
-                            .size(54.dp)
+                            .size(44.dp)
                             .graphicsLayer { scaleX = markerFabScale; scaleY = markerFabScale }
                             .shadow(elevation = 12.dp, shape = CircleShape, ambientColor = markerColor, spotColor = markerColor)
                             .clip(CircleShape)
@@ -3655,7 +3673,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("✎", color = Color(0xFF101822), fontSize = 27.sp, fontWeight = FontWeight.Black)
+                        Text("✎", color = Color(0xFF101822), fontSize = 20.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
