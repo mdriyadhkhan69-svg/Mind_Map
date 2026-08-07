@@ -126,6 +126,9 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.withTimeoutOrNull
 // ---- preset color swatches for node color / glow color pickers ----
 private val ColorSwatches = listOf(
@@ -2955,6 +2958,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val markerFabTopPx = readerSize.height - markerFabSizePx + markerFabOffset.y
     val markerToolsPanelFitsLeft = markerFabLeftPx >= markerToolsPanelWidthPx
     val markerPalettePanelFitsAbove = markerFabTopPx >= markerPalettePanelHeightPx
+    var colorSwatchPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    var colorSwatchSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
+    var readerPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
+    var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
     val pageSwipeThreshold = (
         if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
     ).toFloat().times(0.22f).coerceAtLeast(140f)
@@ -2985,6 +2993,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
             requestedPage = clampedPage
             swipeDistance = 0f
             pageSwipeVersion += 1
+            undoMarkerCandidate = null
         }
     }
 
@@ -3098,7 +3107,14 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(color = Color(0xFF101822), modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { readerSize = it.size }) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned {
+                        readerSize = it.size
+                        readerPositionInWindow = it.positionInWindow()
+                    }
+            ) {
                 val visiblePreview = pagePreview?.takeIf { it.pageIndex == requestedPage }
                 val adjacentPage = when {
                     swipeDistance < 0f -> visiblePreview?.pageIndex?.plus(1)
@@ -3195,8 +3211,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
 
                                         when {
                                             released -> {
-                                                // ---- সাধারণ tap: controls toggle / selection clear (আলাদা detector সরিয়ে এখানেই আনা হলো, race এড়াতে) ----
-                                                if (selectedTextForActions != null || selectedTextSelection != null) {
+                                                if (undoMarkerCandidate != null) {
+                                                    undoMarkerCandidate = null
+                                                } else if (selectedTextForActions != null || selectedTextSelection != null) {
                                                     selectedTextForActions = null
                                                     selectedTextSelection = null
                                                 } else {
@@ -3264,18 +3281,15 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                                 boundsOverlap(existing.textBounds, committed.textBounds)
                                                             }
                                                             if (overlapping != null) {
-                                                                // আগে থেকে মার্ক করা text আবার select করা হলো — নতুন মার্ক না বসিয়ে আগের মার্কটা সরিয়ে দাও (undo-এর মতো), redo-তে জমা রাখো
-                                                                markerSelections = markerSelections + (
-                                                                        preview.pageIndex to (existingOnPage - overlapping)
-                                                                        )
-                                                                markerRedoSelections = markerRedoSelections + (
-                                                                        preview.pageIndex to (markerRedoSelections[preview.pageIndex].orEmpty() + overlapping)
-                                                                        )
+                                                                // এখনই সরাসরি undo না করে, শুধু Undo বাটনসহ একটা ছোট popup দেখাও
+                                                                undoMarkerCandidate = preview.pageIndex to overlapping
+                                                                undoMarkerPopupPosition = down.position
                                                             } else {
                                                                 markerSelections = markerSelections + (
                                                                         preview.pageIndex to (existingOnPage + committed)
                                                                         )
                                                                 markerRedoSelections = markerRedoSelections + (preview.pageIndex to emptyList())
+                                                                undoMarkerCandidate = null
                                                             }
                                                         }
                                                         activeMarkerSelection = null
@@ -3467,37 +3481,42 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             PdfReaderControl(if (markerEnabled) "Marker on" else "Marker") {
                                 markerEnabled = !markerEnabled
                                 markerToolsVisible = markerEnabled
+                                undoMarkerCandidate = null
                             }
                         }
                     }
                 }
 
                 if (markerEnabled && controlsVisible) {
-                    if (markerToolsVisible) {
-                        Surface(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .offset {
-                                    if (pageNavigationIsVertical) {
-                                        val xBase = if (markerToolsPanelFitsLeft) {
-                                            markerFabOffset.x - 176f
-                                        } else {
-                                            markerFabOffset.x + markerFabSizePx + 8f
-                                        }
-                                        IntOffset(xBase.roundToInt(), markerFabOffset.y.roundToInt() - 4)
+                    AnimatedVisibility(
+                        visible = markerToolsVisible,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .offset {
+                                if (pageNavigationIsVertical) {
+                                    val xBase = if (markerToolsPanelFitsLeft) {
+                                        markerFabOffset.x - 176f
                                     } else {
-                                        IntOffset(markerFabOffset.x.roundToInt() - 4, markerFabOffset.y.roundToInt() - 134)
+                                        markerFabOffset.x + markerFabSizePx + 8f
                                     }
-                                },
-                            shape = RoundedCornerShape(16.dp),
-                            color = Color(0xEE171A2B),
-                            shadowElevation = 10.dp
-                        ) {
+                                    IntOffset(xBase.roundToInt(), markerFabOffset.y.roundToInt() - 4)
+                                } else {
+                                    IntOffset(markerFabOffset.x.roundToInt() - 4, markerFabOffset.y.roundToInt() - 134)
+                                }
+                            },
+                        enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.85f),
+                        exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.85f)
+                    ) {
+                        Surface(shape = RoundedCornerShape(16.dp), color = Color(0xEE171A2B), shadowElevation = 10.dp) {
                             val isMarkingInProgress = activeMarkerSelection != null
                             val toolContent: @Composable () -> Unit = {
                                 Box(
                                     modifier = Modifier
                                         .size(28.dp)
+                                        .onGloballyPositioned {
+                                            colorSwatchPositionInWindow = it.positionInWindow()
+                                            colorSwatchSize = it.size
+                                        }
                                         .clip(CircleShape)
                                         .background(markerColor)
                                         .border(1.dp, Color.White.copy(alpha = 0.8f), CircleShape)
@@ -3514,7 +3533,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             markerSelections = markerSelections + (activePageIndex to selections.dropLast(1))
                                             markerRedoSelections = markerRedoSelections + (activePageIndex to (markerRedoSelections[activePageIndex].orEmpty() + lastSelection))
                                         }
-                                    ) { Text("Undo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                                    ) { Text("Undo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
                                     TextButton(
                                         enabled = markerRedoSelections[activePageIndex].orEmpty().isNotEmpty(),
                                         onClick = {
@@ -3523,19 +3542,22 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             markerSelections = markerSelections + (activePageIndex to (markerSelections[activePageIndex].orEmpty() + restoredSelection))
                                             markerRedoSelections = markerRedoSelections + (activePageIndex to selections.dropLast(1))
                                         }
-                                    ) { Text("Redo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                                    ) { Text("Redo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
                                     TextButton(
                                         enabled = markerSelections.values.any { it.isNotEmpty() },
                                         onClick = {
                                             savePdfMarkers(context, media.uri, markerSelections)
                                             copyNotice = "Saved"
                                         }
-                                    ) { Text("Save", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                                    ) { Text("Save", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
                                 }
                             }
                             if (pageNavigationIsVertical) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                                    modifier = Modifier
+                                        .widthIn(max = 320.dp)
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(horizontal = 8.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                                 ) { toolContent() }
@@ -3547,31 +3569,39 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 ) { toolContent() }
                             }
                         }
-                        if (markerColorPaletteVisible) {
-                            Surface(
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .offset {
-                                        if (pageNavigationIsVertical) {
-                                            val xBase = if (markerToolsPanelFitsLeft) {
-                                                markerFabOffset.x - 176f
-                                            } else {
-                                                markerFabOffset.x + markerFabSizePx + 8f
-                                            }
-                                            val yBase = if (markerPalettePanelFitsAbove) {
-                                                markerFabOffset.y - markerPalettePanelHeightPx
-                                            } else {
-                                                markerFabOffset.y + markerFabSizePx + 8f
-                                            }
-                                            IntOffset(xBase.roundToInt(), yBase.roundToInt())
-                                        } else {
-                                            IntOffset(markerFabOffset.x.roundToInt() - 4 - 196, markerFabOffset.y.roundToInt() - 134)
-                                        }
-                                    },
-                                shape = RoundedCornerShape(15.dp),
-                                color = Color(0xEE171A2B),
-                                shadowElevation = 10.dp
-                            ) {
+                    }
+
+                    if (markerToolsVisible) {
+                        val localDensity = LocalDensity.current
+                        val swatchLocalPos = colorSwatchPositionInWindow - readerPositionInWindow
+                        val paletteSizePx = if (pageNavigationIsVertical) {
+                            IntSize(with(localDensity) { 64.dp.roundToPx() }, with(localDensity) { 232.dp.roundToPx() })
+                        } else {
+                            IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
+                        }
+                        val gapPx = with(localDensity) { 10.dp.toPx() }
+                        val fitsRight = swatchLocalPos.x + colorSwatchSize.width + gapPx + paletteSizePx.width <= readerSize.width
+                        val targetPaletteX = if (fitsRight) {
+                            swatchLocalPos.x + colorSwatchSize.width + gapPx
+                        } else {
+                            (swatchLocalPos.x - gapPx - paletteSizePx.width).coerceAtLeast(0f)
+                        }
+                        val swatchCenterY = swatchLocalPos.y + colorSwatchSize.height / 2f
+                        val maxY = (readerSize.height - paletteSizePx.height).coerceAtLeast(0).toFloat()
+                        val targetPaletteY = (swatchCenterY - paletteSizePx.height / 2f).coerceIn(0f, maxY)
+                        val animatedPaletteOffset by animateOffsetAsState(
+                            targetValue = Offset(targetPaletteX, targetPaletteY),
+                            animationSpec = tween(220),
+                            label = "colorPaletteOffset"
+                        )
+
+                        AnimatedVisibility(
+                            visible = markerColorPaletteVisible,
+                            modifier = Modifier.offset { IntOffset(animatedPaletteOffset.x.roundToInt(), animatedPaletteOffset.y.roundToInt()) },
+                            enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.85f),
+                            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.85f)
+                        ) {
+                            Surface(shape = RoundedCornerShape(15.dp), color = Color(0xEE171A2B), shadowElevation = 10.dp) {
                                 if (!pageNavigationIsVertical) {
                                     Column(modifier = Modifier.width(186.dp).padding(10.dp)) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
