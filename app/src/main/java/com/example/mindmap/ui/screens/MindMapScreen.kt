@@ -2947,6 +2947,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var markerFabOffset by remember(media.uri) { mutableStateOf(Offset.Zero) }
     var markerFabPressed by remember(media.uri) { mutableStateOf(false) }
     var readerSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
+    var readerPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
     val pageCache = remember(media.uri) { mutableStateMapOf<Int, PdfPagePreview>() }
     val pdfLoadScope = rememberCoroutineScope()
     val activePageIndex = pagePreview?.pageIndex ?: requestedPage
@@ -2959,6 +2960,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val markerToolsPanelFitsLeft = markerFabLeftPx >= markerToolsPanelWidthPx
     val markerPalettePanelFitsAbove = markerFabTopPx >= markerPalettePanelHeightPx
     var colorPalettePanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
+    var colorSwatchPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    var colorSwatchSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
     var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
     val pageSwipeThreshold = (
