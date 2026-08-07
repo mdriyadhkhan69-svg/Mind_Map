@@ -3574,37 +3574,21 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     if (markerToolsVisible) {
                         val localDensity = LocalDensity.current
                         val swatchLocalPos = colorSwatchPositionInWindow - readerPositionInWindow
-                        val gapPx = with(localDensity) { 10.dp.toPx() }
                         val paletteSizePx = if (pageNavigationIsVertical) {
                             IntSize(with(localDensity) { 64.dp.roundToPx() }, with(localDensity) { 232.dp.roundToPx() })
                         } else {
                             IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
                         }
-                        val targetPaletteX: Float
-                        val targetPaletteY: Float
-                        if (pageNavigationIsVertical) {
-                            // Row-style tools panel-e Undo/Redo/Save swatch-er DANE thake,
-                            // tai color panel take swatch-er UPORE/NICHE khulte hobe, pashe na
-                            val fitsAbove = swatchLocalPos.y - gapPx - paletteSizePx.height >= 0f
-                            targetPaletteY = if (fitsAbove) {
-                                swatchLocalPos.y - gapPx - paletteSizePx.height
-                            } else {
-                                swatchLocalPos.y + colorSwatchSize.height + gapPx
-                            }
-                            val swatchCenterX = swatchLocalPos.x + colorSwatchSize.width / 2f
-                            val maxX = (readerSize.width - paletteSizePx.width).coerceAtLeast(0).toFloat()
-                            targetPaletteX = (swatchCenterX - paletteSizePx.width / 2f).coerceIn(0f, maxX)
+                        val gapPx = with(localDensity) { 10.dp.toPx() }
+                        val fitsRight = swatchLocalPos.x + colorSwatchSize.width + gapPx + paletteSizePx.width <= readerSize.width
+                        val targetPaletteX = if (fitsRight) {
+                            swatchLocalPos.x + colorSwatchSize.width + gapPx
                         } else {
-                            val fitsRight = swatchLocalPos.x + colorSwatchSize.width + gapPx + paletteSizePx.width <= readerSize.width
-                            targetPaletteX = if (fitsRight) {
-                                swatchLocalPos.x + colorSwatchSize.width + gapPx
-                            } else {
-                                (swatchLocalPos.x - gapPx - paletteSizePx.width).coerceAtLeast(0f)
-                            }
-                            val swatchCenterY = swatchLocalPos.y + colorSwatchSize.height / 2f
-                            val maxY = (readerSize.height - paletteSizePx.height).coerceAtLeast(0).toFloat()
-                            targetPaletteY = (swatchCenterY - paletteSizePx.height / 2f).coerceIn(0f, maxY)
+                            (swatchLocalPos.x - gapPx - paletteSizePx.width).coerceAtLeast(0f)
                         }
+                        val swatchCenterY = swatchLocalPos.y + colorSwatchSize.height / 2f
+                        val maxY = (readerSize.height - paletteSizePx.height).coerceAtLeast(0).toFloat()
+                        val targetPaletteY = (swatchCenterY - paletteSizePx.height / 2f).coerceIn(0f, maxY)
                         val animatedPaletteOffset by animateOffsetAsState(
                             targetValue = Offset(targetPaletteX, targetPaletteY),
                             animationSpec = tween(220),
