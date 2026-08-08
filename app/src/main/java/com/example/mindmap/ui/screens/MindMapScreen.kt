@@ -76,6 +76,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
@@ -2615,6 +2617,40 @@ private fun savePdfLibraryStyle(context: android.content.Context, style: PdfLibr
     editor.apply()
 }
 
+private val SkippedDeviceDirectoryNames = setOf(
+    "android", "dcim", "pictures", "movies", "music", "ringtones",
+    "podcasts", "notifications", "alarms", "camera", "screenshots",
+    "whatsapp images", "whatsapp video", "whatsapp voice notes",
+    "whatsapp animated gifs", "whatsapp audio", "sent", "statuses",
+    "video", "images", "photos", "telegram images", "telegram video",
+    "telegram audio", "cache", "caches"
+)
+
+private fun shouldSkipDeviceDirectory(name: String): Boolean {
+    if (name.startsWith(".")) return true
+    return name.lowercase() in SkippedDeviceDirectoryNames
+}
+private fun loadPersistedDeviceFiles(context: android.content.Context): List<DeviceFile> = runCatching {
+    val raw = context.getSharedPreferences("device_file_cache", android.content.Context.MODE_PRIVATE)
+        .getString("files", null) ?: return@runCatching emptyList()
+    val array = org.json.JSONArray(raw)
+    buildList {
+        repeat(array.length()) { i ->
+            val path = array.optJSONObject(i)?.optString("path") ?: return@repeat
+            val file = File(path)
+            if (file.isFile) add(DeviceFile(file, file.name, file.extension.lowercase()))
+        }
+    }
+}.getOrDefault(emptyList())
+
+private fun savePersistedDeviceFiles(context: android.content.Context, files: List<DeviceFile>) {
+    val array = org.json.JSONArray()
+    files.forEach { array.put(org.json.JSONObject().put("path", it.file.path)) }
+    context.getSharedPreferences("device_file_cache", android.content.Context.MODE_PRIVATE)
+        .edit()
+        .putString("files", array.toString())
+        .apply()
+}
 private fun findDeviceFiles(): List<DeviceFile> {
     cachedDeviceFiles()?.let { return it }
     val root = android.os.Environment.getExternalStorageDirectory()
@@ -2627,7 +2663,7 @@ private fun findDeviceFiles(): List<DeviceFile> {
         val children = runCatching { current.listFiles()?.toList().orEmpty() }.getOrDefault(emptyList())
         children.forEach { child ->
             when {
-                child.isDirectory && child.name !in setOf("Android", ".thumbnails") -> queue.add(child)
+                child.isDirectory && !shouldSkipDeviceDirectory(child.name) -> queue.add(child)
                 child.isFile -> {
                     val extension = child.extension.lowercase()
                     if (extension in SupportedDeviceFileExtensions) {
@@ -2969,23 +3005,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
     ).toFloat().times(0.22f).coerceAtLeast(140f)
 
-    DisposableEffect(controlsVisible) {
-        val activity = context as? android.app.Activity
-        val controller = activity?.window?.let { window ->
-            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
-        }
-        if (controlsVisible) {
-            controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        } else {
-            activity?.window?.statusBarColor = AndroidColor.BLACK
-            activity?.window?.navigationBarColor = AndroidColor.BLACK
-            controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose {
-            controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        }
-    }
-
     fun changePage(nextPage: Int) {
         val totalPages = pagePreview?.pageCount ?: return
         val clampedPage = nextPage.coerceIn(0, totalPages - 1)
@@ -3108,6 +3127,25 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        DisposableEffect(controlsVisible, dialogWindow) {
+            val window = dialogWindow
+            val controller = window?.let {
+                androidx.core.view.WindowCompat.getInsetsController(it, it.decorView)
+            }
+            controller?.systemBarsBehavior =
+                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (controlsVisible) {
+                controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            } else {
+                window?.statusBarColor = AndroidColor.BLACK
+                window?.navigationBarColor = AndroidColor.BLACK
+                controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+            onDispose {
+                controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
         Surface(color = Color(0xFF101822), modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
@@ -3404,7 +3442,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
 
                 selectedTextForActions?.let { selectedText ->
                     Surface(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .graphicsLayer { rotationZ = rotation },
                         shape = RoundedCornerShape(16.dp),
                         color = Color(0xEE171A2B),
                         shadowElevation = 10.dp
@@ -3433,7 +3473,10 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                 }
                 copyNotice?.let { message ->
                     Surface(
-                        modifier = Modifier.align(Alignment.Center).offset(y = 56.dp),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .offset(y = 56.dp)
+                            .graphicsLayer { rotationZ = rotation },
                         shape = RoundedCornerShape(12.dp),
                         color = Color(0xEE171A2B)
                     ) {
@@ -3456,7 +3499,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     (popupPosition.y + popupPaddingPx - 50f).roundToInt().coerceIn(0, maxY)
                                 )
                             }
-                            .zIndex(45f),
+                            .zIndex(45f)
+                            .graphicsLayer { rotationZ = rotation },
                         shape = RoundedCornerShape(10.dp),
                         color = Color(0xEE171A2B),
                         shadowElevation = 10.dp
@@ -3505,7 +3549,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     val toolsDensity = LocalDensity.current
                     val toolsGapPx = with(toolsDensity) { 8.dp.toPx() }
                     val toolsSizePx = markerToolsPanelSize.takeIf { it.width > 0 && it.height > 0 }
-                        ?: IntSize(with(toolsDensity) { 202.dp.roundToPx() }, with(toolsDensity) { 44.dp.roundToPx() })
+                        ?: if (pageNavigationIsVertical) {
+                            IntSize(with(toolsDensity) { 202.dp.roundToPx() }, with(toolsDensity) { 44.dp.roundToPx() })
+                        } else {
+                            IntSize(with(toolsDensity) { 52.dp.roundToPx() }, with(toolsDensity) { 184.dp.roundToPx() })
+                        }
                     val targetHorizontalToolsOffset = run {
                         val fabAbsLeft = readerSize.width - markerFabSizePx + markerFabOffset.x
                         val fabAbsRight = readerSize.width.toFloat() + markerFabOffset.x
@@ -3524,8 +3572,27 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             toolsAbsTop - (readerSize.height - toolsSizePx.height)
                         )
                     }
-                    val animatedHorizontalToolsOffset by animateOffsetAsState(
-                        targetValue = targetHorizontalToolsOffset,
+                    val targetVerticalToolsOffset = run {
+                        val fabAbsLeft = readerSize.width - markerFabSizePx + markerFabOffset.x
+                        val fabAbsTop = readerSize.height - markerFabSizePx + markerFabOffset.y
+                        val fabAbsBottom = readerSize.height.toFloat() + markerFabOffset.y
+                        val fitsAbove = fabAbsTop - toolsGapPx - toolsSizePx.height >= 0f
+                        val maxTop = (readerSize.height - toolsSizePx.height).toFloat().coerceAtLeast(0f)
+                        val toolsAbsTop = (if (fitsAbove) {
+                            fabAbsTop - toolsGapPx - toolsSizePx.height
+                        } else {
+                            fabAbsBottom + toolsGapPx
+                        }).coerceIn(0f, maxTop)
+                        val maxLeft = (readerSize.width - toolsSizePx.width).toFloat().coerceAtLeast(0f)
+                        val toolsAbsLeft = (fabAbsLeft - 4f).coerceIn(0f, maxLeft)
+                        Offset(
+                            toolsAbsLeft - (readerSize.width - toolsSizePx.width),
+                            toolsAbsTop - (readerSize.height - toolsSizePx.height)
+                        )
+                    }
+                    val targetToolsOffset = if (pageNavigationIsVertical) targetHorizontalToolsOffset else targetVerticalToolsOffset
+                    val animatedToolsOffset by animateOffsetAsState(
+                        targetValue = targetToolsOffset,
                         animationSpec = tween(220),
                         label = "markerToolsOffset"
                     )
@@ -3533,13 +3600,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                         visible = markerToolsVisible,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .offset {
-                                if (pageNavigationIsVertical) {
-                                    IntOffset(animatedHorizontalToolsOffset.x.roundToInt(), animatedHorizontalToolsOffset.y.roundToInt())
-                                } else {
-                                    IntOffset(markerFabOffset.x.roundToInt() - 4, markerFabOffset.y.roundToInt() - 134)
-                                }
-                            },
+                            .offset { IntOffset(animatedToolsOffset.x.roundToInt(), animatedToolsOffset.y.roundToInt()) },
                         enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.85f),
                         exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.85f)
                     ) {
@@ -3639,10 +3700,22 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 paletteAbsTop - (readerSize.height - paletteSizePx.height)
                             )
                         } else {
-                            val targetPaletteX = (markerFabOffset.x + markerFabSizePx / 2f - paletteSizePx.width / 2f)
-                                .coerceIn(-(readerSize.width.toFloat() - paletteSizePx.width).coerceAtLeast(0f), 0f)
-                            val targetPaletteY = markerFabOffset.y - paletteSizePx.height - gapPx
-                            Offset(targetPaletteX, targetPaletteY)
+                            val fabAbsTop = readerSize.height - markerFabSizePx + markerFabOffset.y
+                            val fabAbsBottom = readerSize.height.toFloat() + markerFabOffset.y
+                            val fitsAbove = fabAbsTop - gapPx - paletteSizePx.height >= 0f
+                            val maxTop = (readerSize.height - paletteSizePx.height).toFloat().coerceAtLeast(0f)
+                            val paletteAbsTop = (if (fitsAbove) {
+                                fabAbsTop - gapPx - paletteSizePx.height
+                            } else {
+                                fabAbsBottom + gapPx
+                            }).coerceIn(0f, maxTop)
+                            val fabAbsCenterX = readerSize.width - markerFabSizePx / 2f + markerFabOffset.x
+                            val maxLeft = (readerSize.width - paletteSizePx.width).toFloat().coerceAtLeast(0f)
+                            val paletteAbsLeft = (fabAbsCenterX - paletteSizePx.width / 2f).coerceIn(0f, maxLeft)
+                            Offset(
+                                paletteAbsLeft - (readerSize.width - paletteSizePx.width),
+                                paletteAbsTop - (readerSize.height - paletteSizePx.height)
+                            )
                         }
                         val animatedPaletteOffset by animateOffsetAsState(
                             targetValue = targetPaletteOffset,
@@ -5747,7 +5820,7 @@ private fun PdfLibraryHomeDialog(
         context.getSharedPreferences("pdf_library", android.content.Context.MODE_PRIVATE)
     }
     var hasAllFilesAccess by remember { mutableStateOf(android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager()) }
-    val cachedFilesAtOpen = remember { cachedDeviceFiles() }
+    val cachedFilesAtOpen = remember { cachedDeviceFiles() ?: loadPersistedDeviceFiles(context).takeIf { it.isNotEmpty() } }
     var files by remember { mutableStateOf(cachedFilesAtOpen.orEmpty()) }
     var isLoading by remember { mutableStateOf(cachedFilesAtOpen == null && hasAllFilesAccess) }
     var activeTab by remember { mutableStateOf(libraryPreferences.getString("last_tab", "files") ?: "files") }
@@ -5877,13 +5950,22 @@ private fun PdfLibraryHomeDialog(
     }
     LaunchedEffect(hasAllFilesAccess) {
         if (hasAllFilesAccess) {
-            cachedDeviceFiles()?.let {
-                files = it
+            val memoryCached = cachedDeviceFiles()
+            if (memoryCached != null) {
+                files = memoryCached
                 isLoading = false
-            } ?: run {
-                isLoading = true
-                files = withContext(Dispatchers.IO) { findDeviceFiles() }
+            } else {
+                val persisted = loadPersistedDeviceFiles(context)
+                if (persisted.isNotEmpty()) {
+                    files = persisted
+                    isLoading = false
+                } else {
+                    isLoading = true
+                }
+                val freshFiles = withContext(Dispatchers.IO) { findDeviceFiles() }
+                files = freshFiles
                 isLoading = false
+                savePersistedDeviceFiles(context, freshFiles)
             }
         }
     }
