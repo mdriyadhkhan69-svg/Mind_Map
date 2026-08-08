@@ -2151,19 +2151,45 @@ fun NodeBox(
     }
 }
 
+private object AttachmentBitmapCache {
+    private const val MAX_ENTRIES = 60
+    private val cache = object : LinkedHashMap<String, Bitmap>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean {
+            return size > MAX_ENTRIES
+        }
+    }
+
+    @Synchronized
+    fun get(key: String): Bitmap? = cache[key]
+
+    @Synchronized
+    fun put(key: String, bitmap: Bitmap) {
+        cache[key] = bitmap
+    }
+}
+
+private fun attachmentBitmapCacheKey(uri: String, maxSide: Int) = "$uri:$maxSide"
+
 @Composable
 private fun MediaThumbnail(
     uri: String,
     rotationDegrees: Float = 0f,
-    maxSide: Int = 320,
+    maxSide: Int = 640,
     contentScale: ContentScale = ContentScale.Crop,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var bitmap by remember(uri, maxSide) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(uri, maxSide) {
-        bitmap = withContext(Dispatchers.IO) {
-            runCatching { loadAttachmentBitmap(context, Uri.parse(uri), maxSide) }.getOrNull()
+    val cacheKey = remember(uri, maxSide) { attachmentBitmapCacheKey(uri, maxSide) }
+    var bitmap by remember(cacheKey) { mutableStateOf(AttachmentBitmapCache.get(cacheKey)) }
+    LaunchedEffect(cacheKey) {
+        if (bitmap == null) {
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching { loadAttachmentBitmap(context, Uri.parse(uri), maxSide) }.getOrNull()
+            }
+            if (loaded != null) {
+                AttachmentBitmapCache.put(cacheKey, loaded)
+                bitmap = loaded
+            }
         }
     }
     if (bitmap != null) {
@@ -2862,6 +2888,53 @@ private fun materializePdfForRendering(context: android.content.Context, uri: Ur
     return cacheFile
 }
 
+private fun pdfDownloadFileName(media: MediaEntity): String {
+    val base = media.displayName.ifBlank { "document" }
+    return if (base.endsWith(".pdf", ignoreCase = true)) base else "$base.pdf"
+}
+
+private fun isPdfAlreadyDownloaded(context: android.content.Context, media: MediaEntity): Boolean {
+    val safeName = pdfDownloadFileName(media)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        return runCatching {
+            context.contentResolver.query(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(android.provider.MediaStore.MediaColumns._ID),
+                "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                arrayOf(safeName),
+                null
+            )?.use { it.moveToFirst() } ?: false
+        }.getOrDefault(false)
+    }
+    val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+    return File(downloadsDir, safeName).isFile
+}
+
+private suspend fun downloadPdfToDevice(context: android.content.Context, media: MediaEntity): Boolean =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val sourceFile = materializePdfForRendering(context, Uri.parse(media.uri))
+            val safeName = pdfDownloadFileName(media)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                }
+                val itemUri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: return@runCatching false
+                val output = resolver.openOutputStream(itemUri) ?: return@runCatching false
+                output.use { destination -> sourceFile.inputStream().use { it.copyTo(destination) } }
+            } else {
+                val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                downloadsDir.mkdirs()
+                sourceFile.copyTo(File(downloadsDir, safeName), overwrite = true)
+            }
+            true
+        }.getOrDefault(false)
+    }
+
 private fun loadPdfPage(context: android.content.Context, uri: Uri, requestedPage: Int): PdfPagePreview {
     val localPdf = materializePdfForRendering(context, uri)
     val descriptor = android.os.ParcelFileDescriptor.open(
@@ -2987,6 +3060,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var readerPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
     val pageCache = remember(media.uri) { mutableStateMapOf<Int, PdfPagePreview>() }
     val pdfLoadScope = rememberCoroutineScope()
+    var isPdfDownloaded by remember(media.uri) { mutableStateOf(false) }
+    var isPdfDownloading by remember(media.uri) { mutableStateOf(false) }
+    LaunchedEffect(media.uri) {
+        isPdfDownloaded = withContext(Dispatchers.IO) { isPdfAlreadyDownloaded(context, media) }
+    }
     val activePageIndex = pagePreview?.pageIndex ?: requestedPage
     val pageNavigationIsVertical = abs(rotation % 180f) > 45f
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
@@ -3532,6 +3610,66 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                         }
                     }
                 }
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .pointerInput("pdf-top-bar-guard") { detectTapGestures(onTap = {}) }
+                ) {
+                    AnimatedVisibility(visible = controlsVisible) {
+                        Surface(color = Color(0xEE171A2B), shadowElevation = 10.dp) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(onClick = onDismiss) { Text("Back", color = AccentCyan) }
+                                Text(
+                                    text = media.displayName,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).padding(start = 4.dp)
+                                )
+                                TextButton(
+                                    enabled = !isPdfDownloading && !isPdfDownloaded,
+                                    onClick = {
+                                        if (!isPdfDownloaded && !isPdfDownloading) {
+                                            isPdfDownloading = true
+                                            pdfLoadScope.launch {
+                                                val success = downloadPdfToDevice(context, media)
+                                                isPdfDownloading = false
+                                                if (success) isPdfDownloaded = true
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        text = if (isPdfDownloaded) "Downloaded" else "Download",
+                                        color = if (isPdfDownloaded) Color(0xFF4CAF50) else AccentCyan,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible = isPdfDownloading,
+                        enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                        exit = shrinkVertically(tween(200)) + fadeOut(tween(150))
+                    ) {
+                        Surface(color = Color(0xDD171A2B)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(color = AccentCyan, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Text("Downloading...", color = Color.White, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
                 AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.BottomCenter)) {
                     Surface(color = Color(0xEE171A2B), shadowElevation = 10.dp) {
                         Row(
