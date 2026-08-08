@@ -2980,7 +2980,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var pageDirection by remember(media.uri) { mutableIntStateOf(1) }
     var pageSwipeVersion by remember(media.uri) { mutableIntStateOf(0) }
     var skipPageAnimation by remember(media.uri) { mutableStateOf(false) }
-    var markerFabOffset by remember(media.uri) { mutableStateOf(Offset.Zero) }
+    val initialMarkerFabOffsetPx = with(LocalDensity.current) { Offset(0f, -64.dp.toPx()) }
+    var markerFabOffset by remember(media.uri) { mutableStateOf(initialMarkerFabOffsetPx) }
     var markerFabPressed by remember(media.uri) { mutableStateOf(false) }
     var readerSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var readerPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
@@ -3001,6 +3002,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var markerToolsPanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
     var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
+    var undoPopupSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
     val pageSwipeThreshold = (
         if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
     ).toFloat().times(0.22f).coerceAtLeast(140f)
@@ -3488,17 +3490,29 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     val popupPosition = undoMarkerPopupPosition ?: Offset.Zero
                     val popupDensity = LocalDensity.current
                     val popupPaddingPx = with(popupDensity) { 12.dp.toPx() }
+                    val undoSizePx = undoPopupSize.takeIf { it.width > 0 && it.height > 0 }
+                        ?: IntSize(with(popupDensity) { 64.dp.roundToPx() }, with(popupDensity) { 32.dp.roundToPx() })
+                    val footprintWidth = if (pageNavigationIsVertical) undoSizePx.height else undoSizePx.width
+                    val footprintHeight = if (pageNavigationIsVertical) undoSizePx.width else undoSizePx.height
+                    val desiredCenterX = popupPosition.x + popupPaddingPx - 32f + undoSizePx.width / 2f
+                    val desiredCenterY = popupPosition.y + popupPaddingPx - 50f + undoSizePx.height / 2f
+                    val halfFootprintWidth = footprintWidth / 2f
+                    val halfFootprintHeight = footprintHeight / 2f
+                    val clampedCenterX = desiredCenterX.coerceIn(
+                        halfFootprintWidth,
+                        (readerSize.width - halfFootprintWidth).coerceAtLeast(halfFootprintWidth)
+                    )
+                    val clampedCenterY = desiredCenterY.coerceIn(
+                        halfFootprintHeight,
+                        (readerSize.height - halfFootprintHeight).coerceAtLeast(halfFootprintHeight)
+                    )
+                    val undoTopLeftX = clampedCenterX - undoSizePx.width / 2f
+                    val undoTopLeftY = clampedCenterY - undoSizePx.height / 2f
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .offset {
-                                val maxX = (readerSize.width - with(popupDensity) { 64.dp.roundToPx() }).coerceAtLeast(0)
-                                val maxY = (readerSize.height - with(popupDensity) { 32.dp.roundToPx() }).coerceAtLeast(0)
-                                IntOffset(
-                                    (popupPosition.x + popupPaddingPx - 32f).roundToInt().coerceIn(0, maxX),
-                                    (popupPosition.y + popupPaddingPx - 50f).roundToInt().coerceIn(0, maxY)
-                                )
-                            }
+                            .offset { IntOffset(undoTopLeftX.roundToInt(), undoTopLeftY.roundToInt()) }
+                            .onGloballyPositioned { undoPopupSize = it.size }
                             .zIndex(45f)
                             .graphicsLayer { rotationZ = rotation },
                         shape = RoundedCornerShape(10.dp),
@@ -3677,12 +3691,29 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                         val localDensity = LocalDensity.current
                         val paletteSizePx = colorPalettePanelSize.takeIf { it.width > 0 && it.height > 0 }
                             ?: if (pageNavigationIsVertical) {
-                                IntSize(with(localDensity) { 64.dp.roundToPx() }, with(localDensity) { 232.dp.roundToPx() })
+                                IntSize(with(localDensity) { 92.dp.roundToPx() }, with(localDensity) { 168.dp.roundToPx() })
                             } else {
                                 IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
                             }
                         val gapPx = with(localDensity) { 10.dp.toPx() }
                         val targetPaletteOffset = if (pageNavigationIsVertical) {
+                            val swatchAbsLeft = colorSwatchPositionInWindow.x - readerPositionInWindow.x
+                            val swatchAbsTop = colorSwatchPositionInWindow.y - readerPositionInWindow.y
+                            val fitsAbove = swatchAbsTop - gapPx - paletteSizePx.height >= 0f
+                            val maxTop = (readerSize.height - paletteSizePx.height).toFloat().coerceAtLeast(0f)
+                            val paletteAbsTop = (if (fitsAbove) {
+                                swatchAbsTop - gapPx - paletteSizePx.height
+                            } else {
+                                swatchAbsTop + colorSwatchSize.height + gapPx
+                            }).coerceIn(0f, maxTop)
+                            val maxLeft = (readerSize.width - paletteSizePx.width).toFloat().coerceAtLeast(0f)
+                            val paletteAbsLeft = (swatchAbsLeft + colorSwatchSize.width / 2f - paletteSizePx.width / 2f)
+                                .coerceIn(0f, maxLeft)
+                            Offset(
+                                paletteAbsLeft - (readerSize.width - paletteSizePx.width),
+                                paletteAbsTop - (readerSize.height - paletteSizePx.height)
+                            )
+                        } else {
                             val swatchAbsLeft = colorSwatchPositionInWindow.x - readerPositionInWindow.x
                             val swatchAbsTop = colorSwatchPositionInWindow.y - readerPositionInWindow.y
                             val maxLeft = (readerSize.width - paletteSizePx.width).toFloat().coerceAtLeast(0f)
@@ -3695,23 +3726,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             val maxTop = (readerSize.height - paletteSizePx.height).toFloat().coerceAtLeast(0f)
                             val paletteAbsTop = (swatchAbsTop + colorSwatchSize.height / 2f - paletteSizePx.height / 2f)
                                 .coerceIn(0f, maxTop)
-                            Offset(
-                                paletteAbsLeft - (readerSize.width - paletteSizePx.width),
-                                paletteAbsTop - (readerSize.height - paletteSizePx.height)
-                            )
-                        } else {
-                            val fabAbsTop = readerSize.height - markerFabSizePx + markerFabOffset.y
-                            val fabAbsBottom = readerSize.height.toFloat() + markerFabOffset.y
-                            val fitsAbove = fabAbsTop - gapPx - paletteSizePx.height >= 0f
-                            val maxTop = (readerSize.height - paletteSizePx.height).toFloat().coerceAtLeast(0f)
-                            val paletteAbsTop = (if (fitsAbove) {
-                                fabAbsTop - gapPx - paletteSizePx.height
-                            } else {
-                                fabAbsBottom + gapPx
-                            }).coerceIn(0f, maxTop)
-                            val fabAbsCenterX = readerSize.width - markerFabSizePx / 2f + markerFabOffset.x
-                            val maxLeft = (readerSize.width - paletteSizePx.width).toFloat().coerceAtLeast(0f)
-                            val paletteAbsLeft = (fabAbsCenterX - paletteSizePx.width / 2f).coerceIn(0f, maxLeft)
                             Offset(
                                 paletteAbsLeft - (readerSize.width - paletteSizePx.width),
                                 paletteAbsTop - (readerSize.height - paletteSizePx.height)
@@ -3738,6 +3752,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 modifier = Modifier.onGloballyPositioned { colorPalettePanelSize = it.size }
                             ) {
                                 if (!pageNavigationIsVertical) {
+                                    // Vertical PDF: horizontal swatches, horizontal slider নিচে
                                     Column(modifier = Modifier.width(186.dp).padding(10.dp)) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
@@ -3767,28 +3782,33 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                         )
                                     }
                                 } else {
-                                    Column(
+                                    // Horizontal PDF: vertical swatches, vertical slider পাশে (side-by-side)
+                                    Row(
                                         modifier = Modifier.padding(10.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(24.dp)
-                                                    .clip(CircleShape)
-                                                    .background(color)
-                                                    .border(if (color == markerColor) 2.dp else 1.dp, Color.White, CircleShape)
-                                                    .pointerInput(color) {
-                                                        detectTapGestures(onTap = {
-                                                            markerColor = color
-                                                            markerColorPaletteVisible = false
-                                                            markerToolsVisible = false
-                                                        })
-                                                    }
-                                            )
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        .clip(CircleShape)
+                                                        .background(color)
+                                                        .border(if (color == markerColor) 2.dp else 1.dp, Color.White, CircleShape)
+                                                        .pointerInput(color) {
+                                                            detectTapGestures(onTap = {
+                                                                markerColor = color
+                                                                markerColorPaletteVisible = false
+                                                                markerToolsVisible = false
+                                                            })
+                                                        }
+                                                )
+                                            }
                                         }
-                                        Spacer(Modifier.height(4.dp))
                                         VerticalMarkerOpacitySlider(
                                             value = markerOpacity,
                                             onValueChange = { markerOpacity = it },
