@@ -373,6 +373,7 @@ fun MindMapApp(
         PdfLibraryHomeDialog(
             onDismiss = { (context as? android.app.Activity)?.finish() },
             onNavigateToMindMap = { openHome("mind_map") },
+            onNavigateToTimer = { openHome("timer") },
             onFileClick = { file ->
                 val uriString = Uri.fromFile(file.file).toString()
                 val mimeType = resolveAttachmentMimeType(file.name, null)
@@ -409,6 +410,12 @@ fun MindMapApp(
         libraryXlsx?.let { media ->
             XlsxViewerDialog(media = media, onDismiss = { libraryXlsx = null })
         }
+    } else if (activeHome == "timer") {
+        TimerHomeDialog(
+            onDismiss = { (context as? android.app.Activity)?.finish() },
+            onNavigateToMindMap = { openHome("mind_map") },
+            onNavigateToFiles = { openHome("pdf_library") }
+        )
     } else {
         MindMapScreen(
             viewModel = viewModel,
@@ -416,7 +423,8 @@ fun MindMapApp(
             sectionViewModel = sectionViewModel,
             lineViewModel = lineViewModel,
             mediaViewModel = mediaViewModel,
-            onOpenPdfHome = { openHome("pdf_library") }
+            onOpenPdfHome = { openHome("pdf_library") },
+            onOpenTimer = { openHome("timer") }
         )
     }
 
@@ -432,7 +440,8 @@ fun MindMapScreen(
     sectionViewModel: SectionViewModel,
     lineViewModel: LineViewModel,
     mediaViewModel: MediaViewModel,
-    onOpenPdfHome: () -> Unit
+    onOpenPdfHome: () -> Unit,
+    onOpenTimer: () -> Unit
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     val context = LocalContext.current
@@ -1345,6 +1354,10 @@ fun MindMapScreen(
                 DropdownMenuItem(
                     text = { Text("Files", color = themeColors.textPrimary) },
                     onClick = { showMainMenu = false; onOpenPdfHome() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Timer", color = themeColors.textPrimary) },
+                    onClick = { showMainMenu = false; onOpenTimer() }
                 )
             }
         }
@@ -6089,6 +6102,7 @@ private fun SmartPdfSearchBar(
 private fun PdfLibraryHomeDialog(
     onDismiss: () -> Unit,
     onNavigateToMindMap: () -> Unit,
+    onNavigateToTimer: () -> Unit,
     onFileClick: (DeviceFile) -> Unit
 ) {
     val context = LocalContext.current
@@ -6365,6 +6379,10 @@ private fun PdfLibraryHomeDialog(
                                     DropdownMenuItem(
                                         text = { Text("Mind map", color = librarySectionText) },
                                         onClick = { showHomeMenu = false; onNavigateToMindMap() }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Timer", color = librarySectionText) },
+                                        onClick = { showHomeMenu = false; onNavigateToTimer() }
                                     )
                                 }
                             }
