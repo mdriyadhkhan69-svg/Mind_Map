@@ -2474,6 +2474,31 @@ private object DeviceFileCache {
     @Volatile var updatedAtMillis: Long = 0L
 }
 
+/** In-process signal used to refresh the Files screen immediately after a download. */
+private object PdfLibraryRefresh {
+    var version by mutableIntStateOf(0)
+}
+
+private fun sharePdfFiles(context: android.content.Context, files: List<DeviceFile>) {
+    val sharedDir = File(context.cacheDir, "shared-files").apply { mkdirs() }
+    val uris = ArrayList<Uri>()
+    files.filter { it.file.isFile }.forEachIndexed { index, deviceFile ->
+        val target = File(sharedDir, "${System.currentTimeMillis()}_${index}_${deviceFile.name}")
+        deviceFile.file.copyTo(target, overwrite = true)
+        uris += FileProvider.getUriForFile(context, "${context.packageName}.attachments", target)
+    }
+    if (uris.isEmpty()) return
+    val intent = if (uris.size == 1) Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, uris.first())
+    } else Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = "application/pdf"
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+    }
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(intent, "Share PDF"))
+}
+
 private fun cachedDeviceFiles(): List<DeviceFile>? = DeviceFileCache.files.takeIf {
     it.isNotEmpty() && System.currentTimeMillis() - DeviceFileCache.updatedAtMillis < 10 * 60 * 1000L
 }
@@ -2991,6 +3016,21 @@ private fun pdfPageFrame(preview: PdfPagePreview, containerSize: IntSize): PdfPa
     return PdfPageFrame(left, top, left + width, top + height)
 }
 
+/** True only when the *rendered page*, after scale and rotation, extends past its viewport. */
+private fun isPdfContentPannable(
+    preview: PdfPagePreview,
+    containerSize: IntSize,
+    zoom: Float,
+    rotation: Float
+): Boolean {
+    if (containerSize == IntSize.Zero) return false
+    val frame = pdfPageFrame(preview, containerSize)
+    val isQuarterTurn = abs(rotation % 180f) > 45f
+    val renderedWidth = (if (isQuarterTurn) frame.bottom - frame.top else frame.right - frame.left) * zoom
+    val renderedHeight = (if (isQuarterTurn) frame.right - frame.left else frame.bottom - frame.top) * zoom
+    return renderedWidth > containerSize.width + 0.5f || renderedHeight > containerSize.height + 0.5f
+}
+
 private fun recognisePdfText(bitmap: Bitmap, pageWidth: Int, pageHeight: Int): List<PdfTextContent> = runCatching {
     val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
         com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
@@ -3066,7 +3106,17 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         isPdfDownloaded = withContext(Dispatchers.IO) { isPdfAlreadyDownloaded(context, media) }
     }
     val activePageIndex = pagePreview?.pageIndex ?: requestedPage
-    val pageNavigationIsVertical = abs(rotation % 180f) > 45f
+    // Keep the existing unlocked gesture direction.  In lock mode, however,
+    // navigation follows the actual rendered page orientation: portrait is
+    // vertical and a quarter-turn swaps that direction.
+    val isQuarterTurn = abs(rotation % 180f) > 45f
+    val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
+    val pageNavigationIsVertical = if (zoomLocked) {
+        pageIsPortrait.xor(isQuarterTurn)
+    } else {
+        isQuarterTurn
+    }
+    val currentZoom by rememberUpdatedState(zoom)
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
     val markerToolsPanelWidthPx = with(LocalDensity.current) { 210.dp.toPx() }
     val markerPalettePanelHeightPx = with(LocalDensity.current) { 232.dp.toPx() }
@@ -3107,7 +3157,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     LaunchedEffect(pageSwipeVersion) {
         delay(100)
         val distance = swipeDistance
-        if (abs(distance) < 1f || (zoom > 1.01f && !zoomLocked)) return@LaunchedEffect
+        if (abs(distance) < 1f || (!zoomLocked && pagePreview?.let {
+                isPdfContentPannable(it, pageContainerSize, zoom, rotation)
+            } == true)) return@LaunchedEffect
         val currentPreview = pagePreview ?: return@LaunchedEffect
         val navigationSize = (
             if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
@@ -3425,8 +3477,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     val panChange = event.calculatePan()
                                                     if (!zoomLocked) {
                                                         zoom = (zoom * zoomChange).coerceIn(0.7f, 5f)
+                                                        panOffset += panChange
                                                     }
-                                                    panOffset += panChange
                                                     event.changes.forEach { c -> if (c.positionChanged()) c.consume() }
                                                 } while (event.changes.any { it.pressed })
                                             }
@@ -3441,12 +3493,15 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
                                                     val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
                                                     val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
-                                                    if ((!zoomLocked && zoom > 1.01f) || (!isPrimarySwipe && abs(secondaryPan) > 0f)) {
-                                                        panOffset = if (pageNavigationIsVertical) {
-                                                            panOffset.copy(x = panOffset.x + panChange.x)
-                                                        } else {
-                                                            panOffset.copy(y = panOffset.y + panChange.y)
-                                                        }
+                                                    // Only the exact fit scale is a page-swipe state. Any pinch
+                                                    // transformed scale (in or out), or overflowed content, is pan.
+                                                    val canPanCanvas = abs(currentZoom - 1f) > 0.001f || isPdfContentPannable(
+                                                        it, pageContainerSize, currentZoom, rotation
+                                                    )
+                                                    if (!zoomLocked && canPanCanvas) {
+                                                        // A pannable rendered page owns every one-finger drag,
+                                                        // irrespective of whether the scale is above or below 1.
+                                                        panOffset += panChange
                                                     } else if (isPrimarySwipe) {
                                                         val swipeLimit = (
                                                                 if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
@@ -3630,22 +3685,28 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f).padding(start = 4.dp)
                                 )
-                                TextButton(
-                                    enabled = !isPdfDownloading && !isPdfDownloaded,
+                                if (!isPdfDownloaded) TextButton(
+                                    enabled = !isPdfDownloading,
                                     onClick = {
-                                        if (!isPdfDownloaded && !isPdfDownloading) {
+                                        if (!isPdfDownloading) {
                                             isPdfDownloading = true
                                             pdfLoadScope.launch {
                                                 val success = downloadPdfToDevice(context, media)
                                                 isPdfDownloading = false
-                                                if (success) isPdfDownloaded = true
+                                                if (success) {
+                                                    isPdfDownloaded = true
+                                                    val refreshed = withContext(Dispatchers.IO) { findDeviceFiles() }
+                                                    DeviceFileCache.files = refreshed
+                                                    DeviceFileCache.updatedAtMillis = System.currentTimeMillis()
+                                                    PdfLibraryRefresh.version++
+                                                }
                                             }
                                         }
                                     }
                                 ) {
                                     Text(
-                                        text = if (isPdfDownloaded) "Downloaded" else "Download",
-                                        color = if (isPdfDownloaded) Color(0xFF4CAF50) else AccentCyan,
+                                        text = "Download",
+                                        color = AccentCyan,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -3673,13 +3734,22 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                 AnimatedVisibility(visible = controlsVisible, modifier = Modifier.align(Alignment.BottomCenter)) {
                     Surface(color = Color(0xEE171A2B), shadowElevation = 10.dp) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             PdfReaderControl("<", enabled = (pagePreview?.pageIndex ?: 0) > 0) {
                                 changePage((pagePreview?.pageIndex ?: 0) - 1)
                             }
+                            Text(
+                                "${(pagePreview?.pageIndex ?: 0) + 1} / ${pagePreview?.pageCount ?: 0}",
+                                color = Color.White.copy(alpha = 0.8f),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                modifier = Modifier.width(36.dp)
+                            )
                             PdfReaderControl(">", enabled = pagePreview?.let { it.pageIndex < it.pageCount - 1 } == true) {
                                 changePage((pagePreview?.pageIndex ?: 0) + 1)
                             }
@@ -4006,12 +4076,26 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
 
 @Composable
 private fun PdfReaderControl(label: String, enabled: Boolean = true, onClick: () -> Unit) {
-    TextButton(enabled = enabled, onClick = onClick, modifier = Modifier.height(48.dp)) {
+    val controlWidth = when {
+        label == "<" || label == ">" -> 44.dp
+        label == "Rotate" -> 54.dp
+        label.startsWith("Marker") -> 68.dp
+        else -> 50.dp
+    }
+    TextButton(
+        enabled = enabled,
+        onClick = onClick,
+        modifier = Modifier.width(controlWidth).height(48.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+    ) {
         Text(
             text = label,
             color = if (enabled) AccentCyan else Color.White.copy(alpha = 0.32f),
-            fontSize = if (label == "<" || label == ">") 30.sp else 13.sp,
-            fontWeight = FontWeight.Bold
+            fontSize = if (label == "<" || label == ">") 28.sp else 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip
         )
     }
 }
@@ -5890,6 +5974,10 @@ private fun PdfFilesTabBody(
     surfaceColor: Color,
     onOpen: (DeviceFile) -> Unit,
     onLongPressFile: (DeviceFile) -> Unit,
+    onDoubleTapFile: (DeviceFile) -> Unit = onLongPressFile,
+    selectionEnabled: Boolean = false,
+    selectedPaths: Set<String> = emptySet(),
+    onSelectChange: (DeviceFile, Boolean) -> Unit = { _, _ -> },
     interactive: Boolean = true
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -5911,11 +5999,12 @@ private fun PdfFilesTabBody(
         Box(modifier = Modifier.weight(1f)) {
             PdfDeviceFileList(
                 files = files,
-                selectedPaths = emptySet(),
-                selectionEnabled = false,
-                onSelectChange = { _, _ -> },
+                selectedPaths = selectedPaths,
+                selectionEnabled = selectionEnabled,
+                onSelectChange = onSelectChange,
                 onOpen = if (interactive) onOpen else { _ -> },
-                onDoubleTap = if (interactive) { file -> if (file.extension == "pdf") onLongPressFile(file) } else { _ -> }
+                onDoubleTap = if (interactive) { file -> if (file.extension == "pdf") onDoubleTapFile(file) } else { _ -> },
+                onLongPress = { file -> if (interactive && file.extension == "pdf") onLongPressFile(file) }
             )
         }
     }
@@ -5987,6 +6076,10 @@ private fun PdfLibraryHomeDialog(
     var openedSectionId by remember { mutableStateOf<String?>(null) }
     var selectingForSectionId by remember { mutableStateOf<String?>(null) }
     var selectedPdfPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var removeSelectionDialog by remember { mutableStateOf(false) }
+    var sectionTargetsForSelection by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showSectionTargetDialog by remember { mutableStateOf(false) }
     var sections by remember { mutableStateOf(loadPdfLibrarySections(context)) }
     var fileActionFor by remember { mutableStateOf<DeviceFile?>(null) }
     var sectionActionFor by remember { mutableStateOf<PdfLibrarySection?>(null) }
@@ -6019,12 +6112,14 @@ private fun PdfLibraryHomeDialog(
     val libraryText = Color(libraryStyle.textArgb ?: 0xFFFFFFFF)
     val librarySectionBackground = Color(libraryStyle.sectionBackgroundArgb ?: 0xFF1A2633)
     val librarySectionText = Color(libraryStyle.sectionTextArgb ?: libraryStyle.textArgb ?: 0xFFFFFFFF)
-    val homeFiles = remember(files, pdfSearchQuery) {
+    val hiddenPdfPaths = remember { mutableStateOf(libraryPreferences.getStringSet("hidden_pdf_paths", emptySet()).orEmpty()) }
+    val refreshVersion = PdfLibraryRefresh.version
+    val homeFiles = remember(files, pdfSearchQuery, hiddenPdfPaths.value) {
         pdfSearchQuery.trim().takeIf { it.isNotEmpty() }?.let { query ->
             files.filter { file ->
                 file.extension == "pdf" && file.name.contains(query, ignoreCase = true)
             }
-        } ?: files
+        }?.filterNot { it.file.path in hiddenPdfPaths.value } ?: files.filterNot { it.file.path in hiddenPdfPaths.value }
     }
 
     fun updateSections(updatedSections: List<PdfLibrarySection>) {
@@ -6078,6 +6173,10 @@ private fun PdfLibraryHomeDialog(
     }
     fun navigateBack() {
         when {
+            selectionMode -> {
+                selectionMode = false
+                selectedPdfPaths = emptySet()
+            }
             selectingForSectionId != null -> {
                 selectingForSectionId = null
                 selectedPdfPaths = emptySet()
@@ -6125,6 +6224,13 @@ private fun PdfLibraryHomeDialog(
                 isLoading = false
                 savePersistedDeviceFiles(context, freshFiles)
             }
+        }
+    }
+    LaunchedEffect(refreshVersion) {
+        if (hasAllFilesAccess && refreshVersion > 0) {
+            val freshFiles = withContext(Dispatchers.IO) { findDeviceFiles() }
+            files = freshFiles
+            savePersistedDeviceFiles(context, freshFiles)
         }
     }
 
@@ -6219,7 +6325,9 @@ private fun PdfLibraryHomeDialog(
                                 DropdownMenu(
                                     expanded = showHomeMenu,
                                     onDismissRequest = { showHomeMenu = false },
-                                    containerColor = librarySectionBackground
+                                    containerColor = GlassDark1,
+                                    shape = RoundedCornerShape(22.dp),
+                                    shadowElevation = 14.dp
                                 ) {
                                     DropdownMenuItem(
                                         text = { Text("Files settings", color = librarySectionText) },
@@ -6266,7 +6374,9 @@ private fun PdfLibraryHomeDialog(
                                 DropdownMenu(
                                     expanded = showHomeMenu,
                                     onDismissRequest = { showHomeMenu = false },
-                                    containerColor = librarySectionBackground
+                                    containerColor = GlassDark1,
+                                    shape = RoundedCornerShape(22.dp),
+                                    shadowElevation = 14.dp
                                 ) {
                                     DropdownMenuItem(
                                         text = { Text("Files settings", color = librarySectionText) },
@@ -6281,6 +6391,18 @@ private fun PdfLibraryHomeDialog(
                         }
                     }
 
+                    if (selectionMode) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${selectedPdfPaths.size} selected", modifier = Modifier.weight(1f), fontSize = 13.sp)
+                            TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { removeSelectionDialog = true }) { Text("Remove", color = Color(0xFFFF7A7A)) }
+                            TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { showSectionTargetDialog = true }) { Text("Add Section", color = AccentCyan) }
+                            TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }) { Text("Share", color = AccentCyan) }
+                            TextButton(onClick = { selectionMode = false; selectedPdfPaths = emptySet() }) { Text("Cancel", color = AccentCyan) }
+                        }
+                    }
                     if (!hasAllFilesAccess) {
                         Column(modifier = Modifier.padding(20.dp)) {
                             Text("Allow all-files access to browse phone PDFs", color = Color.LightGray)
@@ -6350,7 +6472,22 @@ private fun PdfLibraryHomeDialog(
                                     textColor = libraryText,
                                     surfaceColor = librarySectionBackground,
                                     onOpen = onFileClick,
-                                    onLongPressFile = { file -> fileActionFor = file },
+                                    onLongPressFile = { file ->
+                                        selectionMode = true
+                                        selectedPdfPaths = setOf(file.file.path)
+                                    },
+                                    onDoubleTapFile = { file -> fileActionFor = file },
+                                    selectionEnabled = selectionMode,
+                                    selectedPaths = selectedPdfPaths,
+                                    onSelectChange = { file, selected ->
+                                        val updatedSelection = if (selected) {
+                                            selectedPdfPaths + file.file.path
+                                        } else {
+                                            selectedPdfPaths - file.file.path
+                                        }
+                                        selectedPdfPaths = updatedSelection
+                                        if (updatedSelection.isEmpty()) selectionMode = false
+                                    },
                                     interactive = activeTab == "files"
                                 )
                             }
@@ -6397,6 +6534,56 @@ private fun PdfLibraryHomeDialog(
         }
     }
 
+
+    if (removeSelectionDialog) {
+        AlertDialog(
+            onDismissRequest = { removeSelectionDialog = false },
+            title = { Text("Remove PDF?") },
+            text = { Text("Choose whether to hide the PDFs from this library or permanently delete their files.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    hiddenPdfPaths.value = hiddenPdfPaths.value + selectedPdfPaths
+                    libraryPreferences.edit().putStringSet("hidden_pdf_paths", hiddenPdfPaths.value).apply()
+                    updateSections(sections.map { section -> section.copy(entries = section.entries.filterNot { it.path in selectedPdfPaths }) })
+                    selectionMode = false; selectedPdfPaths = emptySet(); removeSelectionDialog = false
+                }) { Text("Remove from here", color = AccentCyan) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        val paths = selectedPdfPaths
+                        files.filter { it.file.path in paths }.forEach { it.file.delete() }
+                        updateSections(sections.map { section -> section.copy(entries = section.entries.filterNot { it.path in paths }) })
+                        files = files.filterNot { it.file.path in paths }
+                        selectionMode = false; selectedPdfPaths = emptySet(); removeSelectionDialog = false
+                    }) { Text("Permanently Delete", color = Color(0xFFFF7A7A)) }
+                    TextButton(onClick = { removeSelectionDialog = false }) { Text("Cancel") }
+                }
+            }
+        )
+    }
+
+    if (showSectionTargetDialog) {
+        PdfLibraryOptionsDialog(title = "Add to sections", onDismiss = { showSectionTargetDialog = false }) {
+            sections.forEach { section ->
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = section.id in sectionTargetsForSelection, onCheckedChange = { checked ->
+                        sectionTargetsForSelection = if (checked) sectionTargetsForSelection + section.id else sectionTargetsForSelection - section.id
+                    })
+                    Text(section.title)
+                }
+            }
+            Button(
+                enabled = sectionTargetsForSelection.isNotEmpty(),
+                onClick = {
+                    val chosenFiles = files.filter { it.file.path in selectedPdfPaths }
+                    sectionTargetsForSelection.forEach { sectionId -> chosenFiles.forEach { addPdfToSection(sectionId, it) } }
+                    showSectionTargetDialog = false; sectionTargetsForSelection = emptySet(); selectionMode = false; selectedPdfPaths = emptySet()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Move") }
+        }
+    }
 
     if (showLibrarySettings) {
         PdfLibrarySettingsDialog(
@@ -6447,6 +6634,7 @@ private fun PdfLibraryHomeDialog(
             Spacer(Modifier.height(8.dp))
             PdfLibraryOption("Add to section") { chooseSectionForFile = file; fileActionFor = null }
             PdfLibraryOption("Create section") { createSectionFile = file; createSectionMode = "file"; fileActionFor = null }
+            PdfLibraryOption("Share") { sharePdfFiles(context, listOf(file)); fileActionFor = null }
         }
     }
 
@@ -6484,6 +6672,10 @@ private fun PdfLibraryHomeDialog(
             Spacer(Modifier.height(8.dp))
             PdfLibraryOption("Rename") { renameEntryFor = sectionId to entry; entryActionFor = null }
             PdfLibraryOption("Move another section") { moveEntryRequest = sectionId to entry; entryActionFor = null }
+            PdfLibraryOption("Share") {
+                sharePdfFiles(context, listOf(DeviceFile(File(entry.path), entry.displayName, "pdf")))
+                entryActionFor = null
+            }
             PdfLibraryOption("Remove from section", color = Color(0xFFFF7A7A)) {
                 updateSections(sections.map { current ->
                     if (current.id == sectionId) current.copy(entries = current.entries.filterNot { it.path == entry.path }) else current
@@ -6568,9 +6760,15 @@ private fun PdfLibraryOptionsDialog(
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    // Keep a real modal host so a double-tap action is never lost to the
+    // surrounding file-list gesture detector; the content remains the same
+    // compact dark, rounded Mind Map-style surface.
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+            modifier = Modifier
+                .widthIn(min = 248.dp, max = 360.dp)
+                .heightIn(max = 520.dp)
+                .padding(12.dp),
             shape = RoundedCornerShape(22.dp),
             color = GlassDark1,
             contentColor = Color.White,
@@ -6747,7 +6945,8 @@ private fun PdfDeviceFileList(
     selectionEnabled: Boolean,
     onSelectChange: (DeviceFile, Boolean) -> Unit,
     onOpen: (DeviceFile) -> Unit,
-    onDoubleTap: (DeviceFile) -> Unit
+    onDoubleTap: (DeviceFile) -> Unit,
+    onLongPress: (DeviceFile) -> Unit = {}
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         if (files.isEmpty()) {
@@ -6758,12 +6957,21 @@ private fun PdfDeviceFileList(
             items(files, key = { it.file.path }) { file ->
                 var pressed by remember(file.file.path, selectionEnabled) { mutableStateOf(false) }
                 val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "deviceFilePress")
+                val itemBackground by animateColorAsState(
+                    targetValue = when {
+                        file.file.path in selectedPaths -> Color.White.copy(alpha = 0.16f)
+                        pressed -> Color.White.copy(alpha = 0.07f)
+                        else -> Color.Transparent
+                    },
+                    animationSpec = tween(140),
+                    label = "deviceFileSelection"
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .graphicsLayer { scaleX = scale; scaleY = scale }
                         .clip(RoundedCornerShape(14.dp))
-                        .background(if (pressed) AccentCyan.copy(alpha = 0.13f) else Color.Transparent)
+                        .background(itemBackground)
                         .pointerInput(file.file.path, selectionEnabled) {
                             detectTapGestures(
                                 onPress = {
@@ -6774,7 +6982,8 @@ private fun PdfDeviceFileList(
                                 onTap = {
                                     if (selectionEnabled) onSelectChange(file, file.file.path !in selectedPaths) else onOpen(file)
                                 },
-                                onDoubleTap = { if (!selectionEnabled) onDoubleTap(file) }
+                                onDoubleTap = { if (!selectionEnabled) onDoubleTap(file) },
+                                onLongPress = { onLongPress(file) }
                             )
                         }
                         .padding(horizontal = 10.dp, vertical = 11.dp),
