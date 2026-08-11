@@ -3024,11 +3024,16 @@ private fun isPdfContentPannable(
     rotation: Float
 ): Boolean {
     if (containerSize == IntSize.Zero) return false
-    val frame = pdfPageFrame(preview, containerSize)
     val isQuarterTurn = abs(rotation % 180f) > 45f
-    val renderedWidth = (if (isQuarterTurn) frame.bottom - frame.top else frame.right - frame.left) * zoom
-    val renderedHeight = (if (isQuarterTurn) frame.right - frame.left else frame.bottom - frame.top) * zoom
-    return renderedWidth > containerSize.width + 0.5f || renderedHeight > containerSize.height + 0.5f
+    val targetWidth = if (isQuarterTurn) containerSize.height else containerSize.width
+    val targetHeight = if (isQuarterTurn) containerSize.width else containerSize.height
+    val imageScale = minOf(
+        targetWidth.toFloat() / preview.bitmap.width.coerceAtLeast(1),
+        targetHeight.toFloat() / preview.bitmap.height.coerceAtLeast(1)
+    )
+    val renderedWidth = preview.bitmap.width * imageScale * zoom
+    val renderedHeight = preview.bitmap.height * imageScale * zoom
+    return renderedWidth > targetWidth + 0.5f || renderedHeight > targetHeight + 0.5f
 }
 
 private fun recognisePdfText(bitmap: Bitmap, pageWidth: Int, pageHeight: Int): List<PdfTextContent> = runCatching {
