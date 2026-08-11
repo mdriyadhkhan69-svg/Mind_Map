@@ -3112,7 +3112,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val pageNavigationIsVertical = if (zoomLocked) {
-        pageIsPortrait.xor(isQuarterTurn)
+        // পাতা visually লম্বা (tall) দেখাচ্ছে হলে swipe = left-right (false),
+        // পাতা visually চওড়া (wide) দেখাচ্ছে হলে swipe = up-down (true)।
+        pageIsPortrait == isQuarterTurn
     } else {
         isQuarterTurn
     }
@@ -3490,15 +3492,37 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     val panChange = change.position - lastPos
                                                     lastPos = change.position
                                                     change.consume()
+
                                                     val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
                                                     val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
                                                     val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
+
+                                                    if (zoomLocked) {
+                                                        // Locked: navigation axis (pageNavigationIsVertical, পাতা
+                                                        // visually লম্বা না চওড়া তার উপর নির্ভর করে) সবসময় swipe করবে,
+                                                        // তার লম্ব axis সবসময় pan করবে।
+                                                        if (isPrimarySwipe) {
+                                                            val swipeLimit = (
+                                                                    if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
+                                                                    ).toFloat().coerceAtLeast(1f) * 0.96f
+                                                            swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
+                                                            pageSwipeVersion += 1
+                                                        } else {
+                                                            panOffset += if (pageNavigationIsVertical) {
+                                                                Offset(panChange.x, 0f)
+                                                            } else {
+                                                                Offset(0f, panChange.y)
+                                                            }
+                                                        }
+                                                        return@drag
+                                                    }
+
                                                     // Only the exact fit scale is a page-swipe state. Any pinch
                                                     // transformed scale (in or out), or overflowed content, is pan.
                                                     val canPanCanvas = abs(currentZoom - 1f) > 0.001f || isPdfContentPannable(
                                                         it, pageContainerSize, currentZoom, rotation
                                                     )
-                                                    if (!zoomLocked && canPanCanvas) {
+                                                    if (canPanCanvas) {
                                                         // A pannable rendered page owns every one-finger drag,
                                                         // irrespective of whether the scale is above or below 1.
                                                         panOffset += panChange
