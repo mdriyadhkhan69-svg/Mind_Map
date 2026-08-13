@@ -9,8 +9,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
@@ -146,8 +149,9 @@ private fun FlipDigitCell(
         contentAlignment = Alignment.Center
     ) {
         if (extraBold) {
-            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = 0.9.dp))
-            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = (-0.9).dp))
+            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = 1.6.dp))
+            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = (-1.6).dp))
+            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(y = 0.8.dp))
         }
         Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight)
     }
@@ -178,16 +182,21 @@ private fun FlipDigitCard(
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 92.sp,
     dividerThickness: Dp = 2.dp,
-    cornerRadius: Dp = 26.dp,
-    extraBold: Boolean = true
+    cornerRadius: Dp = 34.dp,
+    extraBold: Boolean = true,
+    topInset: Dp = 0.dp
 ) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(TimerCardBg),
-        contentAlignment = Alignment.Center
+            .background(TimerCardBg)
     ) {
-        FlipText(text = mainText, fontSize = fontSize, extraBold = extraBold)
+        Box(
+            modifier = Modifier.fillMaxSize().padding(top = topInset),
+            contentAlignment = Alignment.Center
+        ) {
+            FlipText(text = mainText, fontSize = fontSize, extraBold = extraBold)
+        }
         Box(
             Modifier
                 .fillMaxWidth()
@@ -212,32 +221,39 @@ private fun FlipBlock(
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxWidth().aspectRatio(boxAspectRatio)) {
-        FlipDigitCard(mainText, modifier = Modifier.fillMaxSize(), fontSize = fontSize, dividerThickness = dividerThickness, extraBold = true)
+        FlipDigitCard(
+            mainText,
+            modifier = Modifier.fillMaxSize(),
+            fontSize = fontSize,
+            dividerThickness = dividerThickness,
+            extraBold = true,
+            topInset = if (topLabel.isNotEmpty()) 30.dp else 0.dp
+        )
         if (topLabel.isNotEmpty()) {
             Text(
                 topLabel,
                 color = Color.White.copy(alpha = 0.78f),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
             )
         }
         if (cornerLabel.isNotEmpty()) {
             Box(
                 modifier = Modifier
                     .align(if (cornerAtStart) Alignment.BottomStart else Alignment.BottomEnd)
-                    .padding(14.dp)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 if (cornerIsNumeric) {
                     FlipText(
                         text = cornerLabel,
                         fontSize = cornerFontSize,
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontWeight = FontWeight.Bold,
-                        extraBold = false
+                        color = Color.White,
+                        fontWeight = FontWeight.Black,
+                        extraBold = true
                     )
                 } else {
-                    Text(cornerLabel, color = Color.White.copy(alpha = 0.85f), fontSize = cornerFontSize, fontWeight = FontWeight.Bold)
+                    Text(cornerLabel, color = Color.White, fontSize = cornerFontSize, fontWeight = FontWeight.Black)
                 }
             }
         }
@@ -270,7 +286,8 @@ private fun SplitTimeDisplay(
                     modifier = Modifier.fillMaxSize(),
                     fontSize = fontSize,
                     dividerThickness = dividerThickness,
-                    extraBold = true
+                    extraBold = true,
+                    topInset = 28.dp
                 )
                 Text(
                     label,
@@ -307,10 +324,10 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
     val second = calendar.get(Calendar.SECOND)
     val amPm = if (hour24 < 12) "AM" else "PM"
 
-    val mainFontSize = if (isLandscape) 230.sp else 96.sp
-    val dividerThickness = if (isLandscape) 7.dp else 2.dp
-    val cornerFontSize = if (isLandscape) 30.sp else 14.sp
-    val boxAspectRatio = if (isLandscape) 1.05f else 1.6f
+    val mainFontSize = if (isLandscape) 270.sp else 118.sp
+    val dividerThickness = if (isLandscape) 8.dp else 3.dp
+    val cornerFontSize = if (isLandscape) 40.sp else 20.sp
+    val boxAspectRatio = if (isLandscape) 1.4f else 1.8f
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -408,6 +425,124 @@ private fun TimerOptionsPanel(iconSize: Dp, items: List<Pair<ImageVector, () -> 
         ) {
             items.forEach { (icon, action) -> TimerSideIcon(icon = icon, size = iconSize, onClick = action) }
         }
+    }
+}
+
+@Composable
+private fun TimerPanelButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    fontSize: TextUnit = 15.sp,
+    horizontalPadding: Dp = 18.dp,
+    verticalPadding: Dp = 10.dp,
+    onClick: () -> Unit
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, animationSpec = tween(120), label = "timerPanelBtnPress")
+    val bgAlpha by animateFloatAsState(if (selected) 0.24f else 0.11f, animationSpec = tween(160), label = "timerPanelBtnBg")
+    Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = bgAlpha))
+            .pointerInput(text) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { onClick() }
+                )
+            }
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, color = Color.White, fontWeight = FontWeight.Bold, fontSize = fontSize)
+    }
+}
+
+@Composable
+private fun NumberWheelColumn(
+    range: IntRange,
+    selected: Int,
+    onSelectedChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    itemHeight: Dp = 42.dp,
+    visibleCount: Int = 3
+) {
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { itemHeight.toPx() }
+    val values = remember(range) { range.toList() }
+    val listState = rememberLazyListState()
+    val flingBehavior = rememberSnapFlingBehavior(listState)
+
+    LaunchedEffect(selected, values) {
+        val targetIndex = values.indexOf(selected).coerceAtLeast(0)
+        if (!listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIndex) {
+            listState.scrollToItem(targetIndex)
+        }
+    }
+
+    LaunchedEffect(listState) {
+        snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress) }
+            .collect { (index, offset, scrolling) ->
+                if (!scrolling) {
+                    val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
+                    val value = values[centeredIndex]
+                    if (value != selected) onSelectedChange(value)
+                }
+            }
+    }
+
+    Box(modifier = modifier.height(itemHeight * visibleCount), contentAlignment = Alignment.Center) {
+        LazyColumn(
+            state = listState,
+            flingBehavior = flingBehavior,
+            contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
+            modifier = Modifier.fillMaxHeight().width(64.dp)
+        ) {
+            items(values) { value ->
+                Box(modifier = Modifier.fillMaxWidth().height(itemHeight), contentAlignment = Alignment.Center) {
+                    val isSelected = value == selected
+                    Text(
+                        "%02d".format(value),
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.35f),
+                        fontSize = if (isSelected) 22.sp else 17.sp,
+                        fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal
+                    )
+                }
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(itemHeight)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.White.copy(alpha = 0.10f))
+        )
+    }
+}
+
+@Composable
+private fun CountdownTimeSetPanel(
+    hours: Int,
+    minutes: Int,
+    onHoursChange: (Int) -> Unit,
+    onMinutesChange: (Int) -> Unit,
+    onCustomTap: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .pointerInput("countdown-custom-tap") { detectTapGestures(onTap = { onCustomTap() }) },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange)
+        Text(":", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+        NumberWheelColumn(range = 0..59, selected = minutes, onSelectedChange = onMinutesChange)
     }
 }
 
@@ -568,9 +703,16 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var remainingMillis by rememberSaveable { mutableStateOf(countdownTotalMillis) }
     var startTimestamp by rememberSaveable { mutableStateOf(0L) }
     var finished by rememberSaveable { mutableStateOf(false) }
-    var minutesInput by rememberSaveable { mutableStateOf("5") }
     var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var pickerHours by rememberSaveable { mutableStateOf(((countdownTotalMillis / 3_600_000L).toInt())) }
+    var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
+    var showCustomTimeDialog by remember { mutableStateOf(false) }
 
+    fun applyPickerToCountdown() {
+        val newMillis = (pickerHours * 3_600_000L + pickerMinutes * 60_000L).coerceAtLeast(1000L)
+        countdownTotalMillis = newMillis
+        remainingMillis = newMillis
+    }
     LaunchedEffect(isRunning, mode) {
         if (isRunning) {
             startTimestamp = System.currentTimeMillis() - (if (mode == "stopwatch") elapsedMillis else countdownTotalMillis - remainingMillis)
@@ -611,9 +753,9 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val isLandscape = maxWidth > maxHeight
-                val digitFontSize = if (isLandscape) 130.sp else 64.sp
-                val dividerThickness = if (isLandscape) 6.dp else 2.dp
-                val boxAspectRatio = if (isLandscape) 0.9f else 1.05f
+                val digitFontSize = if (isLandscape) 150.sp else 78.sp
+                val dividerThickness = if (isLandscape) 7.dp else 3.dp
+                val boxAspectRatio = if (isLandscape) 1.15f else 1.25f
                 val panelReserve = if (isLandscape) 128.dp else 0.dp
                 val displayWidth = if (isLandscape) maxWidth * 0.6f else maxWidth * 0.88f
                 val targetEndPadding = if (isLandscape && controlsVisible) panelReserve else 0.dp
@@ -658,15 +800,23 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         enter = fadeIn(tween(260, easing = FastOutSlowInEasing)) + expandVertically(tween(260)),
                         exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + shrinkVertically(tween(200))
                     ) {
-                        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = onDismiss) { Text("Back", color = TimerAccent) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            TimerPanelButton(text = "Back", onClick = onDismiss)
                             Spacer(Modifier.weight(1f))
-                            TextButton(onClick = { if (!isRunning) { mode = "stopwatch"; finished = false; elapsedMillis = 0L } }) {
-                                Text("Stopwatch", color = if (mode == "stopwatch") TimerAccent else Color.White.copy(alpha = 0.5f))
-                            }
-                            TextButton(onClick = { if (!isRunning) { mode = "countdown"; finished = false; remainingMillis = countdownTotalMillis } }) {
-                                Text("Countdown", color = if (mode == "countdown") TimerAccent else Color.White.copy(alpha = 0.5f))
-                            }
+                            TimerPanelButton(
+                                text = "Stopwatch",
+                                selected = mode == "stopwatch",
+                                onClick = { if (!isRunning) { mode = "stopwatch"; finished = false; elapsedMillis = 0L } }
+                            )
+                            TimerPanelButton(
+                                text = "Countdown",
+                                selected = mode == "countdown",
+                                onClick = { if (!isRunning) { mode = "countdown"; finished = false; remainingMillis = countdownTotalMillis } }
+                            )
                         }
                     }
 
@@ -687,7 +837,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         }
                     }
 
-                    val showMinutesField = mode == "countdown" && !isRunning && !finished && controlsVisible
+                    val showTimeSetPanel = mode == "countdown" && !isRunning && !finished && controlsVisible
 
                     if (isLandscape) {
                         AnimatedVisibility(
@@ -703,26 +853,16 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                 shadowElevation = 6.dp
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(10.dp).width(108.dp),
+                                    modifier = Modifier.padding(10.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    if (showMinutesField) {
-                                        OutlinedTextField(
-                                            value = minutesInput,
-                                            onValueChange = { minutesInput = it.filter(Char::isDigit) },
-                                            label = { Text("Min", fontSize = 11.sp) },
-                                            singleLine = true,
-                                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        TextButton(onClick = {
-                                            val minutes = minutesInput.toLongOrNull() ?: 0L
-                                            countdownTotalMillis = (minutes * 60_000L).coerceAtLeast(1000L)
-                                            remainingMillis = countdownTotalMillis
-                                        }) { Text("Set", color = TimerAccent, fontSize = 13.sp) }
-                                    }
-                                    QuickTimerActionButton(isRunning = isRunning, finished = finished, compact = true) {
+                                    TimerPanelButton(
+                                        text = if (finished) "Reset" else if (isRunning) "Pause" else "Start",
+                                        fontSize = 13.sp,
+                                        horizontalPadding = 14.dp,
+                                        verticalPadding = 9.dp
+                                    ) {
                                         if (finished) {
                                             finished = false
                                             elapsedMillis = 0L
@@ -730,6 +870,15 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         } else {
                                             isRunning = !isRunning
                                         }
+                                    }
+                                    if (showTimeSetPanel) {
+                                        CountdownTimeSetPanel(
+                                            hours = pickerHours,
+                                            minutes = pickerMinutes,
+                                            onHoursChange = { pickerHours = it; applyPickerToCountdown() },
+                                            onMinutesChange = { pickerMinutes = it; applyPickerToCountdown() },
+                                            onCustomTap = { showCustomTimeDialog = true }
+                                        )
                                     }
                                 }
                             }
@@ -741,25 +890,14 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             enter = fadeIn(tween(260, easing = FastOutSlowInEasing)) + expandVertically(tween(260)),
                             exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + shrinkVertically(tween(200))
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 24.dp)) {
-                                if (showMinutesField) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 14.dp)) {
-                                        OutlinedTextField(
-                                            value = minutesInput,
-                                            onValueChange = { minutesInput = it.filter(Char::isDigit) },
-                                            label = { Text("Minutes") },
-                                            singleLine = true,
-                                            modifier = Modifier.width(120.dp)
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        TextButton(onClick = {
-                                            val minutes = minutesInput.toLongOrNull() ?: 0L
-                                            countdownTotalMillis = (minutes * 60_000L).coerceAtLeast(1000L)
-                                            remainingMillis = countdownTotalMillis
-                                        }) { Text("Set", color = TimerAccent) }
-                                    }
-                                }
-                                QuickTimerActionButton(isRunning = isRunning, finished = finished, compact = false) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(bottom = 24.dp)
+                            ) {
+                                TimerPanelButton(
+                                    text = if (finished) "Reset" else if (isRunning) "Pause" else "Start",
+                                    modifier = Modifier.padding(bottom = if (showTimeSetPanel) 16.dp else 0.dp)
+                                ) {
                                     if (finished) {
                                         finished = false
                                         elapsedMillis = 0L
@@ -768,6 +906,15 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         isRunning = !isRunning
                                     }
                                 }
+                                if (showTimeSetPanel) {
+                                    CountdownTimeSetPanel(
+                                        hours = pickerHours,
+                                        minutes = pickerMinutes,
+                                        onHoursChange = { pickerHours = it; applyPickerToCountdown() },
+                                        onMinutesChange = { pickerMinutes = it; applyPickerToCountdown() },
+                                        onCustomTap = { showCustomTimeDialog = true }
+                                    )
+                                }
                             }
                         }
                     }
@@ -775,37 +922,43 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
             }
         }
     }
-}
-
-@Composable
-private fun QuickTimerActionButton(isRunning: Boolean, finished: Boolean, compact: Boolean, onClick: () -> Unit) {
-    var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (pressed) 0.93f else 1f, animationSpec = tween(120), label = "timerButtonPress")
-    Box(
-        modifier = Modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (isRunning) Color(0xFFFF6E6E) else TimerAccent)
-            .pointerInput(isRunning, finished) {
-                detectTapGestures(
-                    onPress = {
-                        pressed = true
-                        tryAwaitRelease()
-                        pressed = false
-                    },
-                    onTap = { onClick() }
-                )
+    if (showCustomTimeDialog) {
+        Dialog(onDismissRequest = { showCustomTimeDialog = false }) {
+            Surface(shape = RoundedCornerShape(20.dp), color = TimerCardBg, contentColor = Color.White) {
+                var hourText by remember { mutableStateOf(pickerHours.toString()) }
+                var minuteText by remember { mutableStateOf(pickerMinutes.toString()) }
+                Column(modifier = Modifier.padding(18.dp).width(260.dp)) {
+                    Text("Customise countdown", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = hourText,
+                            onValueChange = { hourText = it.filter(Char::isDigit) },
+                            label = { Text("Hours") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = minuteText,
+                            onValueChange = { minuteText = it.filter(Char::isDigit) },
+                            label = { Text("Minutes") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { showCustomTimeDialog = false }) { Text("Cancel", color = Color.LightGray) }
+                        TextButton(onClick = {
+                            pickerHours = (hourText.toIntOrNull() ?: 0).coerceIn(0, 99)
+                            pickerMinutes = (minuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
+                            applyPickerToCountdown()
+                            showCustomTimeDialog = false
+                        }) { Text("Save", color = TimerAccent, fontWeight = FontWeight.Bold) }
+                    }
+                }
             }
-            .padding(horizontal = if (compact) 14.dp else 34.dp, vertical = if (compact) 10.dp else 14.dp)
-    ) {
-        Text(
-            when {
-                finished -> "Reset"
-                isRunning -> "Pause"
-                else -> "Start"
-            },
-            color = Color(0xFF0F1020), fontWeight = FontWeight.Bold, fontSize = if (compact) 13.sp else 16.sp
-        )
+        }
     }
 }
 
