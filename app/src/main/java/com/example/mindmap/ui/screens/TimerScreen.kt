@@ -327,7 +327,7 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
     val mainFontSize = if (isLandscape) 270.sp else 118.sp
     val dividerThickness = if (isLandscape) 8.dp else 3.dp
     val cornerFontSize = if (isLandscape) 40.sp else 20.sp
-    val boxAspectRatio = if (isLandscape) 1.4f else 1.8f
+    val boxAspectRatio = if (isLandscape) 1.1f else 1.2f
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
