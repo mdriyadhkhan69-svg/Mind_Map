@@ -227,7 +227,7 @@ private fun FlipBlock(
             fontSize = fontSize,
             dividerThickness = dividerThickness,
             extraBold = true,
-            topInset = if (topLabel.isNotEmpty()) 30.dp else 0.dp
+            topInset = if (topLabel.isNotEmpty()) 1.dp else 0.dp
         )
         if (topLabel.isNotEmpty()) {
             Text(
@@ -287,7 +287,7 @@ private fun SplitTimeDisplay(
                     fontSize = fontSize,
                     dividerThickness = dividerThickness,
                     extraBold = true,
-                    topInset = 28.dp
+                    topInset = 1.dp
                 )
                 Text(
                     label,
@@ -324,7 +324,7 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
     val second = calendar.get(Calendar.SECOND)
     val amPm = if (hour24 < 12) "AM" else "PM"
 
-    val mainFontSize = if (isLandscape) 270.sp else 118.sp
+    val mainFontSize = if (isLandscape) 350.sp else 130.sp
     val dividerThickness = if (isLandscape) 8.dp else 3.dp
     val cornerFontSize = if (isLandscape) 40.sp else 20.sp
     val boxAspectRatio = if (isLandscape) 1.1f else 1.2f
@@ -753,11 +753,11 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val isLandscape = maxWidth > maxHeight
-                val digitFontSize = if (isLandscape) 150.sp else 78.sp
+                val digitFontSize = if (isLandscape) 350.sp else 78.sp
                 val dividerThickness = if (isLandscape) 7.dp else 3.dp
-                val boxAspectRatio = if (isLandscape) 1.15f else 1.25f
+                val boxAspectRatio = if (isLandscape) 1.2f else 0.6f
                 val panelReserve = if (isLandscape) 128.dp else 0.dp
-                val displayWidth = if (isLandscape) maxWidth * 0.6f else maxWidth * 0.88f
+                val displayWidth = if (isLandscape) maxWidth * 2.2f else maxWidth * 0.88f
                 val targetEndPadding = if (isLandscape && controlsVisible) panelReserve else 0.dp
                 val animatedEndPadding by animateDpAsState(
                     targetValue = targetEndPadding,
