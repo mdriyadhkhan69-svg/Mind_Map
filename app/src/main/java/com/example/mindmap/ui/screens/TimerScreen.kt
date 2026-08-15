@@ -8,6 +8,8 @@ import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.platform.LocalDensity
@@ -180,68 +182,6 @@ private fun StudyCelebrationHost() {
     }
 }
 
-/** Timer section-এর যেকোনো screen-এ (Clock/Stopwatch/Countdown/Study) থাকা অবস্থায়
- *  running রাখার জন্য global state; শুধু TimerHomeDialog dispose হলে (section ছাড়লে) pause হয়। */
-private object StudyTimerState {
-    var subjects by mutableStateOf<List<StudySubject>>(emptyList())
-    var pendingCelebration by mutableStateOf<Pair<String, Int>?>(null)
-    private var loaded = false
-    private val previousStrikeCounts = mutableStateMapOf<String, Int>()
-
-    fun ensureLoaded(context: Context) {
-        if (!loaded) {
-            subjects = loadStudySubjects(context)
-            loaded = true
-        }
-    }
-
-    fun persist(context: Context, updated: List<StudySubject>) {
-        subjects = updated
-        saveStudySubjects(context, updated)
-    }
-
-    fun pauseAll(context: Context) {
-        val now = System.currentTimeMillis()
-        val updated = subjects.map { s ->
-            if (s.isRunning) s.copy(isRunning = false, accumulatedMillis = s.currentElapsedMillis(now)) else s
-        }
-        if (updated != subjects) persist(context, updated)
-    }
-
-    fun checkStrikes(context: Context, nowMillis: Long) {
-        subjects.forEach { s ->
-            val currentCount = strikeCountForElapsed(s.currentElapsedMillis(nowMillis))
-            val priorCount = previousStrikeCounts[s.id] ?: currentCount
-            if (currentCount > priorCount && pendingCelebration == null) {
-                pendingCelebration = s.id to currentCount
-                playStrikeSound(context, currentCount)
-            }
-            previousStrikeCounts[s.id] = currentCount
-        }
-    }
-}
-
-@Composable
-private fun StudyTimerTicker() {
-    val context = LocalContext.current
-    LaunchedEffect(Unit) { StudyTimerState.ensureLoaded(context) }
-    LaunchedEffect(StudyTimerState.subjects) {
-        while (StudyTimerState.subjects.any { it.isRunning }) {
-            delay(1000)
-            StudyTimerState.checkStrikes(context, System.currentTimeMillis())
-        }
-    }
-}
-
-@Composable
-private fun StudyCelebrationHost() {
-    StudyTimerState.pendingCelebration?.let { (_, count) ->
-        StudyStrikeCelebrationOverlay(strikeCount = count) {
-            StudyTimerState.pendingCelebration = null
-        }
-    }
-}
-
 /* ---------------- responsive timer box settings ---------------- */
 
 private data class TimerBoxSettings(
@@ -360,7 +300,7 @@ private fun playRawSound(context: Context, resName: String) {
 @Composable
 private fun TimeUpOverlay(isLandscape: Boolean, onFinished: () -> Unit) {
     LaunchedEffect(Unit) {
-        delay(6500)
+        delay(9000)
         TimerSoundPlayer.stop()
         onFinished()
     }
@@ -517,7 +457,7 @@ private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Un
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
         scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
-        delay(3400)
+        delay(4200)
         alpha.animateTo(0f, tween(280))
         TimerSoundPlayer.stop()
         onFinished()
@@ -685,24 +625,16 @@ private fun FlipBlock(
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
             )
         }
-        @Composable
-        private fun ImmersiveSystemBars(controlsVisible: Boolean) {
-            val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-            DisposableEffect(controlsVisible, dialogWindow) {
-                val window = dialogWindow
-                val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-                controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                if (controlsVisible) {
-                    controller?.show(WindowInsetsCompat.Type.systemBars())
-                } else {
-                    window?.statusBarColor = AndroidColor.BLACK
-                    window?.navigationBarColor = AndroidColor.BLACK
-                    controller?.hide(WindowInsetsCompat.Type.systemBars())
-                }
-                onDispose {
-                    controller?.show(WindowInsetsCompat.Type.systemBars())
-                }
-            }
+        if (cornerLabel.isNotEmpty()) {
+            Text(
+                text = cornerLabel,
+                color = TimerDigit,
+                fontSize = cornerFontSize,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier
+                    .align(if (cornerAtStart) Alignment.BottomStart else Alignment.BottomEnd)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            )
         }
     }
 }
@@ -1096,7 +1028,7 @@ private fun CountdownTimeSetPanel(
 ) {
     Row(
         modifier = modifier
-            .widthIn(max = 150.dp)
+            .widthIn(max = 108.dp)
             .pointerInput("countdown-custom-tap") { detectTapGestures(onTap = { onCustomTap() }) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1122,17 +1054,18 @@ fun TimerHomeDialog(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
     var showQuickTimer by rememberSaveable { mutableStateOf(false) }
-    var clockPortraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false, scope = "clock")) }
-    var clockLandscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true, scope = "clock")) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
         StudyTimerTicker()
         val activity = LocalActivity.current
-        DisposableEffect(Unit) {
+        DisposableEffect(activity) {
             val previousOrientation = activity?.requestedOrientation
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
             onDispose {
+                // Timer section (Clock/Stopwatch/Countdown/Study) ছেড়ে গেলেই এই onDispose চলবে,
+                // orientation change এ চলবে না কারণ MainActivity manifest-এ configChanges হ্যান্ডেল করা আছে
+                // এবং এই DisposableEffect এখন শুধু `activity` key-তে bind, orientation-এ recompose হবে না।
                 StudyTimerState.pauseAll(context)
                 activity?.requestedOrientation = previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
@@ -1166,7 +1099,7 @@ fun TimerHomeDialog(
             ) {
                 StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
-                val activeClockBoxSettings = if (isLandscape) clockLandscapeBoxSettings else clockPortraitBoxSettings
+                val activeClockBoxSettings = remember(isLandscape) { loadTimerBoxSettings(context, isLandscape = isLandscape, scope = "clock") }
                 val iconSize = if (isLandscape) 32.dp else 44.dp
                 val panelReserve = iconSize + 26.dp
                 val targetEndPadding = if (isLandscape && controlsVisible) panelReserve else 0.dp
@@ -1198,7 +1131,10 @@ fun TimerHomeDialog(
                     exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + shrinkVertically(tween(200))
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.displayCutout)
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1255,21 +1191,8 @@ fun TimerHomeDialog(
     if (showQuickTimer) {
         QuickTimerDialog(onDismiss = { showQuickTimer = false })
     }
-
-    if (showClockBoxSettings) {
-        TimerBoxSettingsPanel(
-            settings = if (homeIsLandscapeSnapshot) clockLandscapeBoxSettings else clockPortraitBoxSettings,
-            isLandscape = homeIsLandscapeSnapshot,
-            scopeLabel = "Clock box",
-            onSettingsChange = { updated ->
-                if (homeIsLandscapeSnapshot) clockLandscapeBoxSettings = updated else clockPortraitBoxSettings = updated
-                saveTimerBoxSettings(context, homeIsLandscapeSnapshot, updated, scope = "clock")
-            },
-            onDismiss = { showClockBoxSettings = false },
-            onResetDefaults = { defaultTimerBoxSettings("clock", homeIsLandscapeSnapshot) }
-        )
-    }
 }
+private data class BoxEditTarget(val scope: String, val isLandscape: Boolean, val label: String)
 
 @Composable
 private fun TimerSettingsDialog(
@@ -1277,6 +1200,9 @@ private fun TimerSettingsDialog(
     onDismiss: () -> Unit,
     onIs24HourChange: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
+    var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -1284,7 +1210,7 @@ private fun TimerSettingsDialog(
             color = TimerCardBg,
             contentColor = Color.White
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
+            Column(modifier = Modifier.padding(20.dp).heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
                 Text("Timer settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1298,12 +1224,37 @@ private fun TimerSettingsDialog(
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )
                 }
+                Spacer(Modifier.height(20.dp))
+                Text("Box size", color = Color.LightGray, fontSize = 14.sp)
+                Spacer(Modifier.height(6.dp))
+                listOf(
+                    BoxEditTarget("clock", false, "Real-time clock (Portrait)"),
+                    BoxEditTarget("clock", true, "Real-time clock (Landscape)"),
+                    BoxEditTarget("quick", false, "Stopwatch / Countdown (Portrait)"),
+                    BoxEditTarget("quick", true, "Stopwatch / Countdown (Landscape)")
+                ).forEach { target ->
+                    TextButton(onClick = { boxEditTarget = target }, modifier = Modifier.fillMaxWidth()) {
+                        Text(target.label, color = TimerAccent, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
                     Text("Done", color = TimerAccent, fontWeight = FontWeight.Bold)
                 }
             }
         }
+    }
+
+    boxEditTarget?.let { target ->
+        val currentSettings = remember(target) { loadTimerBoxSettings(context, isLandscape = target.isLandscape, scope = target.scope) }
+        TimerBoxSettingsPanel(
+            settings = currentSettings,
+            isLandscape = target.isLandscape,
+            scopeLabel = target.label,
+            onSettingsChange = { updated -> saveTimerBoxSettings(context, target.isLandscape, updated, scope = target.scope) },
+            onDismiss = { boxEditTarget = null },
+            onResetDefaults = { defaultTimerBoxSettings(target.scope, target.isLandscape) }
+        )
     }
 }
 
@@ -1324,7 +1275,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
     var showCustomTimeDialog by remember { mutableStateOf(false) }
     var hasStarted by rememberSaveable { mutableStateOf(false) }
-    var showBoxSettings by remember { mutableStateOf(false) }
     var portraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false)) }
     var landscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true)) }
     var maxWidthLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
@@ -1383,6 +1333,10 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                 StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
+                LaunchedEffect(isLandscape) {
+                    if (isLandscape) landscapeBoxSettings = loadTimerBoxSettings(context, isLandscape = true)
+                    else portraitBoxSettings = loadTimerBoxSettings(context, isLandscape = false)
+                }
                 val activeBoxSettings = if (isLandscape) landscapeBoxSettings else portraitBoxSettings
                 val digitFontSize = activeBoxSettings.fontSizeSp.sp
                 val digitFontWeight = FontWeight(activeBoxSettings.fontWeightValue)
@@ -1427,9 +1381,13 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             detectTapGestures(onTap = { controlsVisible = !controlsVisible })
                         }
                 ) {
+                    var quickTopBarHeightPx by remember { mutableStateOf(0) }
                     AnimatedVisibility(
                         visible = controlsVisible,
-                        modifier = Modifier.align(Alignment.TopCenter).zIndex(10f),
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .zIndex(10f)
+                            .onGloballyPositioned { quickTopBarHeightPx = it.size.height },
                         enter = fadeIn(tween(260, easing = FastOutSlowInEasing)) + expandVertically(tween(260)),
                         exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + shrinkVertically(tween(200))
                     ) {
@@ -1437,6 +1395,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(TimerBg)
+                                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.displayCutout)
                                 .padding(horizontal = 8.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1462,7 +1421,8 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         animationSpec = tween(320, easing = FastOutSlowInEasing),
                         label = "quickTimerBottomPadding"
                     )
-                    val quickTargetTopPadding = if (isLandscape && controlsVisible) 64.dp else 0.dp
+                    val quickTopBarHeightDp = with(density) { quickTopBarHeightPx.toDp() }
+                    val quickTargetTopPadding = if (controlsVisible) quickTopBarHeightDp else 0.dp
                     val animatedQuickTopPadding by animateDpAsState(
                         targetValue = quickTargetTopPadding,
                         animationSpec = tween(320, easing = FastOutSlowInEasing),
@@ -1500,26 +1460,29 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                     if (isLandscape) {
                         AnimatedVisibility(
                             visible = controlsVisible,
-                            modifier = Modifier.align(Alignment.CenterEnd).padding(12.dp),
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(top = quickTopBarHeightDp + 12.dp, end = 12.dp, bottom = 12.dp),
                             enter = fadeIn(tween(260, easing = FastOutSlowInEasing)) + scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = 0.82f),
                             exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + scaleOut(tween(200, easing = FastOutSlowInEasing), targetScale = 0.82f)
                         ) {
                             Surface(
+                                modifier = Modifier.widthIn(max = 120.dp),
                                 shape = RoundedCornerShape(16.dp),
                                 color = Color(0xE6121212),
                                 contentColor = Color.White,
                                 shadowElevation = 6.dp
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(10.dp),
+                                    modifier = Modifier.padding(8.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     TimerPanelButton(
                                         text = if (isRunning) "Pause" else "Start",
-                                        fontSize = 13.sp,
-                                        horizontalPadding = 14.dp,
-                                        verticalPadding = 9.dp
+                                        fontSize = 12.sp,
+                                        horizontalPadding = 10.dp,
+                                        verticalPadding = 8.dp
                                     ) {
                                         isRunning = !isRunning
                                         if (isRunning) hasStarted = true
@@ -1546,13 +1509,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             onCustomTap = { showCustomTimeDialog = true }
                                         )
                                     }
-                                    TimerPanelButton(
-                                        text = "Box",
-                                        fontSize = 12.sp,
-                                        horizontalPadding = 12.dp,
-                                        verticalPadding = 7.dp,
-                                        onClick = { showBoxSettings = true }
-                                    )
                                 }
                             }
                         }
@@ -1594,13 +1550,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         onCustomTap = { showCustomTimeDialog = true }
                                     )
                                 }
-                                TimerPanelButton(
-                                    text = "Box settings",
-                                    fontSize = 12.sp,
-                                    horizontalPadding = 12.dp,
-                                    verticalPadding = 7.dp,
-                                    onClick = { showBoxSettings = true }
-                                )
                             }
                         }
                     }
@@ -1608,17 +1557,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                 }
             }
         }
-    }
-    if (showBoxSettings) {
-        TimerBoxSettingsPanel(
-            settings = if (maxWidthLandscapeSnapshot) landscapeBoxSettings else portraitBoxSettings,
-            isLandscape = maxWidthLandscapeSnapshot,
-            onSettingsChange = { updated ->
-                if (maxWidthLandscapeSnapshot) landscapeBoxSettings = updated else portraitBoxSettings = updated
-                saveTimerBoxSettings(context, maxWidthLandscapeSnapshot, updated)
-            },
-            onDismiss = { showBoxSettings = false }
-        )
     }
     if (showCustomTimeDialog) {
         Dialog(onDismissRequest = { showCustomTimeDialog = false }) {
@@ -1701,13 +1639,22 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
         persist(updated)
     }
 
+    var studyControlsVisible by rememberSaveable { mutableStateOf(true) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        ImmersiveSystemBars(studyControlsVisible)
         KeepScreenOn()
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput("study-tap") { detectTapGestures(onTap = { studyControlsVisible = !studyControlsVisible }) }
+            ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.displayCutout)
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(onClick = onDismiss) { Text("Back", color = TimerAccent) }
