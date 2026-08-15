@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -108,6 +109,49 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
 private fun StudySubject.currentElapsedMillis(nowMillis: Long): Long =
     accumulatedMillis + if (isRunning) (nowMillis - startedAtMillis).coerceAtLeast(0L) else 0L
 
+/* ---------------- responsive timer box settings ---------------- */
+
+private data class TimerBoxSettings(
+    val widthPercent: Float = 0.88f,
+    val boxHeightDp: Float = 130f,
+    val fontSizeSp: Float = 78f,
+    val fontWeightValue: Int = 900,
+    val spacingDp: Float = 12f
+)
+
+private fun timerBoxPrefsKey(scope: String, isLandscape: Boolean) = "${scope}_${if (isLandscape) "landscape" else "portrait"}"
+
+private fun defaultTimerBoxSettings(scope: String, isLandscape: Boolean): TimerBoxSettings = when {
+    scope == "clock" && isLandscape -> TimerBoxSettings(widthPercent = 1f, boxHeightDp = 220f, fontSizeSp = 350f, fontWeightValue = 900, spacingDp = 14f)
+    scope == "clock" -> TimerBoxSettings(widthPercent = 1f, boxHeightDp = 150f, fontSizeSp = 130f, fontWeightValue = 900, spacingDp = 14f)
+    isLandscape -> TimerBoxSettings(widthPercent = 2.2f, boxHeightDp = 320f, fontSizeSp = 350f, fontWeightValue = 900, spacingDp = 12f)
+    else -> TimerBoxSettings(widthPercent = 0.88f, boxHeightDp = 130f, fontSizeSp = 78f, fontWeightValue = 900, spacingDp = 12f)
+}
+
+private fun loadTimerBoxSettings(context: Context, isLandscape: Boolean, scope: String = "quick"): TimerBoxSettings {
+    val prefs = context.getSharedPreferences("timer_box_settings", Context.MODE_PRIVATE)
+    val key = timerBoxPrefsKey(scope, isLandscape)
+    val defaults = defaultTimerBoxSettings(scope, isLandscape)
+    return TimerBoxSettings(
+        widthPercent = prefs.getFloat("${key}_width_percent", defaults.widthPercent),
+        boxHeightDp = prefs.getFloat("${key}_box_height", defaults.boxHeightDp),
+        fontSizeSp = prefs.getFloat("${key}_font_size", defaults.fontSizeSp),
+        fontWeightValue = prefs.getInt("${key}_font_weight", defaults.fontWeightValue),
+        spacingDp = prefs.getFloat("${key}_spacing", defaults.spacingDp)
+    )
+}
+
+private fun saveTimerBoxSettings(context: Context, isLandscape: Boolean, settings: TimerBoxSettings, scope: String = "quick") {
+    val key = timerBoxPrefsKey(scope, isLandscape)
+    context.getSharedPreferences("timer_box_settings", Context.MODE_PRIVATE).edit()
+        .putFloat("${key}_width_percent", settings.widthPercent)
+        .putFloat("${key}_box_height", settings.boxHeightDp)
+        .putFloat("${key}_font_size", settings.fontSizeSp)
+        .putInt("${key}_font_weight", settings.fontWeightValue)
+        .putFloat("${key}_spacing", settings.spacingDp)
+        .apply()
+}
+
 private fun formatDurationDhms(totalMillis: Long): String {
     val totalSeconds = totalMillis / 1000L
     val days = totalSeconds / 86400
@@ -122,8 +166,117 @@ private fun formatDurationDhms(totalMillis: Long): String {
     }
 }
 
-/* ---------------- flip-digit building blocks ---------------- */
+/* ---------------- study strikes ---------------- */
 
+private val StudyStrikeMilestonesHours = listOf(3, 6, 10, 15, 21, 28, 36, 45, 55, 66)
+
+private fun strikeCountForElapsed(elapsedMillis: Long): Int {
+    val hours = elapsedMillis / 3_600_000.0
+    return StudyStrikeMilestonesHours.count { hours >= it }
+}
+
+private val StudyStrikeMessages = listOf(
+    "ভাই, তুই তো পাঠাই দিছিস! 🔥",
+    "দারুণ! এভাবেই এগিয়ে যা। 💪",
+    "অসাধারণ পরিশ্রম! গর্বিত তোর জন্য। ⭐",
+    "থামিস না, তুই একদম ঠিক পথে আছিস! 🚀",
+    "চমৎকার! আরেকটা স্ট্রাইক তোর ঝুলিতে। 🏆"
+)
+
+private fun studyStrikeSoundResName(strikeIndex: Int): String = "strike_$strikeIndex"
+
+private fun playStrikeSound(context: Context, strikeIndex: Int) {
+    runCatching {
+        val specific = context.resources.getIdentifier(studyStrikeSoundResName(strikeIndex), "raw", context.packageName)
+        val resId = if (specific != 0) specific else context.resources.getIdentifier("strike_default", "raw", context.packageName)
+        if (resId != 0) {
+            val player = android.media.MediaPlayer.create(context, resId)
+            player?.setOnCompletionListener { it.release() }
+            player?.start()
+        }
+    }
+}
+
+/* ---------------- countdown time-up ---------------- */
+
+private fun playRawSound(context: Context, resName: String) {
+    runCatching {
+        val resId = context.resources.getIdentifier(resName, "raw", context.packageName)
+        if (resId != 0) {
+            val player = android.media.MediaPlayer.create(context, resId)
+            player?.setOnCompletionListener { it.release() }
+            player?.start()
+        }
+    }
+}
+
+@Composable
+private fun TimeUpOverlay(isLandscape: Boolean, onFinished: () -> Unit) {
+    LaunchedEffect(Unit) {
+        delay(4000)
+        onFinished()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .zIndex(200f)
+            .pointerInput("time-up-block") { detectTapGestures(onTap = {}) },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "TIME UP",
+            color = Color(0xFFFF6E6E),
+            fontSize = if (isLandscape) 64.sp else 52.sp,
+            fontWeight = FontWeight.Black
+        )
+    }
+}
+
+@Composable
+private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
+    val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
+    val scale = remember { Animatable(0.4f) }
+    LaunchedEffect(strikeCount) {
+        scale.snapTo(0.4f)
+        scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
+        delay(2400)
+        onFinished()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.72f))
+            .zIndex(220f)
+            .pointerInput("strike-celebration-block") { detectTapGestures(onTap = {}) },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
+        ) {
+            Text("🎉🏆🎉", fontSize = 56.sp)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "$strikeCount Strike${if (strikeCount > 1) "s" else ""}!",
+                color = Color(0xFFFFD700),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Black
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                message,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 20.dp)
+            )
+        }
+    }
+}
+
+/* ---------------- flip-digit building blocks ---------------- */
 @Composable
 private fun FlipDigitCell(
     char: Char,
@@ -165,7 +318,7 @@ private fun FlipText(
     fontWeight: FontWeight = FontWeight.Black,
     extraBold: Boolean = false
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
         text.forEach { c ->
             if (c.isDigit()) {
                 FlipDigitCell(char = c, fontSize = fontSize, color = color, fontWeight = fontWeight, extraBold = extraBold)
@@ -191,11 +344,23 @@ private fun FlipDigitCard(
             .clip(RoundedCornerShape(cornerRadius))
             .background(TimerCardBg)
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier.fillMaxSize().padding(top = topInset),
             contentAlignment = Alignment.Center
         ) {
-            FlipText(text = mainText, fontSize = fontSize, extraBold = extraBold)
+            // Numbers must never overflow the card regardless of manual font-size
+            // settings: clamp the requested size to what the box can actually hold,
+            // estimating width by digit count (roughly 0.62 * fontSize per digit).
+            val density = LocalDensity.current
+            val boxHeightPx = with(density) { maxHeight.toPx() }
+            val boxWidthPx = with(density) { maxWidth.toPx() }
+            val digitCount = mainText.count { it.isDigit() || !it.isWhitespace() }.coerceAtLeast(1)
+            val requestedPx = with(density) { fontSize.toPx() }
+            val heightCapPx = boxHeightPx * 0.82f
+            val widthCapPx = if (digitCount > 0) (boxWidthPx * 0.90f) / (digitCount * 0.62f) else requestedPx
+            val safeFontSizePx = minOf(requestedPx, heightCapPx, widthCapPx).coerceAtLeast(1f)
+            val safeFontSize = with(density) { safeFontSizePx.toSp() }
+            FlipText(text = mainText, fontSize = safeFontSize, extraBold = extraBold)
         }
         Box(
             Modifier
@@ -220,7 +385,7 @@ private fun FlipBlock(
     boxAspectRatio: Float,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier.fillMaxWidth().aspectRatio(boxAspectRatio)) {
+    Box(modifier = modifier.fillMaxWidth()) {
         FlipDigitCard(
             mainText,
             modifier = Modifier.fillMaxSize(),
@@ -266,7 +431,9 @@ private fun SplitTimeDisplay(
     totalMillis: Long,
     fontSize: TextUnit,
     dividerThickness: Dp,
-    boxAspectRatio: Float,
+    boxHeight: Dp,
+    spacing: Dp = 12.dp,
+    fontWeight: FontWeight = FontWeight.Black,
     modifier: Modifier = Modifier
 ) {
     val totalSeconds = totalMillis / 1000
@@ -278,9 +445,9 @@ private fun SplitTimeDisplay(
     } else {
         listOf("MIN" to m, "SEC" to s)
     }
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(spacing)) {
         units.forEach { (label, value) ->
-            Box(modifier = Modifier.weight(1f).aspectRatio(boxAspectRatio)) {
+            Box(modifier = Modifier.weight(1f).height(boxHeight)) {
                 FlipDigitCard(
                     "%02d".format(value),
                     modifier = Modifier.fillMaxSize(),
@@ -302,9 +469,8 @@ private fun SplitTimeDisplay(
 }
 
 /* ---------------- live clock ---------------- */
-
 @Composable
-private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
+private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSettings: TimerBoxSettings) {
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -324,14 +490,16 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
     val second = calendar.get(Calendar.SECOND)
     val amPm = if (hour24 < 12) "AM" else "PM"
 
-    val mainFontSize = if (isLandscape) 350.sp else 130.sp
+    val mainFontSize = boxSettings.fontSizeSp.sp
     val dividerThickness = if (isLandscape) 8.dp else 3.dp
-    val cornerFontSize = if (isLandscape) 40.sp else 20.sp
-    val boxAspectRatio = if (isLandscape) 1.1f else 1.2f
+    val cornerFontSize = (boxSettings.fontSizeSp * 0.115f).sp
+    val boxHeightDp = boxSettings.boxHeightDp.dp
 
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
+        modifier = Modifier
+            .fillMaxWidth(boxSettings.widthPercent.coerceIn(0.3f, 3f))
+            .padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(boxSettings.spacingDp.dp)
     ) {
         FlipBlock(
             topLabel = dateLabel,
@@ -342,8 +510,8 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
             dividerThickness = dividerThickness,
             cornerFontSize = cornerFontSize,
             cornerIsNumeric = false,
-            boxAspectRatio = boxAspectRatio,
-            modifier = Modifier.weight(1f)
+            boxAspectRatio = 1f,
+            modifier = Modifier.weight(1f).height(boxHeightDp)
         )
         FlipBlock(
             topLabel = dayLabel,
@@ -354,8 +522,8 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean) {
             dividerThickness = dividerThickness,
             cornerFontSize = cornerFontSize,
             cornerIsNumeric = true,
-            boxAspectRatio = boxAspectRatio,
-            modifier = Modifier.weight(1f)
+            boxAspectRatio = 1f,
+            modifier = Modifier.weight(1f).height(boxHeightDp)
         )
     }
 }
@@ -378,6 +546,17 @@ private fun ImmersiveSystemBars(controlsVisible: Boolean) {
         }
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}
+
+@Composable
+private fun KeepScreenOn() {
+    val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+    DisposableEffect(dialogWindow) {
+        dialogWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            dialogWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 }
@@ -526,6 +705,102 @@ private fun NumberWheelColumn(
 }
 
 @Composable
+private fun TimerBoxSettingsPanel(
+    settings: TimerBoxSettings,
+    isLandscape: Boolean,
+    scopeLabel: String = "Timer box",
+    onSettingsChange: (TimerBoxSettings) -> Unit,
+    onDismiss: () -> Unit,
+    onResetDefaults: (() -> TimerBoxSettings)? = null
+) {
+    var widthPercent by remember(settings) { mutableStateOf(settings.widthPercent) }
+    var boxHeight by remember(settings) { mutableStateOf(settings.boxHeightDp) }
+    var fontSize by remember(settings) { mutableStateOf(settings.fontSizeSp) }
+    var fontWeightValue by remember(settings) { mutableStateOf(settings.fontWeightValue) }
+    var spacing by remember(settings) { mutableStateOf(settings.spacingDp) }
+
+    fun push() {
+        onSettingsChange(TimerBoxSettings(widthPercent, boxHeight, fontSize, fontWeightValue, spacing))
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = TimerCardBg,
+            contentColor = Color.White
+        ) {
+            Column(modifier = Modifier.padding(20.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    if (isLandscape) "$scopeLabel (Landscape)" else "$scopeLabel (Portrait)",
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(14.dp))
+
+                Text("Width  ${"%.0f".format(widthPercent * 100)}%", color = Color.LightGray, fontSize = 13.sp)
+                Slider(
+                    value = widthPercent,
+                    valueRange = if (isLandscape) 0.5f..3f else 0.4f..1f,
+                    onValueChange = { widthPercent = it; push() },
+                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                )
+
+                Text("Box height  ${boxHeight.toInt()}dp", color = Color.LightGray, fontSize = 13.sp)
+                Slider(
+                    value = boxHeight,
+                    valueRange = 60f..420f,
+                    onValueChange = { boxHeight = it; push() },
+                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                )
+
+                Text("Number size  ${fontSize.toInt()}sp", color = Color.LightGray, fontSize = 13.sp)
+                Slider(
+                    value = fontSize,
+                    valueRange = 24f..420f,
+                    onValueChange = { fontSize = it; push() },
+                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                )
+
+                Text("Number weight  $fontWeightValue", color = Color.LightGray, fontSize = 13.sp)
+                Slider(
+                    value = fontWeightValue.toFloat(),
+                    valueRange = 100f..900f,
+                    onValueChange = { fontWeightValue = it.toInt(); push() },
+                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                )
+
+                Text("Spacing  ${spacing.toInt()}dp", color = Color.LightGray, fontSize = 13.sp)
+                Slider(
+                    value = spacing,
+                    valueRange = 0f..40f,
+                    onValueChange = { spacing = it; push() },
+                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                )
+
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = {
+                        val reset = onResetDefaults?.invoke() ?: if (isLandscape) {
+                            TimerBoxSettings(widthPercent = 2.2f, boxHeightDp = 320f, fontSizeSp = 350f, fontWeightValue = 900, spacingDp = 12f)
+                        } else {
+                            TimerBoxSettings(widthPercent = 0.88f, boxHeightDp = 130f, fontSizeSp = 78f, fontWeightValue = 900, spacingDp = 12f)
+                        }
+                        widthPercent = reset.widthPercent
+                        boxHeight = reset.boxHeightDp
+                        fontSize = reset.fontSizeSp
+                        fontWeightValue = reset.fontWeightValue
+                        spacing = reset.spacingDp
+                        onSettingsChange(reset)
+                    }) { Text("Default", color = Color.LightGray) }
+                    TextButton(onClick = onDismiss) { Text("Done", color = TimerAccent, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CountdownTimeSetPanel(
     hours: Int,
     minutes: Int,
@@ -561,18 +836,43 @@ fun TimerHomeDialog(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
     var showQuickTimer by rememberSaveable { mutableStateOf(false) }
-
+    var showClockBoxSettings by remember { mutableStateOf(false) }
+    var clockPortraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false, scope = "clock")) }
+    var clockLandscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true, scope = "clock")) }
+    var homeIsLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
+        KeepScreenOn()
+        val homeDialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        var homeBrightnessLevel by remember {
+            mutableStateOf(homeDialogWindow?.attributes?.screenBrightness?.takeIf { it in 0f..1f } ?: 0.6f)
+        }
+        fun applyHomeBrightness(value: Float) {
+            val clamped = value.coerceIn(0.02f, 1f)
+            homeBrightnessLevel = clamped
+            homeDialogWindow?.let { window ->
+                val params = window.attributes
+                params.screenBrightness = clamped
+                window.attributes = params
+            }
+        }
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
+                    .pointerInput("timer-home-brightness") {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            applyHomeBrightness(homeBrightnessLevel - dragAmount.y / 600f)
+                        }
+                    }
                     .pointerInput("timer-home-tap") {
                         detectTapGestures(onTap = { controlsVisible = !controlsVisible })
                     }
             ) {
                 val isLandscape = maxWidth > maxHeight
+                homeIsLandscapeSnapshot = isLandscape
+                val activeClockBoxSettings = if (isLandscape) clockLandscapeBoxSettings else clockPortraitBoxSettings
                 val iconSize = if (isLandscape) 32.dp else 44.dp
                 val panelReserve = iconSize + 26.dp
                 val targetEndPadding = if (isLandscape && controlsVisible) panelReserve else 0.dp
@@ -582,13 +882,19 @@ fun TimerHomeDialog(
                     label = "timerEndPadding"
                 )
 
+                val homeTargetBottomPadding = if (!isLandscape && controlsVisible) 96.dp else 0.dp
+                val animatedBottomPadding by animateDpAsState(
+                    targetValue = homeTargetBottomPadding,
+                    animationSpec = tween(320, easing = FastOutSlowInEasing),
+                    label = "timerBottomPadding"
+                )
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .padding(end = animatedEndPadding)
+                        .padding(end = animatedEndPadding, bottom = animatedBottomPadding)
                 ) {
-                    LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape)
+                    LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape, boxSettings = activeClockBoxSettings)
                 }
 
                 AnimatedVisibility(
@@ -608,6 +914,7 @@ fun TimerHomeDialog(
                             }
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 DropdownMenuItem(text = { Text("Timer settings") }, onClick = { showMenu = false; showSettings = true })
+                                DropdownMenuItem(text = { Text("Clock box settings") }, onClick = { showMenu = false; showClockBoxSettings = true })
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
                             }
@@ -654,6 +961,20 @@ fun TimerHomeDialog(
     if (showQuickTimer) {
         QuickTimerDialog(onDismiss = { showQuickTimer = false })
     }
+
+    if (showClockBoxSettings) {
+        TimerBoxSettingsPanel(
+            settings = if (homeIsLandscapeSnapshot) clockLandscapeBoxSettings else clockPortraitBoxSettings,
+            isLandscape = homeIsLandscapeSnapshot,
+            scopeLabel = "Clock box",
+            onSettingsChange = { updated ->
+                if (homeIsLandscapeSnapshot) clockLandscapeBoxSettings = updated else clockPortraitBoxSettings = updated
+                saveTimerBoxSettings(context, homeIsLandscapeSnapshot, updated, scope = "clock")
+            },
+            onDismiss = { showClockBoxSettings = false },
+            onResetDefaults = { defaultTimerBoxSettings("clock", homeIsLandscapeSnapshot) }
+        )
+    }
 }
 
 @Composable
@@ -696,6 +1017,7 @@ private fun TimerSettingsDialog(
 
 @Composable
 private fun QuickTimerDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
     var mode by rememberSaveable { mutableStateOf("stopwatch") }
     var isRunning by rememberSaveable { mutableStateOf(false) }
     var elapsedMillis by rememberSaveable { mutableStateOf(0L) }
@@ -707,6 +1029,11 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var pickerHours by rememberSaveable { mutableStateOf(((countdownTotalMillis / 3_600_000L).toInt())) }
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
     var showCustomTimeDialog by remember { mutableStateOf(false) }
+    var hasStarted by rememberSaveable { mutableStateOf(false) }
+    var showBoxSettings by remember { mutableStateOf(false) }
+    var portraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false)) }
+    var landscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true)) }
+    var maxWidthLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
 
     fun applyPickerToCountdown() {
         val newMillis = (pickerHours * 3_600_000L + pickerMinutes * 60_000L).coerceAtLeast(1000L)
@@ -733,8 +1060,15 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         }
     }
 
+    LaunchedEffect(finished) {
+        if (finished) {
+            playRawSound(context, "timer_up")
+        }
+    }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
+        KeepScreenOn()
         val density = LocalDensity.current
         val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
         var brightnessLevel by remember {
@@ -753,11 +1087,15 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val isLandscape = maxWidth > maxHeight
-                val digitFontSize = if (isLandscape) 350.sp else 78.sp
+                maxWidthLandscapeSnapshot = isLandscape
+                val activeBoxSettings = if (isLandscape) landscapeBoxSettings else portraitBoxSettings
+                val digitFontSize = activeBoxSettings.fontSizeSp.sp
+                val digitFontWeight = FontWeight(activeBoxSettings.fontWeightValue)
                 val dividerThickness = if (isLandscape) 7.dp else 3.dp
-                val boxAspectRatio = if (isLandscape) 1.2f else 0.6f
+                val boxHeightDp = activeBoxSettings.boxHeightDp.dp
+                val boxSpacingDp = activeBoxSettings.spacingDp.dp
                 val panelReserve = if (isLandscape) 128.dp else 0.dp
-                val displayWidth = if (isLandscape) maxWidth * 2.2f else maxWidth * 0.88f
+                val displayWidth = (maxWidth * activeBoxSettings.widthPercent).coerceAtMost(if (isLandscape) maxWidth * 3f else maxWidth)
                 val targetEndPadding = if (isLandscape && controlsVisible) panelReserve else 0.dp
                 val animatedEndPadding by animateDpAsState(
                     targetValue = targetEndPadding,
@@ -810,30 +1148,42 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             TimerPanelButton(
                                 text = "Stopwatch",
                                 selected = mode == "stopwatch",
-                                onClick = { if (!isRunning) { mode = "stopwatch"; finished = false; elapsedMillis = 0L } }
+                                onClick = { if (!isRunning) { mode = "stopwatch"; finished = false; hasStarted = false; elapsedMillis = 0L } }
                             )
                             TimerPanelButton(
                                 text = "Countdown",
                                 selected = mode == "countdown",
-                                onClick = { if (!isRunning) { mode = "countdown"; finished = false; remainingMillis = countdownTotalMillis } }
+                                onClick = { if (!isRunning) { mode = "countdown"; finished = false; hasStarted = false; remainingMillis = countdownTotalMillis } }
                             )
                         }
                     }
 
+                    val quickTargetBottomPadding = if (!isLandscape && controlsVisible) 140.dp else 0.dp
+                    val animatedQuickBottomPadding by animateDpAsState(
+                        targetValue = quickTargetBottomPadding,
+                        animationSpec = tween(320, easing = FastOutSlowInEasing),
+                        label = "quickTimerBottomPadding"
+                    )
                     Box(
-                        modifier = Modifier.fillMaxSize().padding(end = animatedEndPadding),
+                        modifier = Modifier.fillMaxSize().padding(end = animatedEndPadding, bottom = animatedQuickBottomPadding),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (finished) {
-                            Text("TIME UP", color = Color(0xFFFF6E6E), fontSize = if (isLandscape) 64.sp else 44.sp, fontWeight = FontWeight.Black)
-                        } else {
-                            SplitTimeDisplay(
-                                totalMillis = if (mode == "stopwatch") elapsedMillis else remainingMillis,
-                                fontSize = digitFontSize,
-                                dividerThickness = dividerThickness,
-                                boxAspectRatio = boxAspectRatio,
-                                modifier = Modifier.width(displayWidth)
-                            )
+                        SplitTimeDisplay(
+                            totalMillis = if (mode == "stopwatch") elapsedMillis else remainingMillis,
+                            fontSize = digitFontSize,
+                            dividerThickness = dividerThickness,
+                            boxHeight = boxHeightDp,
+                            spacing = boxSpacingDp,
+                            fontWeight = digitFontWeight,
+                            modifier = Modifier.width(displayWidth)
+                        )
+                    }
+
+                    if (finished) {
+                        TimeUpOverlay(isLandscape = isLandscape) {
+                            finished = false
+                            hasStarted = false
+                            if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
                         }
                     }
 
@@ -858,17 +1208,25 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     TimerPanelButton(
-                                        text = if (finished) "Reset" else if (isRunning) "Pause" else "Start",
+                                        text = if (isRunning) "Pause" else "Start",
                                         fontSize = 13.sp,
                                         horizontalPadding = 14.dp,
                                         verticalPadding = 9.dp
                                     ) {
-                                        if (finished) {
+                                        isRunning = !isRunning
+                                        if (isRunning) hasStarted = true
+                                    }
+                                    if (hasStarted) {
+                                        TimerPanelButton(
+                                            text = "Reset",
+                                            fontSize = 13.sp,
+                                            horizontalPadding = 14.dp,
+                                            verticalPadding = 9.dp
+                                        ) {
+                                            isRunning = false
                                             finished = false
-                                            elapsedMillis = 0L
-                                            remainingMillis = countdownTotalMillis
-                                        } else {
-                                            isRunning = !isRunning
+                                            hasStarted = false
+                                            if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
                                         }
                                     }
                                     if (showTimeSetPanel) {
@@ -880,6 +1238,13 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             onCustomTap = { showCustomTimeDialog = true }
                                         )
                                     }
+                                    TimerPanelButton(
+                                        text = "Box",
+                                        fontSize = 12.sp,
+                                        horizontalPadding = 12.dp,
+                                        verticalPadding = 7.dp,
+                                        onClick = { showBoxSettings = true }
+                                    )
                                 }
                             }
                         }
@@ -895,15 +1260,21 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                 modifier = Modifier.padding(bottom = 24.dp)
                             ) {
                                 TimerPanelButton(
-                                    text = if (finished) "Reset" else if (isRunning) "Pause" else "Start",
-                                    modifier = Modifier.padding(bottom = if (showTimeSetPanel) 16.dp else 0.dp)
+                                    text = if (isRunning) "Pause" else "Start",
+                                    modifier = Modifier.padding(bottom = if (hasStarted || showTimeSetPanel) 16.dp else 0.dp)
                                 ) {
-                                    if (finished) {
+                                    isRunning = !isRunning
+                                    if (isRunning) hasStarted = true
+                                }
+                                if (hasStarted) {
+                                    TimerPanelButton(
+                                        text = "Reset",
+                                        modifier = Modifier.padding(bottom = if (showTimeSetPanel) 16.dp else 0.dp)
+                                    ) {
+                                        isRunning = false
                                         finished = false
-                                        elapsedMillis = 0L
-                                        remainingMillis = countdownTotalMillis
-                                    } else {
-                                        isRunning = !isRunning
+                                        hasStarted = false
+                                        if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
                                     }
                                 }
                                 if (showTimeSetPanel) {
@@ -915,12 +1286,30 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         onCustomTap = { showCustomTimeDialog = true }
                                     )
                                 }
+                                TimerPanelButton(
+                                    text = "Box settings",
+                                    fontSize = 12.sp,
+                                    horizontalPadding = 12.dp,
+                                    verticalPadding = 7.dp,
+                                    onClick = { showBoxSettings = true }
+                                )
                             }
                         }
                     }
                 }
             }
         }
+    }
+    if (showBoxSettings) {
+        TimerBoxSettingsPanel(
+            settings = if (maxWidthLandscapeSnapshot) landscapeBoxSettings else portraitBoxSettings,
+            isLandscape = maxWidthLandscapeSnapshot,
+            onSettingsChange = { updated ->
+                if (maxWidthLandscapeSnapshot) landscapeBoxSettings = updated else portraitBoxSettings = updated
+                saveTimerBoxSettings(context, maxWidthLandscapeSnapshot, updated)
+            },
+            onDismiss = { showBoxSettings = false }
+        )
     }
     if (showCustomTimeDialog) {
         Dialog(onDismissRequest = { showCustomTimeDialog = false }) {
@@ -985,6 +1374,14 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
         saveStudySubjects(context, updated)
     }
 
+    var celebrationForSubjectId by remember { mutableStateOf<String?>(null) }
+    var celebrationStrikeCount by remember { mutableStateOf(0) }
+    val previousStrikeCounts = remember { mutableStateMapOf<String, Int>() }
+
+    LaunchedEffect(Unit) {
+        subjects.forEach { s -> previousStrikeCounts[s.id] = strikeCountForElapsed(s.currentElapsedMillis(System.currentTimeMillis())) }
+    }
+
     fun toggleRunning(subject: StudySubject) {
         val updated = subjects.map { s ->
             when {
@@ -1002,7 +1399,44 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
         persist(updated)
     }
 
+    fun pauseAllRunning() {
+        val updated = subjects.map { s ->
+            if (s.isRunning) {
+                s.copy(isRunning = false, accumulatedMillis = s.currentElapsedMillis(System.currentTimeMillis()))
+            } else s
+        }
+        if (updated != subjects) persist(updated)
+    }
+
+    val studyLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(studyLifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                pauseAllRunning()
+            }
+        }
+        studyLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            studyLifecycleOwner.lifecycle.removeObserver(observer)
+            pauseAllRunning()
+        }
+    }
+
+    LaunchedEffect(subjects, now) {
+        subjects.forEach { s ->
+            val currentCount = strikeCountForElapsed(s.currentElapsedMillis(now))
+            val priorCount = previousStrikeCounts[s.id] ?: currentCount
+            if (currentCount > priorCount && celebrationForSubjectId == null) {
+                celebrationForSubjectId = s.id
+                celebrationStrikeCount = currentCount
+                playStrikeSound(context, currentCount)
+            }
+            previousStrikeCounts[s.id] = currentCount
+        }
+    }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        KeepScreenOn()
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -1033,6 +1467,19 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
+                                        val strikeCount = strikeCountForElapsed(subject.currentElapsedMillis(now))
+                                        if (strikeCount > 0) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 2.dp)) {
+                                                Text("★", color = Color(0xFFFFD700), fontSize = 13.sp)
+                                                Spacer(Modifier.width(3.dp))
+                                                Text(
+                                                    "$strikeCount Strike${if (strikeCount > 1) "s" else ""}",
+                                                    color = Color(0xFFFFD700),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
                                         Text(subject.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(
                                             formatDurationDhms(subject.currentElapsedMillis(now)),
@@ -1066,6 +1513,12 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                     onClick = { showAddDialog = true },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp)
                 )
+
+                if (celebrationForSubjectId != null) {
+                    StudyStrikeCelebrationOverlay(strikeCount = celebrationStrikeCount) {
+                        celebrationForSubjectId = null
+                    }
+                }
             }
         }
     }
