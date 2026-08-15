@@ -4,6 +4,7 @@ import android.content.pm.ActivityInfo
 import androidx.activity.compose.LocalActivity
 import android.content.Context
 import android.graphics.Color as AndroidColor
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -29,14 +30,16 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -115,6 +118,67 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
 
 private fun StudySubject.currentElapsedMillis(nowMillis: Long): Long =
     accumulatedMillis + if (isRunning) (nowMillis - startedAtMillis).coerceAtLeast(0L) else 0L
+
+private object StudyTimerState {
+    var subjects by mutableStateOf<List<StudySubject>>(emptyList())
+    var pendingCelebration by mutableStateOf<Pair<String, Int>?>(null)
+    private var loaded = false
+    private val previousStrikeCounts = mutableStateMapOf<String, Int>()
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            subjects = loadStudySubjects(context)
+            subjects.forEach { s -> previousStrikeCounts[s.id] = strikeCountForElapsed(s.currentElapsedMillis(System.currentTimeMillis())) }
+            loaded = true
+        }
+    }
+
+    fun persist(context: Context, updated: List<StudySubject>) {
+        subjects = updated
+        saveStudySubjects(context, updated)
+    }
+
+    fun pauseAll(context: Context) {
+        val now = System.currentTimeMillis()
+        val updated = subjects.map { s ->
+            if (s.isRunning) s.copy(isRunning = false, accumulatedMillis = s.currentElapsedMillis(now)) else s
+        }
+        if (updated != subjects) persist(context, updated)
+    }
+
+    fun checkStrikes(context: Context, nowMillis: Long) {
+        subjects.forEach { s ->
+            val currentCount = strikeCountForElapsed(s.currentElapsedMillis(nowMillis))
+            val priorCount = previousStrikeCounts[s.id] ?: currentCount
+            if (currentCount > priorCount && pendingCelebration == null) {
+                pendingCelebration = s.id to currentCount
+                playStrikeSound(context, currentCount)
+            }
+            previousStrikeCounts[s.id] = currentCount
+        }
+    }
+}
+
+@Composable
+private fun StudyTimerTicker() {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { StudyTimerState.ensureLoaded(context) }
+    LaunchedEffect(StudyTimerState.subjects) {
+        while (StudyTimerState.subjects.any { it.isRunning }) {
+            delay(1000)
+            StudyTimerState.checkStrikes(context, System.currentTimeMillis())
+        }
+    }
+}
+
+@Composable
+private fun StudyCelebrationHost() {
+    StudyTimerState.pendingCelebration?.let { (_, count) ->
+        StudyStrikeCelebrationOverlay(strikeCount = count) {
+            StudyTimerState.pendingCelebration = null
+        }
+    }
+}
 
 /** Timer section-এর যেকোনো screen-এ (Clock/Stopwatch/Countdown/Study) থাকা অবস্থায়
  *  running রাখার জন্য global state; শুধু TimerHomeDialog dispose হলে (section ছাড়লে) pause হয়। */
@@ -254,35 +318,50 @@ private val StudyStrikeMessages = listOf(
 
 private fun studyStrikeSoundResName(strikeIndex: Int): String = "strike_$strikeIndex"
 
-private fun playStrikeSound(context: Context, strikeIndex: Int) {
-    runCatching {
-        val specific = context.resources.getIdentifier(studyStrikeSoundResName(strikeIndex), "raw", context.packageName)
-        val resId = if (specific != 0) specific else context.resources.getIdentifier("strike_default", "raw", context.packageName)
-        if (resId != 0) {
-            val player = android.media.MediaPlayer.create(context, resId)
-            player?.setOnCompletionListener { it.release() }
-            player?.start()
+private object TimerSoundPlayer {
+    private var player: android.media.MediaPlayer? = null
+
+    fun play(context: Context, resName: String) {
+        stop()
+        runCatching {
+            val resId = context.resources.getIdentifier(resName, "raw", context.packageName)
+            if (resId != 0) {
+                player = android.media.MediaPlayer.create(context, resId)?.apply {
+                    setOnCompletionListener { mp -> mp.release(); if (player == mp) player = null }
+                    start()
+                }
+            }
         }
+    }
+
+    fun stop() {
+        runCatching {
+            player?.let { if (it.isPlaying) it.stop(); it.release() }
+        }
+        player = null
+    }
+}
+
+private fun playStrikeSound(context: Context, strikeIndex: Int) {
+    val specific = studyStrikeSoundResName(strikeIndex)
+    val hasSpecific = context.resources.getIdentifier(specific, "raw", context.packageName) != 0
+    val resName = if (hasSpecific) specific else "strike_default"
+    if (context.resources.getIdentifier(resName, "raw", context.packageName) != 0) {
+        TimerSoundPlayer.play(context, resName)
     }
 }
 
 /* ---------------- countdown time-up ---------------- */
 
 private fun playRawSound(context: Context, resName: String) {
-    runCatching {
-        val resId = context.resources.getIdentifier(resName, "raw", context.packageName)
-        if (resId != 0) {
-            val player = android.media.MediaPlayer.create(context, resId)
-            player?.setOnCompletionListener { it.release() }
-            player?.start()
-        }
-    }
+    TimerSoundPlayer.play(context, resName)
 }
 
 @Composable
 private fun TimeUpOverlay(isLandscape: Boolean, onFinished: () -> Unit) {
     LaunchedEffect(Unit) {
-        delay(4000)
+        delay(6500)
+        TimerSoundPlayer.stop()
         onFinished()
     }
     Box(
@@ -368,30 +447,85 @@ private fun CuteBouncingCharacter() {
 }
 
 @Composable
+private fun ChubbyCelebrationCharacter() {
+    val infinite = rememberInfiniteTransition(label = "chubbyCharacter")
+    val bounce by infinite.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(560, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "bounce"
+    )
+    val blink by infinite.animateFloat(
+        initialValue = 1f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            keyframes {
+                durationMillis = 2200
+                1f at 0; 1f at 1900; 0.12f at 2000; 1f at 2100; 1f at 2200
+            },
+            RepeatMode.Restart
+        ),
+        label = "blink"
+    )
+    Canvas(
+        modifier = Modifier
+            .size(160.dp)
+            .offset(y = (-bounce * 12).dp)
+    ) {
+        val w = size.width
+        val h = size.height
+        val bodyColor = Color(0xFFFFD24C)
+        val limbColor = Color(0xFFFFC229)
+        val footColor = Color(0xFFFF9F1C)
+        val cheek = Color(0xFFFF8FA3)
+
+        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.33f, h * 0.80f), size = Size(w * 0.14f, h * 0.14f), cornerRadius = CornerRadius(w * 0.07f))
+        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.53f, h * 0.80f), size = Size(w * 0.14f, h * 0.14f), cornerRadius = CornerRadius(w * 0.07f))
+        drawOval(color = footColor, topLeft = Offset(w * 0.30f, h * 0.90f), size = Size(w * 0.20f, h * 0.09f))
+        drawOval(color = footColor, topLeft = Offset(w * 0.50f, h * 0.90f), size = Size(w * 0.20f, h * 0.09f))
+
+        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.06f, h * 0.50f), size = Size(w * 0.12f, h * 0.26f), cornerRadius = CornerRadius(w * 0.06f))
+        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.82f, h * 0.50f), size = Size(w * 0.12f, h * 0.26f), cornerRadius = CornerRadius(w * 0.06f))
+        drawCircle(color = footColor, radius = w * 0.06f, center = Offset(w * 0.12f, h * 0.78f))
+        drawCircle(color = footColor, radius = w * 0.06f, center = Offset(w * 0.88f, h * 0.78f))
+
+        drawCircle(color = bodyColor, radius = w * 0.40f, center = Offset(w / 2f, h * 0.52f))
+        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.08f, center = Offset(w * 0.30f, h * 0.56f))
+        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.08f, center = Offset(w * 0.70f, h * 0.56f))
+
+        val eyeHeight = (h * 0.10f) * blink
+        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.37f, h * 0.46f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
+        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.57f, h * 0.46f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
+
+        drawArc(
+            color = Color(0xFF2B2B2B),
+            startAngle = 20f,
+            sweepAngle = 140f,
+            useCenter = false,
+            topLeft = Offset(w * 0.35f, h * 0.46f),
+            size = Size(w * 0.30f, h * 0.24f),
+            style = Stroke(width = w * 0.03f, cap = StrokeCap.Round)
+        )
+    }
+}
+
+@Composable
 private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
     val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
     val scale = remember { Animatable(0.3f) }
     val alpha = remember { Animatable(0f) }
-    var dismissing by remember(strikeCount) { mutableStateOf(false) }
     LaunchedEffect(strikeCount) {
-        dismissing = false
         scale.snapTo(0.3f)
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
         scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
-        delay(2600)
-        dismissing = true
-        alpha.animateTo(0f, tween(260))
+        delay(3400)
+        alpha.animateTo(0f, tween(280))
+        TimerSoundPlayer.stop()
         onFinished()
     }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    listOf(Color(0xFF3A1C71).copy(alpha = 0.95f), Color(0xFF000000).copy(alpha = 0.92f))
-                )
-            )
+            .background(Color(0xFFD90429))
             .graphicsLayer { this.alpha = alpha.value }
             .zIndex(500f)
             .pointerInput("strike-celebration-block") { detectTapGestures(onTap = {}) },
@@ -401,15 +535,15 @@ private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Un
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
         ) {
-            CuteBouncingCharacter()
+            ChubbyCelebrationCharacter()
             Spacer(Modifier.height(14.dp))
             Text(
                 "$strikeCount Strike${if (strikeCount > 1) "s" else ""}!",
-                color = Color(0xFFFFD700),
-                fontSize = 34.sp,
+                color = Color.White,
+                fontSize = 30.sp,
                 fontWeight = FontWeight.Black
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
                 message,
                 color = Color.White,
@@ -551,23 +685,22 @@ private fun FlipBlock(
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
             )
         }
-        if (cornerLabel.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .align(if (cornerIsNumeric) Alignment.BottomEnd else Alignment.BottomCenter)
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
-            ) {
-                if (cornerIsNumeric) {
-                    FlipText(
-                        text = cornerLabel,
-                        fontSize = cornerFontSize,
-                        color = Color.White,
-                        fontWeight = FontWeight.Black,
-                        extraBold = false,
-                        fillWidth = false
-                    )
+        @Composable
+        private fun ImmersiveSystemBars(controlsVisible: Boolean) {
+            val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+            DisposableEffect(controlsVisible, dialogWindow) {
+                val window = dialogWindow
+                val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+                controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (controlsVisible) {
+                    controller?.show(WindowInsetsCompat.Type.systemBars())
                 } else {
-                    Text(cornerLabel, color = Color.White, fontSize = cornerFontSize, fontWeight = FontWeight.Black)
+                    window?.statusBarColor = AndroidColor.BLACK
+                    window?.navigationBarColor = AndroidColor.BLACK
+                    controller?.hide(WindowInsetsCompat.Type.systemBars())
+                }
+                onDispose {
+                    controller?.show(WindowInsetsCompat.Type.systemBars())
                 }
             }
         }
@@ -702,7 +835,6 @@ private fun ImmersiveSystemBars(controlsVisible: Boolean) {
         }
     }
 }
-
 @Composable
 private fun KeepScreenOn() {
     val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
@@ -990,13 +1122,12 @@ fun TimerHomeDialog(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
     var showQuickTimer by rememberSaveable { mutableStateOf(false) }
-    var showClockBoxSettings by remember { mutableStateOf(false) }
     var clockPortraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false, scope = "clock")) }
     var clockLandscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true, scope = "clock")) }
-    var homeIsLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
+        StudyTimerTicker()
         val activity = LocalActivity.current
         DisposableEffect(Unit) {
             val previousOrientation = activity?.requestedOrientation
@@ -1035,7 +1166,6 @@ fun TimerHomeDialog(
             ) {
                 StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
-                homeIsLandscapeSnapshot = isLandscape
                 val activeClockBoxSettings = if (isLandscape) clockLandscapeBoxSettings else clockPortraitBoxSettings
                 val iconSize = if (isLandscape) 32.dp else 44.dp
                 val panelReserve = iconSize + 26.dp
@@ -1078,7 +1208,6 @@ fun TimerHomeDialog(
                             }
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 DropdownMenuItem(text = { Text("Timer settings") }, onClick = { showMenu = false; showSettings = true })
-                                DropdownMenuItem(text = { Text("Clock box settings") }, onClick = { showMenu = false; showClockBoxSettings = true })
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
                             }
