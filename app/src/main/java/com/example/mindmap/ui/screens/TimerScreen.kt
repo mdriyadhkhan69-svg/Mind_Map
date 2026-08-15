@@ -309,7 +309,12 @@ private fun TimeUpOverlay(isLandscape: Boolean, onFinished: () -> Unit) {
             .fillMaxSize()
             .background(Color.Black)
             .zIndex(200f)
-            .pointerInput("time-up-block") { detectTapGestures(onTap = {}) },
+            .pointerInput("time-up-close") {
+                detectTapGestures(onDoubleTap = {
+                    TimerSoundPlayer.stop()
+                    onFinished()
+                })
+            },
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -389,9 +394,14 @@ private fun CuteBouncingCharacter() {
 @Composable
 private fun ChubbyCelebrationCharacter() {
     val infinite = rememberInfiniteTransition(label = "chubbyCharacter")
+    val dance by infinite.animateFloat(
+        initialValue = -1f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "dance"
+    )
     val bounce by infinite.animateFloat(
         initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(560, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(380, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bounce"
     )
     val blink by infinite.animateFloat(
@@ -405,44 +415,96 @@ private fun ChubbyCelebrationCharacter() {
         ),
         label = "blink"
     )
+    val entrance = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        entrance.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 170f))
+    }
+
     Canvas(
         modifier = Modifier
-            .size(160.dp)
-            .offset(y = (-bounce * 12).dp)
+            .size(210.dp)
+            .graphicsLayer {
+                translationX = dance * 16f
+                translationY = (-bounce * 18f) + ((1f - entrance.value) * 70f)
+                rotationZ = dance * 5f
+                scaleX = 0.55f + entrance.value * 0.45f
+                scaleY = 0.55f + entrance.value * 0.45f
+                alpha = entrance.value
+            }
     ) {
         val w = size.width
         val h = size.height
-        val bodyColor = Color(0xFFFFD24C)
-        val limbColor = Color(0xFFFFC229)
-        val footColor = Color(0xFFFF9F1C)
-        val cheek = Color(0xFFFF8FA3)
+        val bodyColor = Color(0xFFFFC94D)
+        val limbColor = Color(0xFFFFB020)
+        val footColor = Color(0xFFFF8A1C)
+        val cheek = Color(0xFFFF7A93)
+        val hairColor = Color(0xFF2B2B2B)
+        val legSwing = dance * 6f
 
-        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.33f, h * 0.80f), size = Size(w * 0.14f, h * 0.14f), cornerRadius = CornerRadius(w * 0.07f))
-        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.53f, h * 0.80f), size = Size(w * 0.14f, h * 0.14f), cornerRadius = CornerRadius(w * 0.07f))
-        drawOval(color = footColor, topLeft = Offset(w * 0.30f, h * 0.90f), size = Size(w * 0.20f, h * 0.09f))
-        drawOval(color = footColor, topLeft = Offset(w * 0.50f, h * 0.90f), size = Size(w * 0.20f, h * 0.09f))
+        // legs (walking swing)
+        drawRoundRect(
+            color = limbColor,
+            topLeft = Offset(w * 0.33f - legSwing * 0.01f * w, h * 0.78f),
+            size = Size(w * 0.13f, h * 0.16f),
+            cornerRadius = CornerRadius(w * 0.05f)
+        )
+        drawRoundRect(
+            color = limbColor,
+            topLeft = Offset(w * 0.54f + legSwing * 0.01f * w, h * 0.78f),
+            size = Size(w * 0.13f, h * 0.16f),
+            cornerRadius = CornerRadius(w * 0.05f)
+        )
+        drawOval(color = footColor, topLeft = Offset(w * 0.30f - legSwing * 0.01f * w, h * 0.91f), size = Size(w * 0.19f, h * 0.08f))
+        drawOval(color = footColor, topLeft = Offset(w * 0.51f + legSwing * 0.01f * w, h * 0.91f), size = Size(w * 0.19f, h * 0.08f))
 
-        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.06f, h * 0.50f), size = Size(w * 0.12f, h * 0.26f), cornerRadius = CornerRadius(w * 0.06f))
-        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.82f, h * 0.50f), size = Size(w * 0.12f, h * 0.26f), cornerRadius = CornerRadius(w * 0.06f))
-        drawCircle(color = footColor, radius = w * 0.06f, center = Offset(w * 0.12f, h * 0.78f))
-        drawCircle(color = footColor, radius = w * 0.06f, center = Offset(w * 0.88f, h * 0.78f))
+        // arms
+        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.08f, h * 0.48f - legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
+        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.81f, h * 0.48f + legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
+        drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.135f, h * 0.74f - legSwing * 0.008f * h))
+        drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.865f, h * 0.74f + legSwing * 0.008f * h))
 
-        drawCircle(color = bodyColor, radius = w * 0.40f, center = Offset(w / 2f, h * 0.52f))
-        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.08f, center = Offset(w * 0.30f, h * 0.56f))
-        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.08f, center = Offset(w * 0.70f, h * 0.56f))
+        // body: rounded square instead of full circle (less "round")
+        drawRoundRect(
+            color = bodyColor,
+            topLeft = Offset(w * 0.24f, h * 0.24f),
+            size = Size(w * 0.52f, h * 0.52f),
+            cornerRadius = CornerRadius(w * 0.18f)
+        )
+
+        // spiky anime hair
+        val hairBaseY = h * 0.24f
+        drawPath(
+            path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.30f, hairBaseY)
+                lineTo(w * 0.36f, hairBaseY - h * 0.13f)
+                lineTo(w * 0.42f, hairBaseY)
+                lineTo(w * 0.47f, hairBaseY - h * 0.17f)
+                lineTo(w * 0.53f, hairBaseY)
+                lineTo(w * 0.58f, hairBaseY - h * 0.13f)
+                lineTo(w * 0.64f, hairBaseY)
+                lineTo(w * 0.70f, hairBaseY - h * 0.10f)
+                lineTo(w * 0.70f, hairBaseY + h * 0.02f)
+                lineTo(w * 0.30f, hairBaseY + h * 0.02f)
+                close()
+            },
+            color = hairColor
+        )
+
+        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.075f, center = Offset(w * 0.32f, h * 0.56f))
+        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.075f, center = Offset(w * 0.68f, h * 0.56f))
 
         val eyeHeight = (h * 0.10f) * blink
-        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.37f, h * 0.46f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
-        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.57f, h * 0.46f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
+        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.37f, h * 0.48f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
+        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.57f, h * 0.48f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
 
         drawArc(
             color = Color(0xFF2B2B2B),
             startAngle = 20f,
             sweepAngle = 140f,
             useCenter = false,
-            topLeft = Offset(w * 0.35f, h * 0.46f),
-            size = Size(w * 0.30f, h * 0.24f),
-            style = Stroke(width = w * 0.03f, cap = StrokeCap.Round)
+            topLeft = Offset(w * 0.36f, h * 0.50f),
+            size = Size(w * 0.28f, h * 0.22f),
+            style = Stroke(width = w * 0.028f, cap = StrokeCap.Round)
         )
     }
 }
@@ -457,7 +519,7 @@ private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Un
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
         scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
-        delay(4200)
+        delay(5200)
         alpha.animateTo(0f, tween(280))
         TimerSoundPlayer.stop()
         onFinished()
@@ -747,7 +809,7 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSetting
 @Composable
 private fun ImmersiveSystemBars(controlsVisible: Boolean) {
     val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-    DisposableEffect(controlsVisible, dialogWindow) {
+    DisposableEffect(dialogWindow) {
         val window = dialogWindow
         val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         if (window != null) {
@@ -756,14 +818,18 @@ private fun ImmersiveSystemBars(controlsVisible: Boolean) {
             window.navigationBarColor = TimerBg.toArgb()
         }
         controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            if (window != null) WindowCompat.setDecorFitsSystemWindows(window, true)
+        }
+    }
+    LaunchedEffect(controlsVisible, dialogWindow) {
+        val window = dialogWindow
+        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         if (controlsVisible) {
             controller?.show(WindowInsetsCompat.Type.systemBars())
         } else {
             controller?.hide(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
-            if (window != null) WindowCompat.setDecorFitsSystemWindows(window, true)
         }
     }
 }
@@ -1028,7 +1094,7 @@ private fun CountdownTimeSetPanel(
 ) {
     Row(
         modifier = modifier
-            .widthIn(max = 108.dp)
+            .widthIn(max = 84.dp)
             .pointerInput("countdown-custom-tap") { detectTapGestures(onTap = { onCustomTap() }) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1467,7 +1533,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + scaleOut(tween(200, easing = FastOutSlowInEasing), targetScale = 0.82f)
                         ) {
                             Surface(
-                                modifier = Modifier.widthIn(max = 120.dp),
+                                modifier = Modifier.widthIn(max = 92.dp),
                                 shape = RoundedCornerShape(16.dp),
                                 color = Color(0xE6121212),
                                 contentColor = Color.White,
@@ -1480,9 +1546,9 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                 ) {
                                     TimerPanelButton(
                                         text = if (isRunning) "Pause" else "Start",
-                                        fontSize = 12.sp,
-                                        horizontalPadding = 10.dp,
-                                        verticalPadding = 8.dp
+                                        fontSize = 11.sp,
+                                        horizontalPadding = 9.dp,
+                                        verticalPadding = 7.dp
                                     ) {
                                         isRunning = !isRunning
                                         if (isRunning) hasStarted = true
@@ -1490,9 +1556,9 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                     if (hasStarted) {
                                         TimerPanelButton(
                                             text = "Reset",
-                                            fontSize = 13.sp,
-                                            horizontalPadding = 14.dp,
-                                            verticalPadding = 9.dp
+                                            fontSize = 10.sp,
+                                            horizontalPadding = 8.dp,
+                                            verticalPadding = 6.dp
                                         ) {
                                             isRunning = false
                                             finished = false
