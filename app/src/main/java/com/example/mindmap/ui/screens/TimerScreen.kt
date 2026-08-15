@@ -1,5 +1,7 @@
 package com.example.mindmap.ui.screens
 
+import android.content.pm.ActivityInfo
+import androidx.activity.compose.LocalActivity
 import android.content.Context
 import android.graphics.Color as AndroidColor
 import androidx.compose.animation.*
@@ -27,8 +29,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.pointerInput
@@ -108,6 +115,68 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
 
 private fun StudySubject.currentElapsedMillis(nowMillis: Long): Long =
     accumulatedMillis + if (isRunning) (nowMillis - startedAtMillis).coerceAtLeast(0L) else 0L
+
+/** Timer section-এর যেকোনো screen-এ (Clock/Stopwatch/Countdown/Study) থাকা অবস্থায়
+ *  running রাখার জন্য global state; শুধু TimerHomeDialog dispose হলে (section ছাড়লে) pause হয়। */
+private object StudyTimerState {
+    var subjects by mutableStateOf<List<StudySubject>>(emptyList())
+    var pendingCelebration by mutableStateOf<Pair<String, Int>?>(null)
+    private var loaded = false
+    private val previousStrikeCounts = mutableStateMapOf<String, Int>()
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            subjects = loadStudySubjects(context)
+            loaded = true
+        }
+    }
+
+    fun persist(context: Context, updated: List<StudySubject>) {
+        subjects = updated
+        saveStudySubjects(context, updated)
+    }
+
+    fun pauseAll(context: Context) {
+        val now = System.currentTimeMillis()
+        val updated = subjects.map { s ->
+            if (s.isRunning) s.copy(isRunning = false, accumulatedMillis = s.currentElapsedMillis(now)) else s
+        }
+        if (updated != subjects) persist(context, updated)
+    }
+
+    fun checkStrikes(context: Context, nowMillis: Long) {
+        subjects.forEach { s ->
+            val currentCount = strikeCountForElapsed(s.currentElapsedMillis(nowMillis))
+            val priorCount = previousStrikeCounts[s.id] ?: currentCount
+            if (currentCount > priorCount && pendingCelebration == null) {
+                pendingCelebration = s.id to currentCount
+                playStrikeSound(context, currentCount)
+            }
+            previousStrikeCounts[s.id] = currentCount
+        }
+    }
+}
+
+@Composable
+private fun StudyTimerTicker() {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { StudyTimerState.ensureLoaded(context) }
+    LaunchedEffect(StudyTimerState.subjects) {
+        while (StudyTimerState.subjects.any { it.isRunning }) {
+            delay(1000)
+            StudyTimerState.checkStrikes(context, System.currentTimeMillis())
+        }
+    }
+}
+
+@Composable
+private fun StudyCelebrationHost() {
+    StudyTimerState.pendingCelebration?.let { (_, count) ->
+        StudyStrikeCelebrationOverlay(strikeCount = count) {
+            StudyTimerState.pendingCelebration = null
+        }
+    }
+}
 
 /* ---------------- responsive timer box settings ---------------- */
 
@@ -234,20 +303,97 @@ private fun TimeUpOverlay(isLandscape: Boolean, onFinished: () -> Unit) {
 }
 
 @Composable
+private fun CuteBouncingCharacter() {
+    val infinite = rememberInfiniteTransition(label = "cuteCharacter")
+    val bounce by infinite.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "bounce"
+    )
+    val blink by infinite.animateFloat(
+        initialValue = 1f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            keyframes {
+                durationMillis = 2200
+                1f at 0
+                1f at 1900
+                0.15f at 2000
+                1f at 2100
+                1f at 2200
+            },
+            RepeatMode.Restart
+        ),
+        label = "blink"
+    )
+    Canvas(
+        modifier = Modifier
+            .size(110.dp)
+            .offset(y = (-bounce * 14).dp)
+    ) {
+        val w = size.width
+        val h = size.height
+        val bodyColor = Color(0xFFFFC94D)
+        val cheekColor = Color(0xFFFF8FA3)
+        // body
+        drawCircle(color = bodyColor, radius = w * 0.42f, center = Offset(w / 2f, h / 2f))
+        // cheeks
+        drawCircle(color = cheekColor.copy(alpha = 0.55f), radius = w * 0.09f, center = Offset(w * 0.28f, h * 0.58f))
+        drawCircle(color = cheekColor.copy(alpha = 0.55f), radius = w * 0.09f, center = Offset(w * 0.72f, h * 0.58f))
+        // eyes (blink scales vertical)
+        val eyeHeight = (h * 0.11f) * blink
+        drawOval(
+            color = Color(0xFF2B2B2B),
+            topLeft = Offset(w * 0.34f, h * 0.42f - eyeHeight / 2f),
+            size = Size(w * 0.09f, eyeHeight)
+        )
+        drawOval(
+            color = Color(0xFF2B2B2B),
+            topLeft = Offset(w * 0.57f, h * 0.42f - eyeHeight / 2f),
+            size = Size(w * 0.09f, eyeHeight)
+        )
+        // smile
+        drawArc(
+            color = Color(0xFF2B2B2B),
+            startAngle = 20f,
+            sweepAngle = 140f,
+            useCenter = false,
+            topLeft = Offset(w * 0.32f, h * 0.42f),
+            size = Size(w * 0.36f, h * 0.30f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.035f, cap = StrokeCap.Round)
+        )
+        // little feet bounce
+        drawCircle(color = Color(0xFFFF9F1C), radius = w * 0.06f, center = Offset(w * 0.36f, h * 0.86f))
+        drawCircle(color = Color(0xFFFF9F1C), radius = w * 0.06f, center = Offset(w * 0.64f, h * 0.86f))
+    }
+}
+
+@Composable
 private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
     val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
-    val scale = remember { Animatable(0.4f) }
+    val scale = remember { Animatable(0.3f) }
+    val alpha = remember { Animatable(0f) }
+    var dismissing by remember(strikeCount) { mutableStateOf(false) }
     LaunchedEffect(strikeCount) {
-        scale.snapTo(0.4f)
+        dismissing = false
+        scale.snapTo(0.3f)
+        alpha.snapTo(0f)
+        alpha.animateTo(1f, tween(220))
         scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
-        delay(2400)
+        delay(2600)
+        dismissing = true
+        alpha.animateTo(0f, tween(260))
         onFinished()
     }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.72f))
-            .zIndex(220f)
+            .background(
+                Brush.radialGradient(
+                    listOf(Color(0xFF3A1C71).copy(alpha = 0.95f), Color(0xFF000000).copy(alpha = 0.92f))
+                )
+            )
+            .graphicsLayer { this.alpha = alpha.value }
+            .zIndex(500f)
             .pointerInput("strike-celebration-block") { detectTapGestures(onTap = {}) },
         contentAlignment = Alignment.Center
     ) {
@@ -255,22 +401,22 @@ private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Un
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
         ) {
-            Text("🎉🏆🎉", fontSize = 56.sp)
-            Spacer(Modifier.height(10.dp))
+            CuteBouncingCharacter()
+            Spacer(Modifier.height(14.dp))
             Text(
                 "$strikeCount Strike${if (strikeCount > 1) "s" else ""}!",
                 color = Color(0xFFFFD700),
-                fontSize = 26.sp,
+                fontSize = 34.sp,
                 fontWeight = FontWeight.Black
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
                 message,
                 color = Color.White,
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 20.dp)
+                modifier = Modifier.widthIn(max = 300.dp).padding(horizontal = 24.dp)
             )
         }
     }
@@ -316,9 +462,12 @@ private fun FlipText(
     fontSize: TextUnit,
     color: Color = TimerDigit,
     fontWeight: FontWeight = FontWeight.Black,
-    extraBold: Boolean = false
+    extraBold: Boolean = false,
+    fillWidth: Boolean = true
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+    val rowModifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier
+    val arrangement = if (fillWidth) Arrangement.Center else Arrangement.Start
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = arrangement, modifier = rowModifier) {
         text.forEach { c ->
             if (c.isDigit()) {
                 FlipDigitCell(char = c, fontSize = fontSize, color = color, fontWeight = fontWeight, extraBold = extraBold)
@@ -328,7 +477,6 @@ private fun FlipText(
         }
     }
 }
-
 @Composable
 private fun FlipDigitCard(
     mainText: String,
@@ -406,8 +554,8 @@ private fun FlipBlock(
         if (cornerLabel.isNotEmpty()) {
             Box(
                 modifier = Modifier
-                    .align(if (cornerAtStart) Alignment.BottomStart else Alignment.BottomEnd)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .align(if (cornerIsNumeric) Alignment.BottomEnd else Alignment.BottomCenter)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
                 if (cornerIsNumeric) {
                     FlipText(
@@ -415,7 +563,8 @@ private fun FlipBlock(
                         fontSize = cornerFontSize,
                         color = Color.White,
                         fontWeight = FontWeight.Black,
-                        extraBold = true
+                        extraBold = false,
+                        fillWidth = false
                     )
                 } else {
                     Text(cornerLabel, color = Color.White, fontSize = cornerFontSize, fontWeight = FontWeight.Black)
@@ -536,16 +685,20 @@ private fun ImmersiveSystemBars(controlsVisible: Boolean) {
     DisposableEffect(controlsVisible, dialogWindow) {
         val window = dialogWindow
         val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        if (window != null) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            window.statusBarColor = TimerBg.toArgb()
+            window.navigationBarColor = TimerBg.toArgb()
+        }
         controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (controlsVisible) {
             controller?.show(WindowInsetsCompat.Type.systemBars())
         } else {
-            window?.statusBarColor = AndroidColor.BLACK
-            window?.navigationBarColor = AndroidColor.BLACK
             controller?.hide(WindowInsetsCompat.Type.systemBars())
         }
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
+            if (window != null) WindowCompat.setDecorFitsSystemWindows(window, true)
         }
     }
 }
@@ -811,13 +964,14 @@ private fun CountdownTimeSetPanel(
 ) {
     Row(
         modifier = modifier
+            .widthIn(max = 150.dp)
             .pointerInput("countdown-custom-tap") { detectTapGestures(onTap = { onCustomTap() }) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange)
-        Text(":", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
-        NumberWheelColumn(range = 0..59, selected = minutes, onSelectedChange = onMinutesChange)
+        NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = 34.dp, visibleCount = 3)
+        Text(":", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
+        NumberWheelColumn(range = 0..59, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = 34.dp, visibleCount = 3)
     }
 }
 
@@ -831,7 +985,7 @@ fun TimerHomeDialog(
 ) {
     val context = LocalContext.current
     var is24Hour by remember { mutableStateOf(loadIs24Hour(context)) }
-    var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var controlsVisible by rememberSaveable { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
@@ -843,6 +997,15 @@ fun TimerHomeDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
+        val activity = LocalActivity.current
+        DisposableEffect(Unit) {
+            val previousOrientation = activity?.requestedOrientation
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+            onDispose {
+                StudyTimerState.pauseAll(context)
+                activity?.requestedOrientation = previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
         val homeDialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
         var homeBrightnessLevel by remember {
             mutableStateOf(homeDialogWindow?.attributes?.screenBrightness?.takeIf { it in 0f..1f } ?: 0.6f)
@@ -870,6 +1033,7 @@ fun TimerHomeDialog(
                         detectTapGestures(onTap = { controlsVisible = !controlsVisible })
                     }
             ) {
+                StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
                 homeIsLandscapeSnapshot = isLandscape
                 val activeClockBoxSettings = if (isLandscape) clockLandscapeBoxSettings else clockPortraitBoxSettings
@@ -939,6 +1103,7 @@ fun TimerHomeDialog(
                         )
                     )
                 }
+                StudyCelebrationHost()
             }
         }
     }
@@ -1025,7 +1190,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var remainingMillis by rememberSaveable { mutableStateOf(countdownTotalMillis) }
     var startTimestamp by rememberSaveable { mutableStateOf(0L) }
     var finished by rememberSaveable { mutableStateOf(false) }
-    var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var controlsVisible by rememberSaveable { mutableStateOf(false) }
     var pickerHours by rememberSaveable { mutableStateOf(((countdownTotalMillis / 3_600_000L).toInt())) }
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
     var showCustomTimeDialog by remember { mutableStateOf(false) }
@@ -1086,6 +1251,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
 
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
                 val activeBoxSettings = if (isLandscape) landscapeBoxSettings else portraitBoxSettings
@@ -1134,12 +1300,15 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                 ) {
                     AnimatedVisibility(
                         visible = controlsVisible,
-                        modifier = Modifier.align(Alignment.TopCenter),
+                        modifier = Modifier.align(Alignment.TopCenter).zIndex(10f),
                         enter = fadeIn(tween(260, easing = FastOutSlowInEasing)) + expandVertically(tween(260)),
                         exit = fadeOut(tween(200, easing = FastOutSlowInEasing)) + shrinkVertically(tween(200))
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(TimerBg)
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -1164,8 +1333,18 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         animationSpec = tween(320, easing = FastOutSlowInEasing),
                         label = "quickTimerBottomPadding"
                     )
+                    val quickTargetTopPadding = if (isLandscape && controlsVisible) 64.dp else 0.dp
+                    val animatedQuickTopPadding by animateDpAsState(
+                        targetValue = quickTargetTopPadding,
+                        animationSpec = tween(320, easing = FastOutSlowInEasing),
+                        label = "quickTimerTopPadding"
+                    )
                     Box(
-                        modifier = Modifier.fillMaxSize().padding(end = animatedEndPadding, bottom = animatedQuickBottomPadding),
+                        modifier = Modifier.fillMaxSize().padding(
+                            end = animatedEndPadding,
+                            top = animatedQuickTopPadding,
+                            bottom = animatedQuickBottomPadding
+                        ),
                         contentAlignment = Alignment.Center
                     ) {
                         SplitTimeDisplay(
@@ -1296,6 +1475,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             }
                         }
                     }
+                    StudyCelebrationHost()
                 }
             }
         }
@@ -1316,7 +1496,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
             Surface(shape = RoundedCornerShape(20.dp), color = TimerCardBg, contentColor = Color.White) {
                 var hourText by remember { mutableStateOf(pickerHours.toString()) }
                 var minuteText by remember { mutableStateOf(pickerMinutes.toString()) }
-                Column(modifier = Modifier.padding(18.dp).width(260.dp)) {
+                Column(modifier = Modifier.padding(18.dp).imePadding().width(260.dp)) {
                     Text("Customise countdown", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1356,7 +1536,9 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
 @Composable
 private fun StudyHomeDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    var subjects by remember { mutableStateOf(loadStudySubjects(context)) }
+    LaunchedEffect(Unit) { StudyTimerState.ensureLoaded(context) }
+    StudyTimerTicker()
+    val subjects = StudyTimerState.subjects
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     var showAddDialog by remember { mutableStateOf(false) }
     var optionsForSubject by remember { mutableStateOf<StudySubject?>(null) }
@@ -1370,16 +1552,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
     }
 
     fun persist(updated: List<StudySubject>) {
-        subjects = updated
-        saveStudySubjects(context, updated)
-    }
-
-    var celebrationForSubjectId by remember { mutableStateOf<String?>(null) }
-    var celebrationStrikeCount by remember { mutableStateOf(0) }
-    val previousStrikeCounts = remember { mutableStateMapOf<String, Int>() }
-
-    LaunchedEffect(Unit) {
-        subjects.forEach { s -> previousStrikeCounts[s.id] = strikeCountForElapsed(s.currentElapsedMillis(System.currentTimeMillis())) }
+        StudyTimerState.persist(context, updated)
     }
 
     fun toggleRunning(subject: StudySubject) {
@@ -1397,42 +1570,6 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
             }
         }
         persist(updated)
-    }
-
-    fun pauseAllRunning() {
-        val updated = subjects.map { s ->
-            if (s.isRunning) {
-                s.copy(isRunning = false, accumulatedMillis = s.currentElapsedMillis(System.currentTimeMillis()))
-            } else s
-        }
-        if (updated != subjects) persist(updated)
-    }
-
-    val studyLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    DisposableEffect(studyLifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
-                pauseAllRunning()
-            }
-        }
-        studyLifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            studyLifecycleOwner.lifecycle.removeObserver(observer)
-            pauseAllRunning()
-        }
-    }
-
-    LaunchedEffect(subjects, now) {
-        subjects.forEach { s ->
-            val currentCount = strikeCountForElapsed(s.currentElapsedMillis(now))
-            val priorCount = previousStrikeCounts[s.id] ?: currentCount
-            if (currentCount > priorCount && celebrationForSubjectId == null) {
-                celebrationForSubjectId = s.id
-                celebrationStrikeCount = currentCount
-                playStrikeSound(context, currentCount)
-            }
-            previousStrikeCounts[s.id] = currentCount
-        }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1514,11 +1651,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.align(Alignment.BottomEnd).padding(22.dp)
                 )
 
-                if (celebrationForSubjectId != null) {
-                    StudyStrikeCelebrationOverlay(strikeCount = celebrationStrikeCount) {
-                        celebrationForSubjectId = null
-                    }
-                }
+                StudyCelebrationHost()
             }
         }
     }
