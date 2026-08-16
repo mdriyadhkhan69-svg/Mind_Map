@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.zIndex
@@ -116,6 +117,36 @@ private object StrikeSettingsState {
         val clamped = minutes.coerceAtLeast(1)
         intervalMinutes = clamped
         saveStrikeIntervalMinutes(context, clamped)
+    }
+}
+
+private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE, PAGE_FLIP }
+
+private fun loadDigitTransitionStyle(context: Context): DigitTransitionStyle {
+    val name = context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE)
+        .getString("digit_transition_style", DigitTransitionStyle.FLIP.name)
+    return DigitTransitionStyle.entries.firstOrNull { it.name == name } ?: DigitTransitionStyle.FLIP
+}
+
+private fun saveDigitTransitionStyle(context: Context, style: DigitTransitionStyle) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE)
+        .edit().putString("digit_transition_style", style.name).apply()
+}
+
+private object DigitStyleState {
+    var current by mutableStateOf(DigitTransitionStyle.FLIP)
+    private var loaded = false
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            current = loadDigitTransitionStyle(context)
+            loaded = true
+        }
+    }
+
+    fun update(context: Context, style: DigitTransitionStyle) {
+        current = style
+        saveDigitTransitionStyle(context, style)
     }
 }
 
@@ -298,14 +329,24 @@ private fun strikeCountForElapsed(elapsedMillis: Long): Int {
 }
 
 private val StudyStrikeMessages = listOf(
-    "সাবাশ খানকির ছেলে তোকে দিয়েই হবে 🔥",
+    "অসাধারণ পরিশ্রম! গর্বিত তোর জন্য।⭐ ",
     "দারুণ! এভাবেই এগিয়ে যা। 💪",
-    "অসাধারণ পরিশ্রম! গর্বিত তোর জন্য। ⭐",
+    "সাবাশ খানকির ছেলে তোকে দিয়েই হবে 🔥",
     "থামিস না, তুই একদম ঠিক পথে আছিস! 🚀",
     "চমৎকার! আরেকটা স্ট্রাইক তোর ঝুলিতে। 🏆"
 )
 
-private fun studyStrikeSoundResName(strikeIndex: Int): String = "strike_$strikeIndex"
+private fun strikeMp3Count(context: Context): Int {
+    var index = 1
+    while (context.resources.getIdentifier("strike_$index", "raw", context.packageName) != 0) index++
+    return index - 1
+}
+
+private fun studyStrikeSoundResName(context: Context, strikeIndex: Int): String {
+    val available = strikeMp3Count(context).coerceAtLeast(1)
+    val cyclicIndex = ((strikeIndex - 1) % available) + 1
+    return "strike_$cyclicIndex"
+}
 
 private object TimerSoundPlayer {
     private var player: android.media.MediaPlayer? = null
@@ -360,9 +401,7 @@ private object TimerSoundPlayer {
 }
 
 private fun playStrikeSound(context: Context, strikeIndex: Int, onComplete: (() -> Unit)? = null) {
-    val specific = studyStrikeSoundResName(strikeIndex)
-    val hasSpecific = context.resources.getIdentifier(specific, "raw", context.packageName) != 0
-    val resName = if (hasSpecific) specific else "strike_default"
+    val resName = studyStrikeSoundResName(context, strikeIndex)
     if (context.resources.getIdentifier(resName, "raw", context.packageName) != 0) {
         TimerSoundPlayer.play(context, resName, onComplete)
     } else {
@@ -728,7 +767,7 @@ private fun StrikeVideoOverlay(strikeCount: Int, videoIndex: Int, onFinished: ()
                                     player.setAudioAttributes(
                                         android.media.AudioAttributes.Builder()
                                             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
                                             .build()
                                     )
                                     // ডিভাইসভেদে ডিফল্ট gain 1.0-এর বেশি ধরে distortion তৈরি করে;
@@ -837,28 +876,164 @@ private fun FlipDigitCell(
     fontWeight: FontWeight = FontWeight.Black,
     extraBold: Boolean = false
 ) {
-    var shown by remember { mutableStateOf(char) }
-    val rotation = remember { Animatable(0f) }
-    LaunchedEffect(char) {
-        if (char != shown) {
-            rotation.animateTo(90f, tween(150, easing = FastOutLinearInEasing))
-            shown = char
-            rotation.animateTo(0f, tween(160, easing = LinearOutSlowInEasing))
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { DigitStyleState.ensureLoaded(context) }
+    val style = DigitStyleState.current
+
+    @Composable
+    fun DigitGlyph(value: Char, modifier: Modifier = Modifier) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            if (extraBold) {
+                Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = 1.6.dp))
+                Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = (-1.6).dp))
+                Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(y = 0.8.dp))
+            }
+            Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight)
         }
     }
-    Box(
-        modifier = Modifier.graphicsLayer {
-            rotationX = rotation.value
-            cameraDistance = 32f * density
-        },
-        contentAlignment = Alignment.Center
-    ) {
-        if (extraBold) {
-            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = 1.6.dp))
-            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = (-1.6).dp))
-            Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(y = 0.8.dp))
+
+    when (style) {
+        DigitTransitionStyle.FLIP -> {
+            var shown by remember { mutableStateOf(char) }
+            val rotation = remember { Animatable(0f) }
+            LaunchedEffect(char) {
+                if (char != shown) {
+                    rotation.animateTo(90f, tween(150, easing = FastOutLinearInEasing))
+                    shown = char
+                    rotation.animateTo(0f, tween(160, easing = LinearOutSlowInEasing))
+                }
+            }
+            DigitGlyph(
+                shown,
+                modifier = Modifier.graphicsLayer {
+                    rotationX = rotation.value
+                    cameraDistance = 32f * density
+                }
+            )
         }
-        Text(shown.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight)
+        DigitTransitionStyle.SLIDE -> {
+            AnimatedContent(
+                targetState = char,
+                transitionSpec = {
+                    (slideInVertically(tween(220, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(180))) togetherWith
+                            (slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(140)))
+                },
+                label = "slideDigit"
+            ) { value -> DigitGlyph(value) }
+        }
+        DigitTransitionStyle.FADE_SCALE -> {
+            AnimatedContent(
+                targetState = char,
+                transitionSpec = {
+                    (fadeIn(tween(200)) + scaleIn(tween(200), initialScale = 0.6f)) togetherWith
+                            (fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 1.35f))
+                },
+                label = "fadeScaleDigit"
+            ) { value -> DigitGlyph(value) }
+        }
+        DigitTransitionStyle.BOUNCE -> {
+            AnimatedContent(
+                targetState = char,
+                transitionSpec = {
+                    (scaleIn(spring(dampingRatio = 0.45f, stiffness = 380f), initialScale = 0.3f) + fadeIn(tween(120))) togetherWith
+                            (scaleOut(tween(120), targetScale = 0.3f) + fadeOut(tween(100)))
+                },
+                label = "bounceDigit"
+            ) { value -> DigitGlyph(value) }
+        }
+        DigitTransitionStyle.WAVE -> {
+            var shown by remember { mutableStateOf(char) }
+            val offsetY = remember { Animatable(0f) }
+            val squash = remember { Animatable(1f) }
+            val waveDensity = LocalDensity.current
+            LaunchedEffect(char) {
+                if (char != shown) {
+                    val dropPx = with(waveDensity) { fontSize.toDp().toPx() * 0.32f }
+                    launch { offsetY.animateTo(dropPx, tween(130, easing = FastOutLinearInEasing)) }
+                    squash.animateTo(0.5f, tween(130, easing = FastOutLinearInEasing))
+                    shown = char
+                    offsetY.snapTo(-dropPx)
+                    squash.snapTo(0.5f)
+                    launch { offsetY.animateTo(0f, spring(dampingRatio = 0.4f, stiffness = 240f)) }
+                    squash.animateTo(1f, spring(dampingRatio = 0.32f, stiffness = 280f))
+                }
+            }
+            DigitGlyph(
+                shown,
+                modifier = Modifier.graphicsLayer {
+                    translationY = offsetY.value
+                    scaleY = squash.value
+                    scaleX = 1f + (1f - squash.value) * 0.4f
+                }
+            )
+        }
+        DigitTransitionStyle.PAGE_FLIP -> {
+            var shown by remember { mutableStateOf(char) }
+            var next by remember { mutableStateOf<Char?>(null) }
+            val progress = remember { Animatable(0f) }
+            LaunchedEffect(char) {
+                if (char != shown) {
+                    next = char
+                    progress.snapTo(0f)
+                    progress.animateTo(1f, tween(340, easing = FastOutSlowInEasing))
+                    shown = char
+                    next = null
+                    progress.snapTo(0f)
+                }
+            }
+            val pageProgress = progress.value
+            Box(contentAlignment = Alignment.Center) {
+                // নিচের স্তর: নতুন digit, সবসময় দেখা যায় (পুরনো পাতার নিচে বসে থাকে)
+                DigitGlyph(next ?: shown)
+
+                if (pageProgress > 0f) {
+                    val firstHalf = pageProgress <= 0.5f
+                    // উপরের অর্ধেক পাতা: 0→90° পর্যন্ত পুরনো digit দেখায়,
+                    // 90°→180° পর্যন্ত (mirror করে) নতুন digit দেখায় — বই-পাতা উল্টানোর ইলিউশন
+                    val halfRotation = if (firstHalf) pageProgress * 180f else (pageProgress - 0.5f) * 180f
+                    val glyphForFold = if (firstHalf) shown else (next ?: shown)
+                    val shadeAlpha = (kotlin.math.sin(pageProgress * Math.PI).toFloat() * 0.35f).coerceIn(0f, 0.35f)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.5f)
+                            .align(Alignment.TopCenter)
+                            .graphicsLayer {
+                                cameraDistance = 24f * density
+                                rotationX = if (firstHalf) halfRotation else -180f + halfRotation
+                                transformOrigin = TransformOrigin(0.5f, if (firstHalf) 1f else 0f)
+                            }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight()
+                                .align(if (firstHalf) Alignment.BottomCenter else Alignment.TopCenter)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .align(if (firstHalf) Alignment.BottomCenter else Alignment.TopCenter)
+                                    .offset(y = if (firstHalf) 0.dp else 0.dp)
+                            ) {
+                                DigitGlyph(glyphForFold)
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .background(Color.Black.copy(alpha = shadeAlpha))
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .align(Alignment.Center)
+                            .background(Color.Black.copy(alpha = 0.28f))
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1612,6 +1787,7 @@ private fun TimerSettingsDialog(
 ) {
     val context = LocalContext.current
     StrikeSettingsState.ensureLoaded(context)
+    DigitStyleState.ensureLoaded(context)
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
@@ -1640,6 +1816,35 @@ private fun TimerSettingsDialog(
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )
                 }
+                Spacer(Modifier.height(20.dp))
+                Text("Digit change style", color = Color.LightGray, fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("Clock, Stopwatch & Countdown ", color = Color.LightGray, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    listOf(
+                        DigitTransitionStyle.FLIP to "Flip",
+                        DigitTransitionStyle.SLIDE to "Slide",
+                        DigitTransitionStyle.FADE_SCALE to "Fade & Pop",
+                        DigitTransitionStyle.BOUNCE to "Bounce",
+                        DigitTransitionStyle.WAVE to "Wave",
+                        DigitTransitionStyle.PAGE_FLIP to "Page Flip"
+                    ).forEach { (styleOption, label) ->
+                        val selected = DigitStyleState.current == styleOption
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 10.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) TimerAccent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.08f))
+                                .border(1.dp, if (selected) TimerAccent else Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                                .pointerInput(styleOption) {
+                                    detectTapGestures(onTap = { DigitStyleState.update(context, styleOption) })
+                                }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) { Text(label, color = Color.White) }
+                    }
+                }
+
                 Spacer(Modifier.height(20.dp))
                 Text("Strike timer", color = Color.LightGray, fontSize = 14.sp)
                 Spacer(Modifier.height(4.dp))

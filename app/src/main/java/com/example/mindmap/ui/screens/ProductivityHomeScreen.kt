@@ -43,6 +43,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.text.TextStyle
 
 private val ProdBg = Color(0xFF0B0B12)
 private val ProdCard = Color(0xFF171826)
@@ -188,9 +189,12 @@ fun ProductivityHomeScreen(
             ) {
                 Text(
                     "Productivity",
-                    color = effectiveText,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Black,
+                    style = TextStyle(
+                        brush = Brush.linearGradient(listOf(effectiveAccent, ProdAccent2)),
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.4.sp
+                    ),
                     modifier = Modifier.pointerInput("productivity-title-double-tap") {
                         detectTapGestures(onDoubleTap = { showThemeDialog = true })
                     }
@@ -252,10 +256,6 @@ private fun ReorderableProductivityCards(
     var dragOffset by remember { mutableStateOf(0f) }
     var orderChangedDuringDrag by remember { mutableStateOf(false) }
     var dragStartOrder by remember { mutableStateOf<List<String>>(emptyList()) }
-    val releaseOffset = remember { Animatable(0f) }
-    var settlingDrag by remember { mutableStateOf(false) }
-    var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    val dragScope = rememberCoroutineScope()
 
     val totalHeight = with(density) {
         (slotHeightPx * localOrder.size - itemSpacingPx).coerceAtLeast(0f).toDp()
@@ -271,6 +271,12 @@ private fun ReorderableProductivityCards(
                 val targetIndex = localOrder.indexOf(id)
                 val isDragging = draggingId == id
                 val animatedSlot = remember { Animatable(targetIndex.toFloat()) }
+                // প্রতিটা কার্ডের নিজস্ব (isolated) settle state — অন্য কার্ডের
+                // settle animation-এর সাথে কখনো mix হবে না।
+                val releaseOffset = remember { Animatable(0f) }
+                var settlingDrag by remember { mutableStateOf(false) }
+                var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+                val cardDragScope = rememberCoroutineScope()
 
                 LaunchedEffect(targetIndex, isDragging) {
                     if (isDragging) {
@@ -280,10 +286,10 @@ private fun ReorderableProductivityCards(
                     }
                 }
 
-                val baseOffsetY = animatedSlot.value * slotHeightPx
+                val baseOffsetY = if (isDragging) targetIndex * slotHeightPx else animatedSlot.value * slotHeightPx
                 val dragDeltaY = when {
-                    isDragging && settlingDrag -> releaseOffset.value
                     isDragging -> dragOffset
+                    settlingDrag -> releaseOffset.value
                     else -> 0f
                 }
                 Box(
@@ -295,6 +301,7 @@ private fun ReorderableProductivityCards(
                         .pointerInput(id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
+                                    // এই কার্ডের নিজের আগের settle থাকলে বাতিল করে সাথে সাথে ক্লিন state এ শুরু
                                     settleJob?.cancel()
                                     settlingDrag = false
                                     draggingId = id
@@ -305,32 +312,36 @@ private fun ReorderableProductivityCards(
                                 onDragEnd = {
                                     if (draggingId != id) return@detectDragGesturesAfterLongPress
                                     if (orderChangedDuringDrag) onReorder(localOrder)
-                                    settleJob = dragScope.launch {
-                                        releaseOffset.snapTo(dragOffset)
-                                        settlingDrag = true
-                                        releaseOffset.animateTo(0f, tween(150))
-                                        if (draggingId == id) {
-                                            draggingId = null
+                                    val releaseFrom = dragOffset
+                                    draggingId = null
+                                    settleJob = cardDragScope.launch {
+                                        try {
+                                            releaseOffset.snapTo(releaseFrom)
+                                            settlingDrag = true
+                                            releaseOffset.animateTo(0f, tween(150))
+                                        } finally {
                                             settlingDrag = false
-                                            dragOffset = 0f
-                                            orderChangedDuringDrag = false
                                         }
                                     }
+                                    dragOffset = 0f
+                                    orderChangedDuringDrag = false
                                 },
                                 onDragCancel = {
                                     if (draggingId != id) return@detectDragGesturesAfterLongPress
                                     localOrder = dragStartOrder
-                                    settleJob = dragScope.launch {
-                                        releaseOffset.snapTo(dragOffset)
-                                        settlingDrag = true
-                                        releaseOffset.animateTo(0f, tween(160))
-                                        if (draggingId == id) {
-                                            draggingId = null
+                                    val releaseFrom = dragOffset
+                                    draggingId = null
+                                    settleJob = cardDragScope.launch {
+                                        try {
+                                            releaseOffset.snapTo(releaseFrom)
+                                            settlingDrag = true
+                                            releaseOffset.animateTo(0f, tween(160))
+                                        } finally {
                                             settlingDrag = false
-                                            dragOffset = 0f
-                                            orderChangedDuringDrag = false
                                         }
                                     }
+                                    dragOffset = 0f
+                                    orderChangedDuringDrag = false
                                 }
                             ) { change, amount ->
                                 change.consume()
@@ -376,18 +387,22 @@ private fun ProductivityThemeDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("Productivity theme", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                TextButton(onClick = { onStyleChange(ProductivityStyle()) }) {
-                    Text("Reset to default", color = SoftNeutral)
-                }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(10.dp))
                 ProdColorRow("Background", Color(style.backgroundArgb ?: 0xFF0B0B12)) { picker = "background" }
                 ProdColorRow("Card color", Color(style.cardArgb ?: 0xFF171826)) { picker = "card" }
                 ProdColorRow("Text color", Color(style.textArgb ?: 0xFFFFFFFF)) { picker = "text" }
                 ProdColorRow("Accent color", Color(style.accentArgb ?: 0xFF64FFDA)) { picker = "accent" }
                 Spacer(Modifier.height(14.dp))
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                    Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    TextButton(onClick = { onStyleChange(ProductivityStyle()) }) {
+                        Text("Reset to default", color = SoftNeutral)
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
