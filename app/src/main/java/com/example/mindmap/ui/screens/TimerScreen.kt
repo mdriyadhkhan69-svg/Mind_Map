@@ -1393,7 +1393,8 @@ private fun CountdownTimeSetPanel(
 fun TimerHomeDialog(
     onDismiss: () -> Unit,
     onNavigateToMindMap: () -> Unit,
-    onNavigateToFiles: () -> Unit
+    onNavigateToFiles: () -> Unit,
+    onNavigateToCalendar: () -> Unit
 ) {
     val context = LocalContext.current
     var is24Hour by remember { mutableStateOf(loadIs24Hour(context)) }
@@ -1506,6 +1507,7 @@ fun TimerHomeDialog(
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 DropdownMenuItem(text = { Text("Timer settings") }, onClick = { showMenu = false; showSettings = true })
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
+                                DropdownMenuItem(text = { Text("Calendar") }, onClick = { showMenu = false; onNavigateToCalendar() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
                             }
                         }

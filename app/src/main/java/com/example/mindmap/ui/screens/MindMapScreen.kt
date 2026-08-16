@@ -335,7 +335,8 @@ fun MindMapApp(
     settingsViewModel: SettingsViewModel,
     sectionViewModel: SectionViewModel,
     lineViewModel: LineViewModel,
-    mediaViewModel: MediaViewModel
+    mediaViewModel: MediaViewModel,
+    calendarViewModel: com.example.mindmap.ui.viewmodel.CalendarViewModel
 ) {
     val context = LocalContext.current
     val homePreferences = remember(context) {
@@ -374,6 +375,7 @@ fun MindMapApp(
             onDismiss = { (context as? android.app.Activity)?.finish() },
             onNavigateToMindMap = { openHome("mind_map") },
             onNavigateToTimer = { openHome("timer") },
+            onNavigateToCalendar = { openHome("calendar") },
             onFileClick = { file ->
                 val uriString = Uri.fromFile(file.file).toString()
                 val mimeType = resolveAttachmentMimeType(file.name, null)
@@ -414,7 +416,16 @@ fun MindMapApp(
         TimerHomeDialog(
             onDismiss = { (context as? android.app.Activity)?.finish() },
             onNavigateToMindMap = { openHome("mind_map") },
-            onNavigateToFiles = { openHome("pdf_library") }
+            onNavigateToFiles = { openHome("pdf_library") },
+            onNavigateToCalendar = { openHome("calendar") }
+        )
+    } else if (activeHome == "calendar") {
+        CalendarHomeDialog(
+            viewModel = calendarViewModel,
+            onDismiss = { (context as? android.app.Activity)?.finish() },
+            onNavigateToMindMap = { openHome("mind_map") },
+            onNavigateToFiles = { openHome("pdf_library") },
+            onNavigateToTimer = { openHome("timer") }
         )
     } else {
         MindMapScreen(
@@ -424,7 +435,8 @@ fun MindMapApp(
             lineViewModel = lineViewModel,
             mediaViewModel = mediaViewModel,
             onOpenPdfHome = { openHome("pdf_library") },
-            onOpenTimer = { openHome("timer") }
+            onOpenTimer = { openHome("timer") },
+            onOpenCalendar = { openHome("calendar") }
         )
     }
 
@@ -441,7 +453,8 @@ fun MindMapScreen(
     lineViewModel: LineViewModel,
     mediaViewModel: MediaViewModel,
     onOpenPdfHome: () -> Unit,
-    onOpenTimer: () -> Unit
+    onOpenTimer: () -> Unit,
+    onOpenCalendar: () -> Unit
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     val context = LocalContext.current
@@ -1358,6 +1371,10 @@ fun MindMapScreen(
                 DropdownMenuItem(
                     text = { Text("Timer", color = themeColors.textPrimary) },
                     onClick = { showMainMenu = false; onOpenTimer() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Calendar", color = themeColors.textPrimary) },
+                    onClick = { showMainMenu = false; onOpenCalendar() }
                 )
             }
         }
@@ -6103,6 +6120,7 @@ private fun PdfLibraryHomeDialog(
     onDismiss: () -> Unit,
     onNavigateToMindMap: () -> Unit,
     onNavigateToTimer: () -> Unit,
+    onNavigateToCalendar: () -> Unit,
     onFileClick: (DeviceFile) -> Unit
 ) {
     val context = LocalContext.current
@@ -6384,6 +6402,10 @@ private fun PdfLibraryHomeDialog(
                                         text = { Text("Timer", color = librarySectionText) },
                                         onClick = { showHomeMenu = false; onNavigateToTimer() }
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text("Calendar", color = librarySectionText) },
+                                        onClick = { showHomeMenu = false; onNavigateToCalendar() }
+                                    )
                                 }
                             }
                         }
@@ -6432,6 +6454,10 @@ private fun PdfLibraryHomeDialog(
                                     DropdownMenuItem(
                                         text = { Text("Mind map", color = librarySectionText) },
                                         onClick = { showHomeMenu = false; onNavigateToMindMap() }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Calendar", color = librarySectionText) },
+                                        onClick = { showHomeMenu = false; onNavigateToCalendar() }
                                     )
                                 }
                             }

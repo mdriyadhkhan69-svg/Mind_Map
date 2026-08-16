@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
             .addMigrations(AppDatabase.MIGRATION_8_9)
             .addMigrations(AppDatabase.MIGRATION_9_10)
             .addMigrations(AppDatabase.MIGRATION_10_11)
+            .addMigrations(AppDatabase.MIGRATION_11_12)
             .fallbackToDestructiveMigration()
             .build()
 
@@ -49,6 +50,9 @@ class MainActivity : ComponentActivity() {
         val lineFactory = LineViewModelFactory(LineRepository(db.lineDao()))
         val mediaFactory = MediaViewModelFactory(MediaRepository(db.mediaDao()))
         val settingsFactory = SettingsViewModelFactory(settingsRepository)
+        val calendarFactory = com.example.mindmap.ui.viewmodel.CalendarViewModelFactory(
+            com.example.mindmap.data.CalendarRepository(db.calendarDao())
+        )
 
         setContent {
             MindMapTheme {
@@ -58,7 +62,8 @@ class MainActivity : ComponentActivity() {
                     val lineViewModel: LineViewModel = viewModel(factory = lineFactory)
                     val mediaViewModel: MediaViewModel = viewModel(factory = mediaFactory)
                     val settingsViewModel: SettingsViewModel = viewModel(factory = settingsFactory)
-                    MindMapApp(viewModel, settingsViewModel, sectionViewModel, lineViewModel, mediaViewModel)
+                    val calendarViewModel: com.example.mindmap.ui.viewmodel.CalendarViewModel = viewModel(factory = calendarFactory)
+                    MindMapApp(viewModel, settingsViewModel, sectionViewModel, lineViewModel, mediaViewModel, calendarViewModel)
                 }
             }
         }

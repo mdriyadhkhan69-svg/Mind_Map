@@ -5,13 +5,13 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NodeEntity::class, SectionEntity::class, LineEntity::class, MediaEntity::class], version = 11)
+@Database(entities = [NodeEntity::class, SectionEntity::class, LineEntity::class, MediaEntity::class, CalendarEventEntity::class], version = 12)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): NodeDao
     abstract fun sectionDao(): SectionDao
     abstract fun lineDao(): LineDao
     abstract fun mediaDao(): MediaDao
-
+    abstract fun calendarDao(): CalendarEventDao
     companion object {
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -70,6 +70,22 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE media ADD COLUMN rotationDegrees REAL NOT NULL DEFAULT 0.0")
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `calendar_events` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`dateKey` TEXT NOT NULL, " +
+                            "`text` TEXT NOT NULL, " +
+                            "`hasTimer` INTEGER NOT NULL, " +
+                            "`timerHour` INTEGER NOT NULL, " +
+                            "`timerMinute` INTEGER NOT NULL, " +
+                            "`isCompleted` INTEGER NOT NULL, " +
+                            "`createdAtMillis` INTEGER NOT NULL)"
+                )
             }
         }
     }
