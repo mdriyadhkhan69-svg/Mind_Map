@@ -72,6 +72,8 @@ import java.text.SimpleDateFormat
 import java.util.*
 import com.example.mindmap.ui.theme.SoftNeutral
 
+
+
 private val TimerBg = Color(0xFF0B0B0F)
 private val TimerCardBg = Color(0xFF15151A)
 private val TimerDigit = Color(0xFFB7B7BF)
@@ -120,7 +122,7 @@ private object StrikeSettingsState {
     }
 }
 
-private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE, PAGE_FLIP }
+private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE }
 
 private fun loadDigitTransitionStyle(context: Context): DigitTransitionStyle {
     val name = context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE)
@@ -884,9 +886,27 @@ private fun FlipDigitCell(
     fun DigitGlyph(value: Char, modifier: Modifier = Modifier) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
             if (extraBold) {
-                Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = 1.6.dp))
-                Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(x = (-1.6).dp))
-                Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight, modifier = Modifier.offset(y = 0.8.dp))
+                Text(
+                    value.toString(),
+                    color = color,
+                    fontSize = fontSize,
+                    fontWeight = fontWeight,
+                    modifier = Modifier.offset(x = 1.6.dp)
+                )
+                Text(
+                    value.toString(),
+                    color = color,
+                    fontSize = fontSize,
+                    fontWeight = fontWeight,
+                    modifier = Modifier.offset(x = (-1.6).dp)
+                )
+                Text(
+                    value.toString(),
+                    color = color,
+                    fontSize = fontSize,
+                    fontWeight = fontWeight,
+                    modifier = Modifier.offset(y = 0.8.dp)
+                )
             }
             Text(value.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight)
         }
@@ -911,16 +931,25 @@ private fun FlipDigitCell(
                 }
             )
         }
+
         DigitTransitionStyle.SLIDE -> {
             AnimatedContent(
                 targetState = char,
                 transitionSpec = {
-                    (slideInVertically(tween(220, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(180))) togetherWith
-                            (slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(140)))
+                    (slideInVertically(tween(220, easing = FastOutSlowInEasing)) { it } + fadeIn(
+                        tween(180)
+                    )) togetherWith
+                            (slideOutVertically(
+                                tween(
+                                    220,
+                                    easing = FastOutSlowInEasing
+                                )
+                            ) { -it } + fadeOut(tween(140)))
                 },
                 label = "slideDigit"
             ) { value -> DigitGlyph(value) }
         }
+
         DigitTransitionStyle.FADE_SCALE -> {
             AnimatedContent(
                 targetState = char,
@@ -931,16 +960,21 @@ private fun FlipDigitCell(
                 label = "fadeScaleDigit"
             ) { value -> DigitGlyph(value) }
         }
+
         DigitTransitionStyle.BOUNCE -> {
             AnimatedContent(
                 targetState = char,
                 transitionSpec = {
-                    (scaleIn(spring(dampingRatio = 0.45f, stiffness = 380f), initialScale = 0.3f) + fadeIn(tween(120))) togetherWith
+                    (scaleIn(
+                        spring(dampingRatio = 0.45f, stiffness = 380f),
+                        initialScale = 0.3f
+                    ) + fadeIn(tween(120))) togetherWith
                             (scaleOut(tween(120), targetScale = 0.3f) + fadeOut(tween(100)))
                 },
                 label = "bounceDigit"
             ) { value -> DigitGlyph(value) }
         }
+
         DigitTransitionStyle.WAVE -> {
             var shown by remember { mutableStateOf(char) }
             val offsetY = remember { Animatable(0f) }
@@ -966,73 +1000,6 @@ private fun FlipDigitCell(
                     scaleX = 1f + (1f - squash.value) * 0.4f
                 }
             )
-        }
-        DigitTransitionStyle.PAGE_FLIP -> {
-            var shown by remember { mutableStateOf(char) }
-            var next by remember { mutableStateOf<Char?>(null) }
-            val progress = remember { Animatable(0f) }
-            LaunchedEffect(char) {
-                if (char != shown) {
-                    next = char
-                    progress.snapTo(0f)
-                    progress.animateTo(1f, tween(340, easing = FastOutSlowInEasing))
-                    shown = char
-                    next = null
-                    progress.snapTo(0f)
-                }
-            }
-            val pageProgress = progress.value
-            Box(contentAlignment = Alignment.Center) {
-                // নিচের স্তর: নতুন digit, সবসময় দেখা যায় (পুরনো পাতার নিচে বসে থাকে)
-                DigitGlyph(next ?: shown)
-
-                if (pageProgress > 0f) {
-                    val firstHalf = pageProgress <= 0.5f
-                    // উপরের অর্ধেক পাতা: 0→90° পর্যন্ত পুরনো digit দেখায়,
-                    // 90°→180° পর্যন্ত (mirror করে) নতুন digit দেখায় — বই-পাতা উল্টানোর ইলিউশন
-                    val halfRotation = if (firstHalf) pageProgress * 180f else (pageProgress - 0.5f) * 180f
-                    val glyphForFold = if (firstHalf) shown else (next ?: shown)
-                    val shadeAlpha = (kotlin.math.sin(pageProgress * Math.PI).toFloat() * 0.35f).coerceIn(0f, 0.35f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .fillMaxHeight(0.5f)
-                            .align(Alignment.TopCenter)
-                            .graphicsLayer {
-                                cameraDistance = 24f * density
-                                rotationX = if (firstHalf) halfRotation else -180f + halfRotation
-                                transformOrigin = TransformOrigin(0.5f, if (firstHalf) 1f else 0f)
-                            }
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight()
-                                .align(if (firstHalf) Alignment.BottomCenter else Alignment.TopCenter)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .align(if (firstHalf) Alignment.BottomCenter else Alignment.TopCenter)
-                                    .offset(y = if (firstHalf) 0.dp else 0.dp)
-                            ) {
-                                DigitGlyph(glyphForFold)
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .background(Color.Black.copy(alpha = shadeAlpha))
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .align(Alignment.Center)
-                            .background(Color.Black.copy(alpha = 0.28f))
-                    )
-                }
-            }
         }
     }
 }
@@ -1827,8 +1794,7 @@ private fun TimerSettingsDialog(
                         DigitTransitionStyle.SLIDE to "Slide",
                         DigitTransitionStyle.FADE_SCALE to "Fade & Pop",
                         DigitTransitionStyle.BOUNCE to "Bounce",
-                        DigitTransitionStyle.WAVE to "Wave",
-                        DigitTransitionStyle.PAGE_FLIP to "Page Flip"
+                        DigitTransitionStyle.WAVE to "Wave"
                     ).forEach { (styleOption, label) ->
                         val selected = DigitStyleState.current == styleOption
                         Box(
