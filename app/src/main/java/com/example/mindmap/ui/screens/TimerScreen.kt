@@ -317,7 +317,19 @@ private object TimerSoundPlayer {
         runCatching {
             val resId = context.resources.getIdentifier(resName, "raw", context.packageName)
             if (resId != 0) {
-                player = android.media.MediaPlayer.create(context, resId)?.apply {
+                val afd = context.resources.openRawResourceFd(resId)
+                player = android.media.MediaPlayer().apply {
+                    setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    if (afd != null) {
+                        afd.use { setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+                    } else {
+                        setDataSource(context, Uri.parse("android.resource://${context.packageName}/$resId"))
+                    }
                     setOnCompletionListener { mp ->
                         mp.release()
                         if (player == mp) player = null
@@ -329,6 +341,8 @@ private object TimerSoundPlayer {
                         onComplete?.invoke()
                         true
                     }
+                    prepare()
+                    setVolume(1f, 1f)
                     start()
                 }
                 started = player != null
@@ -720,6 +734,12 @@ private fun StrikeVideoOverlay(strikeCount: Int, videoIndex: Int, onFinished: ()
                                     // ডিভাইসভেদে ডিফল্ট gain 1.0-এর বেশি ধরে distortion তৈরি করে;
                                     // স্পষ্ট full (unclipped) volume সেট করে দেওয়া হচ্ছে।
                                     player.setVolume(1f, 1f)
+                                }
+                                runCatching {
+                                    // কিছু device-এ OS নিজে থেকে auxiliary environmental/preset
+                                    // reverb effect attach করে দেয়, যেটা "খালি কলসিতে কথা বলার মতো"
+                                    // hollow/echo শোনায়। explicit ভাবে সেটা বন্ধ করে দেওয়া হচ্ছে।
+                                    player.setAuxEffectSendLevel(0f)
                                 }
                                 val videoW = player.videoWidth.toFloat().coerceAtLeast(1f)
                                 val videoH = player.videoHeight.toFloat().coerceAtLeast(1f)

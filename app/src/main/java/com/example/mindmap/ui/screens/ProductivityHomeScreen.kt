@@ -112,6 +112,7 @@ fun ProductivityHomeScreen(
     val effectiveBackground = Color(productivityStyle.backgroundArgb ?: 0xFF0B0B12)
     val effectiveText = Color(productivityStyle.textArgb ?: 0xFFFFFFFF)
     val effectiveAccent = Color(productivityStyle.accentArgb ?: 0xFF64FFDA)
+    val effectiveCardColor = Color(productivityStyle.cardArgb ?: 0xFF171826)
 
     val allSections by sectionViewModel.allSections.collectAsState()
     val currentSectionId by sectionViewModel.currentSectionId.collectAsState()
@@ -138,7 +139,7 @@ fun ProductivityHomeScreen(
 
             val cardComposables: Map<String, @Composable () -> Unit> = mapOf(
                 "mindmap" to {
-                    ProductivityCard(title = "Mind Map", icon = Icons.Default.Hub, accent = effectiveAccent, onClick = onOpenMindMap) {
+                    ProductivityCard(title = "Mind Map", icon = Icons.Default.Hub, accent = effectiveAccent, cardColor = effectiveCardColor, onClick = onOpenMindMap) {
                         Text(
                             currentSection?.title ?: "No sections yet",
                             color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
@@ -151,7 +152,7 @@ fun ProductivityHomeScreen(
                     }
                 },
                 "files" to {
-                    ProductivityCard(title = "Files", icon = Icons.Default.Description, accent = ProdAccent2, onClick = onOpenFiles) {
+                    ProductivityCard(title = "Files", icon = Icons.Default.Description, accent = ProdAccent2, cardColor = effectiveCardColor, onClick = onOpenFiles) {
                         Text("$pdfCount PDFs", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(
                             recentPdfName ?: "No files yet",
@@ -160,7 +161,7 @@ fun ProductivityHomeScreen(
                     }
                 },
                 "calendar" to {
-                    ProductivityCard(title = "Calendar", icon = Icons.Default.CalendarMonth, accent = Color(0xFFFFD166), onClick = onOpenCalendar) {
+                    ProductivityCard(title = "Calendar", icon = Icons.Default.CalendarMonth, accent = Color(0xFFFFD166), cardColor = effectiveCardColor, onClick = onOpenCalendar) {
                         Text(todayLabel, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(
                             todayEvent?.text?.takeIf { it.isNotBlank() }
@@ -170,7 +171,7 @@ fun ProductivityHomeScreen(
                     }
                 },
                 "timer" to {
-                    ProductivityCard(title = "Timer", icon = Icons.Default.Timer, accent = Color(0xFFFF6E9F), onClick = onOpenTimer) {
+                    ProductivityCard(title = "Timer", icon = Icons.Default.Timer, accent = Color(0xFFFF6E9F), cardColor = effectiveCardColor, onClick = onOpenTimer) {
                         Text(timerSummary, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -240,8 +241,13 @@ private fun ReorderableProductivityCards(
     onReorder: (List<String>) -> Unit
 ) {
     var localOrder by remember(cardIds) { mutableStateOf(cardIds) }
+    val density = LocalDensity.current
     val itemHeight = 108.dp
-    val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
+    val itemSpacing = 14.dp
+    val itemHeightPx = with(density) { itemHeight.toPx() }
+    val itemSpacingPx = with(density) { itemSpacing.toPx() }
+    val slotHeightPx = itemHeightPx + itemSpacingPx
+
     var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
     var orderChangedDuringDrag by remember { mutableStateOf(false) }
@@ -251,11 +257,31 @@ private fun ReorderableProductivityCards(
     var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val dragScope = rememberCoroutineScope()
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    val totalHeight = with(density) {
+        (slotHeightPx * localOrder.size - itemSpacingPx).coerceAtLeast(0f).toDp()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(totalHeight)
+    ) {
         localOrder.forEach { id ->
             key(id) {
+                val targetIndex = localOrder.indexOf(id)
                 val isDragging = draggingId == id
-                val offsetY = when {
+                val animatedSlot = remember { Animatable(targetIndex.toFloat()) }
+
+                LaunchedEffect(targetIndex, isDragging) {
+                    if (isDragging) {
+                        animatedSlot.snapTo(targetIndex.toFloat())
+                    } else {
+                        animatedSlot.animateTo(targetIndex.toFloat(), tween(220))
+                    }
+                }
+
+                val baseOffsetY = animatedSlot.value * slotHeightPx
+                val dragDeltaY = when {
                     isDragging && settlingDrag -> releaseOffset.value
                     isDragging -> dragOffset
                     else -> 0f
@@ -263,8 +289,9 @@ private fun ReorderableProductivityCards(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(itemHeight)
                         .zIndex(if (isDragging) 2f else 0f)
-                        .graphicsLayer { translationY = offsetY }
+                        .graphicsLayer { translationY = baseOffsetY + dragDeltaY }
                         .pointerInput(id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
@@ -311,8 +338,8 @@ private fun ReorderableProductivityCards(
                                 dragOffset += amount.y
                                 val currentIndex = localOrder.indexOf(id)
                                 val direction = when {
-                                    dragOffset >= itemHeightPx / 2 && currentIndex < localOrder.lastIndex -> 1
-                                    dragOffset <= -itemHeightPx / 2 && currentIndex > 0 -> -1
+                                    dragOffset >= slotHeightPx / 2 && currentIndex < localOrder.lastIndex -> 1
+                                    dragOffset <= -slotHeightPx / 2 && currentIndex > 0 -> -1
                                     else -> 0
                                 }
                                 if (direction != 0) {
@@ -320,7 +347,7 @@ private fun ReorderableProductivityCards(
                                     val moved = reordered.removeAt(currentIndex)
                                     reordered.add(currentIndex + direction, moved)
                                     localOrder = reordered
-                                    dragOffset -= direction * itemHeightPx
+                                    dragOffset -= direction * slotHeightPx
                                     orderChangedDuringDrag = true
                                 }
                             }
@@ -416,6 +443,7 @@ private fun ProductivityCard(
     title: String,
     icon: ImageVector,
     accent: Color,
+    cardColor: Color,
     onClick: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -426,7 +454,7 @@ private fun ProductivityCard(
             .fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(22.dp))
-            .background(Brush.linearGradient(listOf(ProdCard, ProdCard.copy(alpha = 0.92f))))
+            .background(Brush.linearGradient(listOf(cardColor, cardColor.copy(alpha = 0.92f))))
             .border(1.dp, ProdCardBorder, RoundedCornerShape(22.dp))
             .pointerInput(title) {
                 detectTapGestures(

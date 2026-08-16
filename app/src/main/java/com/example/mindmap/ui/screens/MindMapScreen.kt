@@ -6389,7 +6389,7 @@ private fun PdfLibraryHomeDialog(
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(onClick = ::navigateBack) { Text("Back", color = AccentCyan) }
+                            TextButton(onClick = ::navigateBack) { Text("Back", color = SoftNeutral) }
                             Text(openedSection?.title ?: "PDF Section", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             Box {
                                 IconButton(onClick = { showHomeMenu = true }) {

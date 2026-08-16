@@ -51,7 +51,6 @@ import com.example.mindmap.ui.viewmodel.CalendarViewModel
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-
 /* ---------------- style + settings persistence ---------------- */
 
 private data class CalendarStyle(
@@ -151,7 +150,7 @@ fun CalendarHomeDialog(
     val background = Color(style.backgroundArgb ?: 0xFF0F1020)
     val cardColor = Color(style.cardArgb ?: 0xFF1E1E2E)
     val textColor = Color(style.textArgb ?: 0xFFFFFFFF)
-    val accent = Color(style.accentArgb ?: 0xFF64FFDA)
+    val accent = Color(style.accentArgb ?: 0xFFEDE6DA)
 
     val allEvents by viewModel.allEvents.collectAsState()
     val eventsByDate = remember(allEvents) { allEvents.associateBy { it.dateKey } }
@@ -583,12 +582,12 @@ private fun CalendarSettingsDialog(
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("Calendar Settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                TextButton(onClick = { onStyleChange(CalendarStyle()) }) { Text("Reset to default", color = Color(0xFF64FFDA)) }
+                TextButton(onClick = { onStyleChange(CalendarStyle()) }) { Text("Reset to default", color = SoftNeutral) }
                 Spacer(Modifier.height(10.dp))
                 CalendarColorRow("Background", Color(style.backgroundArgb ?: 0xFF0F1020)) { picker = "background" }
                 CalendarColorRow("Card color", Color(style.cardArgb ?: 0xFF1E1E2E)) { picker = "card" }
                 CalendarColorRow("Text color", Color(style.textArgb ?: 0xFFFFFFFF)) { picker = "text" }
-                CalendarColorRow("Accent color", Color(style.accentArgb ?: 0xFF64FFDA)) { picker = "accent" }
+                CalendarColorRow("Accent color", Color(style.accentArgb ?: 0xFFEDE6DA)) { picker = "accent" }
                 Spacer(Modifier.height(14.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
             }
@@ -599,7 +598,7 @@ private fun CalendarSettingsDialog(
         "background" -> "Background color" to (style.backgroundArgb ?: 0xFF0F1020)
         "card" -> "Card color" to (style.cardArgb ?: 0xFF1E1E2E)
         "text" -> "Text color" to (style.textArgb ?: 0xFFFFFFFF)
-        "accent" -> "Accent color" to (style.accentArgb ?: 0xFF64FFDA)
+        "accent" -> "Accent color" to (style.accentArgb ?: 0xFFEDE6DA)
         else -> null
     }
     config?.let { (title, initial) ->
