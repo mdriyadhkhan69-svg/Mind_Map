@@ -2056,6 +2056,39 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     }
 }
 
+/* ---------------- Productivity home page summary ---------------- */
+
+@Composable
+fun ProductivityTimerSummary(): String {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        StudyTimerState.ensureLoaded(context)
+        StrikeSettingsState.ensureLoaded(context)
+    }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    val quickRunning = QuickTimerState.isRunning
+    val studyRunning = StudyTimerState.subjects.any { it.isRunning }
+    LaunchedEffect(quickRunning, studyRunning) {
+        while (quickRunning || studyRunning) {
+            delay(1000)
+            now = System.currentTimeMillis()
+        }
+    }
+    return when {
+        quickRunning && QuickTimerState.mode == "stopwatch" ->
+            "Stopwatch · ${formatDurationDhms((now - QuickTimerState.startTimestamp).coerceAtLeast(0L))}"
+        quickRunning && QuickTimerState.mode == "countdown" -> {
+            val spent = now - QuickTimerState.startTimestamp
+            val remaining = (QuickTimerState.countdownTotalMillis - spent).coerceAtLeast(0L)
+            "Countdown · ${formatDurationDhms(remaining)} left"
+        }
+        studyRunning -> {
+            val running = StudyTimerState.subjects.first { it.isRunning }
+            "${running.name} · ${formatDurationDhms(running.currentElapsedMillis(now))}"
+        }
+        else -> "No timer running"
+    }
+}
 /* ---------------- Study feature ---------------- */
 
 @Composable

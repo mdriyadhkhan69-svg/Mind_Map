@@ -342,7 +342,7 @@ fun MindMapApp(
     val homePreferences = remember(context) {
         context.getSharedPreferences("app_home", android.content.Context.MODE_PRIVATE)
     }
-    var activeHome by remember { mutableStateOf(homePreferences.getString("last_home", "mind_map") ?: "mind_map") }
+    var activeHome by remember { mutableStateOf("productivity") }
     var libraryPdf by remember { mutableStateOf<MediaEntity?>(null) }
     var libraryDocx by remember { mutableStateOf<MediaEntity?>(null) }
     var libraryPptx by remember { mutableStateOf<MediaEntity?>(null) }
@@ -372,7 +372,7 @@ fun MindMapApp(
 
     if (activeHome == "pdf_library") {
         PdfLibraryHomeDialog(
-            onDismiss = { (context as? android.app.Activity)?.finish() },
+            onDismiss = { openHome("productivity") },
             onNavigateToMindMap = { openHome("mind_map") },
             onNavigateToTimer = { openHome("timer") },
             onNavigateToCalendar = { openHome("calendar") },
@@ -414,7 +414,7 @@ fun MindMapApp(
         }
     } else if (activeHome == "timer") {
         TimerHomeDialog(
-            onDismiss = { (context as? android.app.Activity)?.finish() },
+            onDismiss = { openHome("productivity") },
             onNavigateToMindMap = { openHome("mind_map") },
             onNavigateToFiles = { openHome("pdf_library") },
             onNavigateToCalendar = { openHome("calendar") }
@@ -422,12 +422,13 @@ fun MindMapApp(
     } else if (activeHome == "calendar") {
         CalendarHomeDialog(
             viewModel = calendarViewModel,
-            onDismiss = { (context as? android.app.Activity)?.finish() },
+            onDismiss = { openHome("productivity") },
             onNavigateToMindMap = { openHome("mind_map") },
             onNavigateToFiles = { openHome("pdf_library") },
             onNavigateToTimer = { openHome("timer") }
         )
-    } else {
+    } else if (activeHome == "mind_map") {
+        androidx.activity.compose.BackHandler { openHome("productivity") }
         MindMapScreen(
             viewModel = viewModel,
             settingsViewModel = settingsViewModel,
@@ -435,6 +436,16 @@ fun MindMapApp(
             lineViewModel = lineViewModel,
             mediaViewModel = mediaViewModel,
             onOpenPdfHome = { openHome("pdf_library") },
+            onOpenTimer = { openHome("timer") },
+            onOpenCalendar = { openHome("calendar") }
+        )
+    } else {
+        ProductivityHomeScreen(
+            mindMapViewModel = viewModel,
+            sectionViewModel = sectionViewModel,
+            calendarViewModel = calendarViewModel,
+            onOpenMindMap = { openHome("mind_map") },
+            onOpenFiles = { openHome("pdf_library") },
             onOpenTimer = { openHome("timer") },
             onOpenCalendar = { openHome("calendar") }
         )
@@ -7201,4 +7212,18 @@ private fun ColorCircle(color: Color, onClick: () -> Unit) {
             .border(1.dp, Color.White.copy(alpha = 0.55f), CircleShape)
             .pointerInput(color) { detectTapGestures(onTap = { onClick() }) }
     )
+}
+
+@Composable
+fun ProductivityFilesSummary(): Pair<Int, String?> {
+    val context = LocalContext.current
+    var files by remember { mutableStateOf(cachedDeviceFiles() ?: loadPersistedDeviceFiles(context)) }
+    LaunchedEffect(Unit) {
+        if (cachedDeviceFiles() == null) {
+            val fresh = withContext(Dispatchers.IO) { findDeviceFiles() }
+            files = fresh
+        }
+    }
+    val pdfFiles = files.filter { it.extension == "pdf" }
+    return pdfFiles.size to pdfFiles.maxByOrNull { it.file.lastModified() }?.name
 }
