@@ -2,6 +2,9 @@ package com.example.mindmap
 
 import android.os.Bundle
 import android.content.Intent
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
@@ -72,6 +75,26 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleViewIntent(intent)
+    }
+
+    // Home button চাপ দিয়ে/app-switch করে user বেরিয়ে গেলে ডাকা হয় - রোটেশনে ডাকা হয় না
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val pipEnabled = com.example.mindmap.loadPipEnabled(applicationContext)
+        val timerRunning = com.example.mindmap.TimerRunningState.isAnyTimerRunning.value
+        if (pipEnabled && timerRunning) {
+            runCatching {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(3, 2))
+                    .build()
+                enterPictureInPictureMode(params)
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        com.example.mindmap.PipState.isInPictureInPicture.value = isInPictureInPictureMode
     }
 
     private fun handleViewIntent(intent: Intent?) {

@@ -1755,6 +1755,7 @@ private fun TimerSettingsDialog(
     val context = LocalContext.current
     StrikeSettingsState.ensureLoaded(context)
     DigitStyleState.ensureLoaded(context)
+    var pipEnabled by remember { mutableStateOf(com.example.mindmap.loadPipEnabled(context)) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
@@ -1780,6 +1781,21 @@ private fun TimerSettingsDialog(
                     Switch(
                         checked = is24Hour,
                         onCheckedChange = onIs24HourChange,
+                        colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Floating timer", fontSize = 15.sp)
+                        Text("App minimize করলে ছোট box-এ timer দেখাবে", color = Color.LightGray, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = pipEnabled,
+                        onCheckedChange = { value ->
+                            pipEnabled = value
+                            com.example.mindmap.savePipEnabled(context, value)
+                        },
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )
                 }
@@ -2268,6 +2284,79 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         }) { Text("Save", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                     }
                 }
+            }
+        }
+    }
+}
+// PiP মোডে থাকা অবস্থায় বর্তমানে কী চলছে (quick timer বা study subject) সেটা
+// সবসময় TimerRunningState-এ আপডেট রাখে, যাতে minimize করার মুহূর্তে সঠিক সিদ্ধান্ত নেওয়া যায়
+@Composable
+fun TimerRunningWatcher() {
+    val quickRunning = QuickTimerState.isRunning
+    val studySubjects = StudyTimerState.subjects
+    LaunchedEffect(quickRunning, studySubjects) {
+        com.example.mindmap.TimerRunningState.isAnyTimerRunning.value =
+            quickRunning || studySubjects.any { it.isRunning }
+    }
+}
+
+// PiP (ছোট floating) মোডে দেখানোর জন্য সরল, compact timer view
+@Composable
+fun PipTimerContent() {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val quickRunning = QuickTimerState.isRunning
+    val runningSubject = StudyTimerState.subjects.firstOrNull { it.isRunning }
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(TimerBg),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            quickRunning -> {
+                val millis = if (QuickTimerState.mode == "stopwatch") {
+                    (now - QuickTimerState.startTimestamp).coerceAtLeast(0L)
+                } else {
+                    val spent = now - QuickTimerState.startTimestamp
+                    (QuickTimerState.countdownTotalMillis - spent).coerceAtLeast(0L)
+                }
+                val totalSeconds = millis / 1000
+                val h = totalSeconds / 3600
+                val m = (totalSeconds / 60) % 60
+                val s = totalSeconds % 60
+                Text(
+                    text = if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s),
+                    color = TimerDigit,
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+            runningSubject != null -> {
+                val elapsed = runningSubject.currentElapsedMillis(now)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = runningSubject.name,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = formatDurationDhms(elapsed),
+                        color = TimerAccent,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+            else -> {
+                Text("No timer running", color = Color.LightGray, fontSize = 14.sp)
             }
         }
     }

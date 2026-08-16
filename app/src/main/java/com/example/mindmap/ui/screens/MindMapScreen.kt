@@ -340,6 +340,11 @@ fun MindMapApp(
     calendarViewModel: com.example.mindmap.ui.viewmodel.CalendarViewModel
 ) {
     val context = LocalContext.current
+    TimerRunningWatcher()
+    if (com.example.mindmap.PipState.isInPictureInPicture.value) {
+        PipTimerContent()
+        return
+    }
     val homePreferences = remember(context) {
         context.getSharedPreferences("app_home", android.content.Context.MODE_PRIVATE)
     }
