@@ -69,6 +69,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import com.example.mindmap.ui.theme.SoftNeutral
 
 private val TimerBg = Color(0xFF0B0B0F)
 private val TimerCardBg = Color(0xFF15151A)
@@ -209,9 +210,13 @@ private fun StudyTimerTicker() {
     }
 }
 
-private const val STRIKE_VIDEO_COUNT = 4
-
 private enum class CharacterReaction { DANCE, CLAP, JUMP, SURPRISED, WAVE }
+
+private fun strikeVideoCount(context: Context): Int {
+    var index = 1
+    while (context.resources.getIdentifier("strike_video_$index", "raw", context.packageName) != 0) index++
+    return index - 1
+}
 
 private fun reactionForStrike(strikeCount: Int): CharacterReaction {
     val reactions = CharacterReaction.entries
@@ -621,16 +626,23 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
 }
 @Composable
 private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
-    if (strikeCount <= STRIKE_VIDEO_COUNT) {
-        StrikeVideoOverlay(strikeCount = strikeCount, onFinished = onFinished)
+    val context = LocalContext.current
+    val videoCount = remember { strikeVideoCount(context) }
+    if (videoCount > 0) {
+        // প্রতি (videoCount + 1) স্ট্রাইকের একটা চক্র: videoCount-টা video (প্রতিটা একবার করে),
+        // তারপর একটা anime — এরপর চক্রটা আবার রিপিট করবে।
+        val cyclePosition = (strikeCount - 1).coerceAtLeast(0) % (videoCount + 1)
+        if (cyclePosition < videoCount) {
+            StrikeVideoOverlay(strikeCount = strikeCount, videoIndex = cyclePosition, onFinished = onFinished)
+        } else {
+            StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
+        }
     } else {
         StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
     }
 }
 
-private fun strikeVideoResId(context: Context, strikeCount: Int): Int {
-    // strike_video_1, strike_video_2, ... — যতগুলো raw ফাইল আছে ততগুলোর মধ্যে
-    // strikeCount অনুযায়ী round-robin ভাবে বাছাই হবে (1st strike->1, 2nd->2, 3rd->3, 4th->1, ...)
+private fun strikeVideoResId(context: Context, videoIndex: Int): Int {
     val available = mutableListOf<Int>()
     var index = 1
     while (true) {
@@ -643,14 +655,12 @@ private fun strikeVideoResId(context: Context, strikeCount: Int): Int {
         val legacy = context.resources.getIdentifier("strike_video", "raw", context.packageName)
         return legacy
     }
-    val chosenIndex = (strikeCount - 1).coerceAtLeast(0) % available.size
-    return available[chosenIndex]
+    return available[videoIndex.coerceIn(0, available.size - 1)]
 }
 
 @Composable
-private fun StrikeVideoOverlay(strikeCount: Int, onFinished: () -> Unit) {
+private fun StrikeVideoOverlay(strikeCount: Int, videoIndex: Int, onFinished: () -> Unit) {
     val context = LocalContext.current
-    val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
     val alpha = remember { Animatable(0f) }
     var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
     var videoPrepared by remember(strikeCount) { mutableStateOf(false) }
@@ -663,6 +673,9 @@ private fun StrikeVideoOverlay(strikeCount: Int, onFinished: () -> Unit) {
     }
 
     LaunchedEffect(strikeCount) {
+        // আগের কোনো celebration/MP3 এখনো বাজছে থাকলে বন্ধ করে দাও — দুইটা audio
+        // session একসাথে mix হলেই distortion/clipping শোনা যায়।
+        TimerSoundPlayer.stop()
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
         // Fallback ONLY for the case the video resource is missing/broken and
@@ -672,20 +685,24 @@ private fun StrikeVideoOverlay(strikeCount: Int, onFinished: () -> Unit) {
         if (!videoPrepared) finishOnce()
     }
 
+    // No text, no character here — শুধু video, RED স্ট্রাইক ব্যাকগ্রাউন্ডের উপর।
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color(0xFF7A0E0E))
             .graphicsLayer { this.alpha = alpha.value }
             .zIndex(500f)
             .pointerInput("strike-video-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
+            val density = LocalDensity.current
+            val maxWidthPx = with(density) { maxWidth.toPx() }
+            val maxHeightPx = with(density) { maxHeight.toPx() }
             AndroidView(
                 factory = { ctx ->
                     android.widget.VideoView(ctx).apply {
-                        val resId = strikeVideoResId(ctx, strikeCount)
+                        val resId = strikeVideoResId(ctx, videoIndex)
                         if (resId != 0) {
                             setVideoURI(Uri.parse("android.resource://${ctx.packageName}/$resId"))
                             setOnCompletionListener { finishOnce() }
@@ -693,6 +710,24 @@ private fun StrikeVideoOverlay(strikeCount: Int, onFinished: () -> Unit) {
                             setOnPreparedListener { player ->
                                 videoPrepared = true
                                 player.isLooping = false
+                                runCatching {
+                                    player.setAudioAttributes(
+                                        android.media.AudioAttributes.Builder()
+                                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                                            .build()
+                                    )
+                                    // ডিভাইসভেদে ডিফল্ট gain 1.0-এর বেশি ধরে distortion তৈরি করে;
+                                    // স্পষ্ট full (unclipped) volume সেট করে দেওয়া হচ্ছে।
+                                    player.setVolume(1f, 1f)
+                                }
+                                val videoW = player.videoWidth.toFloat().coerceAtLeast(1f)
+                                val videoH = player.videoHeight.toFloat().coerceAtLeast(1f)
+                                val scale = minOf(maxWidthPx / videoW, maxHeightPx / videoH)
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    (videoW * scale).toInt().coerceAtLeast(1),
+                                    (videoH * scale).toInt().coerceAtLeast(1)
+                                )
                                 start()
                             }
                         } else {
@@ -700,16 +735,7 @@ private fun StrikeVideoOverlay(strikeCount: Int, onFinished: () -> Unit) {
                         }
                     }
                 },
-                modifier = Modifier.width(300.dp).height(300.dp)
-            )
-            Spacer(Modifier.height(14.dp))
-            Text(
-                message,
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.widthIn(max = 300.dp).padding(horizontal = 24.dp)
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
@@ -1355,7 +1381,7 @@ private fun TimerBoxSettingsPanel(
                         spacing = reset.spacingDp
                         onSettingsChange(reset)
                     }) { Text("Default", color = Color.LightGray) }
-                    TextButton(onClick = onDismiss) { Text("Done", color = TimerAccent, fontWeight = FontWeight.Bold) }
+                    TextButton(onClick = onDismiss) { Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                 }
             }
         }
@@ -1630,7 +1656,7 @@ private fun TimerSettingsDialog(
                             .padding(vertical = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Save", color = TimerAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("Save", color = SoftNeutral, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                 } else {
                     Box(
@@ -1654,12 +1680,12 @@ private fun TimerSettingsDialog(
                     BoxEditTarget("quick", true, "Stopwatch / Countdown (Landscape)")
                 ).forEach { target ->
                     TextButton(onClick = { boxEditTarget = target }, modifier = Modifier.fillMaxWidth()) {
-                        Text(target.label, color = TimerAccent, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                        Text(target.label, color = SoftNeutral, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                    Text("Done", color = TimerAccent, fontWeight = FontWeight.Bold)
+                    Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -2048,7 +2074,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             pickerMinutes = (minuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
                             applyPickerToCountdown()
                             showCustomTimeDialog = false
-                        }) { Text("Save", color = TimerAccent, fontWeight = FontWeight.Bold) }
+                        }) { Text("Save", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                     }
                 }
             }
@@ -2148,7 +2174,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                             .padding(horizontal = 8.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(onClick = onDismiss) { Text("Back", color = TimerAccent) }
+                        TextButton(onClick = onDismiss) { Text("Back", color = SoftNeutral) }
                         Text("Study", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 4.dp))
                     }
                     if (subjects.isEmpty()) {
@@ -2247,11 +2273,11 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                         val updated = subjects.map { s -> if (s.id == subject.id) s.copy(accumulatedMillis = 0L, isRunning = false, startedAtMillis = 0L) else s }
                         persist(updated)
                         optionsForSubject = null
-                    }) { Text("Restart", color = TimerAccent) }
+                    }) { Text("Restart", color = SoftNeutral) }
                     TextButton(onClick = {
                         customiseForSubject = subject
                         optionsForSubject = null
-                    }) { Text("Customise time", color = TimerAccent) }
+                    }) { Text("Customise time", color = SoftNeutral) }
                     TextButton(onClick = {
                         persist(subjects.filterNot { it.id == subject.id })
                         optionsForSubject = null
@@ -2293,7 +2319,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                             }
                             persist(updated)
                             customiseForSubject = null
-                        }) { Text("Save", color = TimerAccent, fontWeight = FontWeight.Bold) }
+                        }) { Text("Save", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                     }
                 }
             }

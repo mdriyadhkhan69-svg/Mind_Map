@@ -1,9 +1,11 @@
 package com.example.mindmap.ui.screens
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,13 +26,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
+import com.example.mindmap.ui.theme.SoftNeutral
 import com.example.mindmap.ui.viewmodel.CalendarViewModel
 import com.example.mindmap.ui.viewmodel.MindMapViewModel
 import com.example.mindmap.ui.viewmodel.SectionViewModel
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -43,6 +51,50 @@ private val ProdAccent = Color(0xFF64FFDA)
 private val ProdAccent2 = Color(0xFFBB86FC)
 private val ProdTextMuted = Color(0xFFB7B7C6)
 
+private data class ProductivityStyle(
+    val backgroundArgb: Long? = null,
+    val cardArgb: Long? = null,
+    val accentArgb: Long? = null,
+    val textArgb: Long? = null
+)
+
+private fun loadProductivityStyle(context: android.content.Context): ProductivityStyle {
+    val prefs = context.getSharedPreferences("productivity_home", android.content.Context.MODE_PRIVATE)
+    fun color(key: String): Long? = prefs.getLong(key, Long.MIN_VALUE).takeUnless { it == Long.MIN_VALUE }
+    return ProductivityStyle(
+        backgroundArgb = color("background_argb"),
+        cardArgb = color("card_argb"),
+        accentArgb = color("accent_argb"),
+        textArgb = color("text_argb")
+    )
+}
+
+private fun saveProductivityStyle(context: android.content.Context, style: ProductivityStyle) {
+    val editor = context.getSharedPreferences("productivity_home", android.content.Context.MODE_PRIVATE).edit()
+    fun put(key: String, value: Long?) { if (value == null) editor.remove(key) else editor.putLong(key, value) }
+    put("background_argb", style.backgroundArgb)
+    put("card_argb", style.cardArgb)
+    put("accent_argb", style.accentArgb)
+    put("text_argb", style.textArgb)
+    editor.apply()
+}
+
+private fun loadProductivityCardOrder(context: android.content.Context): List<String> {
+    val defaultOrder = listOf("mindmap", "files", "calendar", "timer")
+    val prefs = context.getSharedPreferences("productivity_home", android.content.Context.MODE_PRIVATE)
+    val saved = prefs.getString("card_order", null) ?: return defaultOrder
+    val savedList = saved.split(",").filter { it.isNotBlank() && it in defaultOrder }
+    val missing = defaultOrder.filterNot { it in savedList }
+    return savedList + missing
+}
+
+private fun saveProductivityCardOrder(context: android.content.Context, order: List<String>) {
+    context.getSharedPreferences("productivity_home", android.content.Context.MODE_PRIVATE)
+        .edit()
+        .putString("card_order", order.joinToString(","))
+        .apply()
+}
+
 @Composable
 fun ProductivityHomeScreen(
     mindMapViewModel: MindMapViewModel,
@@ -53,6 +105,14 @@ fun ProductivityHomeScreen(
     onOpenTimer: () -> Unit,
     onOpenCalendar: () -> Unit
 ) {
+    val prodContext = LocalContext.current
+    var productivityStyle by remember { mutableStateOf(loadProductivityStyle(prodContext)) }
+    var cardOrder by remember { mutableStateOf(loadProductivityCardOrder(prodContext)) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    val effectiveBackground = Color(productivityStyle.backgroundArgb ?: 0xFF0B0B12)
+    val effectiveText = Color(productivityStyle.textArgb ?: 0xFFFFFFFF)
+    val effectiveAccent = Color(productivityStyle.accentArgb ?: 0xFF64FFDA)
+
     val allSections by sectionViewModel.allSections.collectAsState()
     val currentSectionId by sectionViewModel.currentSectionId.collectAsState()
     val allNodes by mindMapViewModel.allNodes.collectAsState()
@@ -72,13 +132,13 @@ fun ProductivityHomeScreen(
         allEvents.firstOrNull { it.dateKey == todayKey && !it.isCompleted && (it.text.isNotBlank() || it.hasTimer) }
     }
 
-    Surface(color = ProdBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
+    Surface(color = effectiveBackground, modifier = Modifier.fillMaxSize(), contentColor = effectiveText) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val isLandscape = maxWidth > maxHeight
 
-            val cards: List<@Composable () -> Unit> = listOf(
-                {
-                    ProductivityCard(title = "Mind Map", icon = Icons.Default.Hub, accent = ProdAccent, onClick = onOpenMindMap) {
+            val cardComposables: Map<String, @Composable () -> Unit> = mapOf(
+                "mindmap" to {
+                    ProductivityCard(title = "Mind Map", icon = Icons.Default.Hub, accent = effectiveAccent, onClick = onOpenMindMap) {
                         Text(
                             currentSection?.title ?: "No sections yet",
                             color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
@@ -90,7 +150,7 @@ fun ProductivityHomeScreen(
                         )
                     }
                 },
-                {
+                "files" to {
                     ProductivityCard(title = "Files", icon = Icons.Default.Description, accent = ProdAccent2, onClick = onOpenFiles) {
                         Text("$pdfCount PDFs", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(
@@ -99,7 +159,7 @@ fun ProductivityHomeScreen(
                         )
                     }
                 },
-                {
+                "calendar" to {
                     ProductivityCard(title = "Calendar", icon = Icons.Default.CalendarMonth, accent = Color(0xFFFFD166), onClick = onOpenCalendar) {
                         Text(todayLabel, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(
@@ -109,12 +169,15 @@ fun ProductivityHomeScreen(
                         )
                     }
                 },
-                {
+                "timer" to {
                     ProductivityCard(title = "Timer", icon = Icons.Default.Timer, accent = Color(0xFFFF6E9F), onClick = onOpenTimer) {
                         Text(timerSummary, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             )
+            val orderedCardIds = cardOrder.filter { it in cardComposables.keys }.let { ordered ->
+                ordered + cardComposables.keys.filterNot { it in ordered }
+            }
 
             Column(
                 modifier = Modifier
@@ -122,27 +185,229 @@ fun ProductivityHomeScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 18.dp, vertical = 22.dp)
             ) {
-                Text("Productivity", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                Text(
+                    "Productivity",
+                    color = effectiveText,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.pointerInput("productivity-title-double-tap") {
+                        detectTapGestures(onDoubleTap = { showThemeDialog = true })
+                    }
+                )
                 Spacer(Modifier.height(4.dp))
                 Text("Everything in one place", color = ProdTextMuted, fontSize = 13.sp)
                 Spacer(Modifier.height(20.dp))
 
                 if (isLandscape) {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        cards.chunked(2).forEach { row ->
+                        orderedCardIds.chunked(2).forEach { row ->
                             Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-                                row.forEach { card -> Box(modifier = Modifier.weight(1f)) { card() } }
+                                row.forEach { id -> Box(modifier = Modifier.weight(1f)) { cardComposables[id]?.invoke() } }
                                 if (row.size == 1) Spacer(Modifier.weight(1f))
                             }
                         }
                     }
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        cards.forEach { it() }
-                    }
+                    ReorderableProductivityCards(
+                        cardIds = orderedCardIds,
+                        cardComposables = cardComposables,
+                        onReorder = { newOrder ->
+                            cardOrder = newOrder
+                            saveProductivityCardOrder(prodContext, newOrder)
+                        }
+                    )
                 }
             }
         }
+    }
+
+    if (showThemeDialog) {
+        ProductivityThemeDialog(
+            style = productivityStyle,
+            onDismiss = { showThemeDialog = false },
+            onStyleChange = { updated ->
+                productivityStyle = updated
+                saveProductivityStyle(prodContext, updated)
+            }
+        )
+    }
+}
+
+@Composable
+private fun ReorderableProductivityCards(
+    cardIds: List<String>,
+    cardComposables: Map<String, @Composable () -> Unit>,
+    onReorder: (List<String>) -> Unit
+) {
+    var localOrder by remember(cardIds) { mutableStateOf(cardIds) }
+    val itemHeight = 108.dp
+    val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    var orderChangedDuringDrag by remember { mutableStateOf(false) }
+    var dragStartOrder by remember { mutableStateOf<List<String>>(emptyList()) }
+    val releaseOffset = remember { Animatable(0f) }
+    var settlingDrag by remember { mutableStateOf(false) }
+    var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val dragScope = rememberCoroutineScope()
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        localOrder.forEach { id ->
+            key(id) {
+                val isDragging = draggingId == id
+                val offsetY = when {
+                    isDragging && settlingDrag -> releaseOffset.value
+                    isDragging -> dragOffset
+                    else -> 0f
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .zIndex(if (isDragging) 2f else 0f)
+                        .graphicsLayer { translationY = offsetY }
+                        .pointerInput(id) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    settleJob?.cancel()
+                                    settlingDrag = false
+                                    draggingId = id
+                                    dragStartOrder = localOrder
+                                    dragOffset = 0f
+                                    orderChangedDuringDrag = false
+                                },
+                                onDragEnd = {
+                                    if (draggingId != id) return@detectDragGesturesAfterLongPress
+                                    if (orderChangedDuringDrag) onReorder(localOrder)
+                                    settleJob = dragScope.launch {
+                                        releaseOffset.snapTo(dragOffset)
+                                        settlingDrag = true
+                                        releaseOffset.animateTo(0f, tween(150))
+                                        if (draggingId == id) {
+                                            draggingId = null
+                                            settlingDrag = false
+                                            dragOffset = 0f
+                                            orderChangedDuringDrag = false
+                                        }
+                                    }
+                                },
+                                onDragCancel = {
+                                    if (draggingId != id) return@detectDragGesturesAfterLongPress
+                                    localOrder = dragStartOrder
+                                    settleJob = dragScope.launch {
+                                        releaseOffset.snapTo(dragOffset)
+                                        settlingDrag = true
+                                        releaseOffset.animateTo(0f, tween(160))
+                                        if (draggingId == id) {
+                                            draggingId = null
+                                            settlingDrag = false
+                                            dragOffset = 0f
+                                            orderChangedDuringDrag = false
+                                        }
+                                    }
+                                }
+                            ) { change, amount ->
+                                change.consume()
+                                if (draggingId != id) return@detectDragGesturesAfterLongPress
+                                dragOffset += amount.y
+                                val currentIndex = localOrder.indexOf(id)
+                                val direction = when {
+                                    dragOffset >= itemHeightPx / 2 && currentIndex < localOrder.lastIndex -> 1
+                                    dragOffset <= -itemHeightPx / 2 && currentIndex > 0 -> -1
+                                    else -> 0
+                                }
+                                if (direction != 0) {
+                                    val reordered = localOrder.toMutableList()
+                                    val moved = reordered.removeAt(currentIndex)
+                                    reordered.add(currentIndex + direction, moved)
+                                    localOrder = reordered
+                                    dragOffset -= direction * itemHeightPx
+                                    orderChangedDuringDrag = true
+                                }
+                            }
+                        }
+                ) {
+                    cardComposables[id]?.invoke()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProductivityThemeDialog(
+    style: ProductivityStyle,
+    onDismiss: () -> Unit,
+    onStyleChange: (ProductivityStyle) -> Unit
+) {
+    var picker by remember { mutableStateOf<String?>(null) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            color = ProdCard,
+            contentColor = Color.White
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text("Productivity theme", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = { onStyleChange(ProductivityStyle()) }) {
+                    Text("Reset to default", color = SoftNeutral)
+                }
+                Spacer(Modifier.height(6.dp))
+                ProdColorRow("Background", Color(style.backgroundArgb ?: 0xFF0B0B12)) { picker = "background" }
+                ProdColorRow("Card color", Color(style.cardArgb ?: 0xFF171826)) { picker = "card" }
+                ProdColorRow("Text color", Color(style.textArgb ?: 0xFFFFFFFF)) { picker = "text" }
+                ProdColorRow("Accent color", Color(style.accentArgb ?: 0xFF64FFDA)) { picker = "accent" }
+                Spacer(Modifier.height(14.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    val config = when (picker) {
+        "background" -> "Background color" to (style.backgroundArgb ?: 0xFF0B0B12)
+        "card" -> "Card color" to (style.cardArgb ?: 0xFF171826)
+        "text" -> "Text color" to (style.textArgb ?: 0xFFFFFFFF)
+        "accent" -> "Accent color" to (style.accentArgb ?: 0xFF64FFDA)
+        else -> null
+    }
+    config?.let { (title, initial) ->
+        ColorPickerDialog(
+            title = title,
+            initialColorArgb = initial,
+            onDismiss = { picker = null },
+            onSelect = { color ->
+                onStyleChange(
+                    when (picker) {
+                        "background" -> style.copy(backgroundArgb = color)
+                        "card" -> style.copy(cardArgb = color)
+                        "text" -> style.copy(textArgb = color)
+                        "accent" -> style.copy(accentArgb = color)
+                        else -> style
+                    }
+                )
+                picker = null
+            },
+            allowReset = false,
+            onReset = {}
+        )
+    }
+}
+
+@Composable
+private fun ProdColorRow(label: String, color: Color, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(label, modifier = Modifier.weight(1f), fontSize = 14.sp)
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color)
+                .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(50))
+                .pointerInput(label) { detectTapGestures(onTap = { onClick() }) }
+        )
     }
 }
 

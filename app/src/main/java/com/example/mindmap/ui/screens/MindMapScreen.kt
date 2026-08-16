@@ -101,6 +101,7 @@ import com.example.mindmap.data.RootCollisionBehavior
 import com.example.mindmap.data.SectionEntity
 import com.example.mindmap.data.SectionStyle
 import com.example.mindmap.data.ThemeMode
+import com.example.mindmap.ui.theme.SoftNeutral
 import com.example.mindmap.ui.viewmodel.LineViewModel
 import com.example.mindmap.ui.viewmodel.MediaViewModel
 import com.example.mindmap.ui.viewmodel.MindMapViewModel
@@ -3747,7 +3748,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                TextButton(onClick = onDismiss) { Text("Back", color = AccentCyan) }
+                                TextButton(onClick = onDismiss) { Text("Back", color = SoftNeutral) }
                                 Text(
                                     text = media.displayName,
                                     color = Color.White,
@@ -3776,7 +3777,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 ) {
                                     Text(
                                         text = "Download",
-                                        color = AccentCyan,
+                                        color = SoftNeutral,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -4160,7 +4161,7 @@ private fun PdfReaderControl(label: String, enabled: Boolean = true, onClick: ()
     ) {
         Text(
             text = label,
-            color = if (enabled) AccentCyan else Color.White.copy(alpha = 0.32f),
+            color = if (enabled) SoftNeutral else Color.White.copy(alpha = 0.32f),
             fontSize = if (label == "<" || label == ">") 28.sp else 12.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
@@ -4298,7 +4299,7 @@ private fun MediaViewerDialog(
                             onRotate(rotation)
                         })
                     })
-                    Text("Replace", color = AccentCyan, modifier = Modifier.pointerInput("replace-${media.id}") { detectTapGestures(onTap = { onReplace() }) })
+                    Text("Replace", color = SoftNeutral, modifier = Modifier.pointerInput("replace-${media.id}") { detectTapGestures(onTap = { onReplace() }) })
                     Text("Remove", color = Color(0xFFFF6E6E), modifier = Modifier.pointerInput("remove-${media.id}") { detectTapGestures(onTap = { onRemove() }) })
                 }
             }
@@ -6432,10 +6433,10 @@ private fun PdfLibraryHomeDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             TextButton(onClick = { switchTab("files") }) {
-                                Text("Files", color = if (activeTab == "files") AccentCyan else libraryText)
+                                Text("Files", color = if (activeTab == "files") SoftNeutral else libraryText)
                             }
                             TextButton(onClick = { switchTab("sections") }) {
-                                Text("PDF Sections", color = if (activeTab == "sections") AccentCyan else libraryText)
+                                Text("PDF Sections", color = if (activeTab == "sections") SoftNeutral else libraryText)
                             }
                             Spacer(
                                 Modifier
@@ -6844,27 +6845,36 @@ private fun PdfLibraryOptionsDialog(
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    // Keep a real modal host so a double-tap action is never lost to the
-    // surrounding file-list gesture detector; the content remains the same
-    // compact dark, rounded Mind Map-style surface.
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
             modifier = Modifier
-                .widthIn(min = 248.dp, max = 360.dp)
-                .heightIn(max = 520.dp)
-                .padding(12.dp),
-            shape = RoundedCornerShape(22.dp),
-            color = GlassDark1,
-            contentColor = Color.White,
-            shadowElevation = 14.dp
+                .fillMaxSize()
+                .pointerInput("pdf-panel-scrim") { detectTapGestures(onTap = { onDismiss() }) }
         ) {
-            Column(modifier = Modifier.padding(18.dp).verticalScroll(rememberScrollState())) {
-                Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(10.dp))
-                content()
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                    Text("Done", color = AccentCyan, fontWeight = FontWeight.Bold)
+            AnimatedVisibility(
+                visible = visible,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 12.dp),
+                enter = fadeIn(tween(160)) + slideInVertically(tween(200)) { -it / 3 },
+                exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { -it / 3 }
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(min = 220.dp, max = 320.dp)
+                        .heightIn(max = 460.dp)
+                        .pointerInput("pdf-panel-block") { detectTapGestures(onTap = {}) },
+                    shape = RoundedCornerShape(16.dp),
+                    color = GlassDark1,
+                    contentColor = SoftNeutral,
+                    shadowElevation = 12.dp
+                ) {
+                    Column(modifier = Modifier.padding(14.dp).verticalScroll(rememberScrollState())) {
+                        Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = SoftNeutral)
+                        Spacer(Modifier.height(8.dp))
+                        content()
+                    }
                 }
             }
         }
@@ -6872,7 +6882,7 @@ private fun PdfLibraryOptionsDialog(
 }
 
 @Composable
-private fun PdfLibraryOption(label: String, color: Color = AccentCyan, onClick: () -> Unit) {
+private fun PdfLibraryOption(label: String, color: Color = SoftNeutral, onClick: () -> Unit) {
     var pressed by remember(label) { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "pdfLibraryOptionPress")
     Box(

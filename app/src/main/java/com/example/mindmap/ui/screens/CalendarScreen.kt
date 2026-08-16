@@ -9,6 +9,12 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +46,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.example.mindmap.data.CalendarAlarmScheduler
 import com.example.mindmap.data.CalendarEventEntity
+import com.example.mindmap.ui.theme.SoftNeutral
 import com.example.mindmap.ui.viewmodel.CalendarViewModel
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -170,6 +177,8 @@ fun CalendarHomeDialog(
         }
     }
 
+    var calendarResetSignal by remember { mutableIntStateOf(0) }
+
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(color = background, modifier = Modifier.fillMaxSize(), contentColor = textColor) {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -177,14 +186,17 @@ fun CalendarHomeDialog(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = { activeTab = "calendar" }) {
-                        Text("Calendar", color = if (activeTab == "calendar") accent else textColor, fontWeight = FontWeight.Bold)
-                    }
+                    TextButton(onClick = onDismiss) { Text("Back", color = accent) }
                     TextButton(onClick = { activeTab = "upcoming" }) {
                         Text("Upcoming", color = if (activeTab == "upcoming") accent else textColor, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Back", color = accent) }
+                    TextButton(onClick = {
+                        if (activeTab == "calendar") calendarResetSignal++
+                        activeTab = "calendar"
+                    }) {
+                        Text("Calendar", color = if (activeTab == "calendar") accent else textColor, fontWeight = FontWeight.Bold)
+                    }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
                             Icon(Icons.Default.Menu, contentDescription = "Menu", tint = textColor)
@@ -204,6 +216,7 @@ fun CalendarHomeDialog(
                         cardColor = cardColor,
                         textColor = textColor,
                         accent = accent,
+                        resetSignal = calendarResetSignal,
                         onDoubleTapDate = { dateKey -> actionForDate = dateKey }
                     )
                 } else {
@@ -301,11 +314,16 @@ private fun CalendarMonthPager(
     cardColor: Color,
     textColor: Color,
     accent: Color,
+    resetSignal: Int,
     onDoubleTapDate: (String) -> Unit
 ) {
     val initialPage = remember { monthIndexForToday() }
     val pagerState = rememberPagerState(initialPage = initialPage) { CAL_TOTAL_MONTHS }
     val today = remember { todayDateKey() }
+
+    LaunchedEffect(resetSignal) {
+        if (resetSignal > 0) pagerState.animateScrollToPage(initialPage)
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         val (year, month) = yearMonthFromIndex(pagerState.currentPage)
@@ -454,21 +472,43 @@ private fun CalendarDateOptionsDialog(
     onToggleComplete: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(20.dp), color = Color(0xFF1E1E2E), contentColor = Color.White) {
-            Column(modifier = Modifier.padding(18.dp).widthIn(min = 240.dp)) {
-                Text(dateKey, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Spacer(Modifier.height(10.dp))
-                TextButton(onClick = onAddText, modifier = Modifier.fillMaxWidth()) { Text("Add Text", color = Color(0xFF64FFDA)) }
-                TextButton(onClick = onAddTimer, modifier = Modifier.fillMaxWidth()) { Text("Add Timer", color = Color(0xFF64FFDA)) }
-                TextButton(onClick = onToggleComplete, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete", color = Color(0xFF64FFDA))
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput("calendar-panel-scrim") { detectTapGestures(onTap = { onDismiss() }) }
+        ) {
+            AnimatedVisibility(
+                visible = visible,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 12.dp),
+                enter = fadeIn(tween(160)) + slideInVertically(tween(200)) { -it / 3 },
+                exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { -it / 3 }
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF1E1E2E),
+                    contentColor = SoftNeutral,
+                    shadowElevation = 10.dp,
+                    modifier = Modifier
+                        .widthIn(min = 200.dp)
+                        .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(dateKey, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SoftNeutral)
+                        Spacer(Modifier.height(6.dp))
+                        TextButton(onClick = onAddText, modifier = Modifier.fillMaxWidth()) { Text("Add Text", color = SoftNeutral) }
+                        TextButton(onClick = onAddTimer, modifier = Modifier.fillMaxWidth()) { Text("Add Timer", color = SoftNeutral) }
+                        TextButton(onClick = onToggleComplete, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete", color = SoftNeutral)
+                        }
+                        if (onDelete != null) {
+                            TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete", color = Color(0xFFFF6E6E)) }
+                        }
+                    }
                 }
-                if (onDelete != null) {
-                    TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete", color = Color(0xFFFF6E6E)) }
-                }
-                Spacer(Modifier.height(6.dp))
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Close", color = Color.LightGray) }
             }
         }
     }
