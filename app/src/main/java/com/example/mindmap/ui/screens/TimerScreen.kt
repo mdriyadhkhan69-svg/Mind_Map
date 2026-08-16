@@ -4,7 +4,9 @@ import android.content.pm.ActivityInfo
 import androidx.activity.compose.LocalActivity
 import android.content.Context
 import android.graphics.Color as AndroidColor
+import android.net.Uri
 import androidx.activity.compose.LocalActivity
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -38,11 +40,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.border
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -180,7 +187,6 @@ private object StudyTimerState {
             val priorCount = previousStrikeCounts[s.id] ?: currentCount
             if (currentCount > priorCount && pendingCelebration == null) {
                 pendingCelebration = s.id to currentCount
-                playStrikeSound(context, currentCount)
             }
             previousStrikeCounts[s.id] = currentCount
         }
@@ -200,6 +206,15 @@ private fun StudyTimerTicker() {
             StudyTimerState.checkStrikes(context, System.currentTimeMillis())
         }
     }
+}
+
+private const val STRIKE_VIDEO_COUNT = 4
+
+private enum class CharacterReaction { DANCE, CLAP, JUMP, SURPRISED, WAVE }
+
+private fun reactionForStrike(strikeCount: Int): CharacterReaction {
+    val reactions = CharacterReaction.entries
+    return reactions[(strikeCount - 1).coerceAtLeast(0) % reactions.size]
 }
 
 @Composable
@@ -289,17 +304,31 @@ private fun studyStrikeSoundResName(strikeIndex: Int): String = "strike_$strikeI
 private object TimerSoundPlayer {
     private var player: android.media.MediaPlayer? = null
 
-    fun play(context: Context, resName: String) {
+    /** Plays a raw sound. onComplete fires when playback finishes naturally, or immediately if the resource is missing/fails. */
+    fun play(context: Context, resName: String, onComplete: (() -> Unit)? = null) {
         stop()
+        var started = false
         runCatching {
             val resId = context.resources.getIdentifier(resName, "raw", context.packageName)
             if (resId != 0) {
                 player = android.media.MediaPlayer.create(context, resId)?.apply {
-                    setOnCompletionListener { mp -> mp.release(); if (player == mp) player = null }
+                    setOnCompletionListener { mp ->
+                        mp.release()
+                        if (player == mp) player = null
+                        onComplete?.invoke()
+                    }
+                    setOnErrorListener { mp, _, _ ->
+                        mp.release()
+                        if (player == mp) player = null
+                        onComplete?.invoke()
+                        true
+                    }
                     start()
                 }
+                started = player != null
             }
         }
+        if (!started) onComplete?.invoke()
     }
 
     fun stop() {
@@ -310,12 +339,14 @@ private object TimerSoundPlayer {
     }
 }
 
-private fun playStrikeSound(context: Context, strikeIndex: Int) {
+private fun playStrikeSound(context: Context, strikeIndex: Int, onComplete: (() -> Unit)? = null) {
     val specific = studyStrikeSoundResName(strikeIndex)
     val hasSpecific = context.resources.getIdentifier(specific, "raw", context.packageName) != 0
     val resName = if (hasSpecific) specific else "strike_default"
     if (context.resources.getIdentifier(resName, "raw", context.packageName) != 0) {
-        TimerSoundPlayer.play(context, resName)
+        TimerSoundPlayer.play(context, resName, onComplete)
+    } else {
+        onComplete?.invoke()
     }
 }
 
@@ -420,17 +451,25 @@ private fun CuteBouncingCharacter() {
 }
 
 @Composable
-private fun ChubbyCelebrationCharacter() {
+private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
     val infinite = rememberInfiniteTransition(label = "chubbyCharacter")
-    val dance by infinite.animateFloat(
-        initialValue = -1f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "dance"
-    )
     val bounce by infinite.animateFloat(
         initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(380, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(
+            tween(if (reaction == CharacterReaction.JUMP) 260 else 420, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ),
         label = "bounce"
+    )
+    val sway by infinite.animateFloat(
+        initialValue = -1f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(380, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "sway"
+    )
+    val armFlap by infinite.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(220, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "armFlap"
     )
     val blink by infinite.animateFloat(
         initialValue = 1f, targetValue = 1f,
@@ -444,62 +483,99 @@ private fun ChubbyCelebrationCharacter() {
         label = "blink"
     )
     val entrance = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        entrance.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 170f))
+    LaunchedEffect(reaction) {
+        entrance.snapTo(0f)
+        entrance.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 180f))
     }
+
+    val bounceAmount = when (reaction) {
+        CharacterReaction.JUMP -> bounce * 34f
+        CharacterReaction.CLAP -> bounce * 6f
+        else -> bounce * 16f
+    }
+    val swayAmount = if (reaction == CharacterReaction.DANCE) sway * 18f else sway * 4f
+    val tilt = if (reaction == CharacterReaction.DANCE) sway * 8f else sway * 2f
 
     Canvas(
         modifier = Modifier
-            .size(210.dp)
+            .size(230.dp)
             .graphicsLayer {
-                translationX = dance * 16f
-                translationY = (-bounce * 18f) + ((1f - entrance.value) * 70f)
-                rotationZ = dance * 5f
-                scaleX = 0.55f + entrance.value * 0.45f
-                scaleY = 0.55f + entrance.value * 0.45f
+                translationX = swayAmount
+                translationY = (-bounceAmount) + ((1f - entrance.value) * 80f)
+                rotationZ = tilt
+                scaleX = 0.5f + entrance.value * 0.5f
+                scaleY = 0.5f + entrance.value * 0.5f
                 alpha = entrance.value
             }
     ) {
         val w = size.width
         val h = size.height
-        val bodyColor = Color(0xFFFFC94D)
-        val limbColor = Color(0xFFFFB020)
-        val footColor = Color(0xFFFF8A1C)
-        val cheek = Color(0xFFFF7A93)
-        val hairColor = Color(0xFF2B2B2B)
-        val legSwing = dance * 6f
+        val bodyColor = Color(0xFF4FA8FF)
+        val bodyShadow = Color(0xFF2E7FE0)
+        val limbColor = Color(0xFF3D8FF0)
+        val footColor = Color(0xFF1F6FE0)
+        val cheek = Color(0xFFFF8FB3)
+        val hairColor = Color(0xFF16324A)
+        val legSwing = sway * 6f
 
-        // legs (walking swing)
+        // legs
+        val legLift = if (reaction == CharacterReaction.JUMP) bounce * 10f else 0f
         drawRoundRect(
             color = limbColor,
-            topLeft = Offset(w * 0.33f - legSwing * 0.01f * w, h * 0.78f),
-            size = Size(w * 0.13f, h * 0.16f),
-            cornerRadius = CornerRadius(w * 0.05f)
+            topLeft = Offset(w * 0.34f - legSwing * 0.01f * w, h * 0.80f - legLift),
+            size = Size(w * 0.13f, h * 0.15f),
+            cornerRadius = CornerRadius(w * 0.06f)
         )
         drawRoundRect(
             color = limbColor,
-            topLeft = Offset(w * 0.54f + legSwing * 0.01f * w, h * 0.78f),
-            size = Size(w * 0.13f, h * 0.16f),
-            cornerRadius = CornerRadius(w * 0.05f)
+            topLeft = Offset(w * 0.55f + legSwing * 0.01f * w, h * 0.80f - legLift),
+            size = Size(w * 0.13f, h * 0.15f),
+            cornerRadius = CornerRadius(w * 0.06f)
         )
-        drawOval(color = footColor, topLeft = Offset(w * 0.30f - legSwing * 0.01f * w, h * 0.91f), size = Size(w * 0.19f, h * 0.08f))
-        drawOval(color = footColor, topLeft = Offset(w * 0.51f + legSwing * 0.01f * w, h * 0.91f), size = Size(w * 0.19f, h * 0.08f))
+        drawOval(color = footColor, topLeft = Offset(w * 0.31f - legSwing * 0.01f * w, h * 0.92f - legLift), size = Size(w * 0.19f, h * 0.075f))
+        drawOval(color = footColor, topLeft = Offset(w * 0.52f + legSwing * 0.01f * w, h * 0.92f - legLift), size = Size(w * 0.19f, h * 0.075f))
 
-        // arms
-        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.08f, h * 0.48f - legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
-        drawRoundRect(color = limbColor, topLeft = Offset(w * 0.81f, h * 0.48f + legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
-        drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.135f, h * 0.74f - legSwing * 0.008f * h))
-        drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.865f, h * 0.74f + legSwing * 0.008f * h))
+        // arms — reaction dependent
+        when (reaction) {
+            CharacterReaction.CLAP -> {
+                val clapOffset = (1f - armFlap) * w * 0.10f
+                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.5f - w * 0.06f - clapOffset, h * 0.46f), size = Size(w * 0.11f, h * 0.20f), cornerRadius = CornerRadius(w * 0.05f))
+                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.5f - w * 0.05f + clapOffset, h * 0.46f), size = Size(w * 0.11f, h * 0.20f), cornerRadius = CornerRadius(w * 0.05f))
+                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.5f - clapOffset, h * 0.44f))
+                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.5f + clapOffset, h * 0.44f))
+            }
+            CharacterReaction.WAVE -> {
+                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.09f, h * 0.50f), size = Size(w * 0.11f, h * 0.22f), cornerRadius = CornerRadius(w * 0.05f))
+                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.145f, h * 0.72f))
+                val waveAngle = armFlap * 30f - 15f
+                rotate(degrees = waveAngle, pivot = Offset(w * 0.82f, h * 0.42f)) {
+                    drawRoundRect(color = limbColor, topLeft = Offset(w * 0.78f, h * 0.20f), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
+                    drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.835f, h * 0.20f))
+                }
+            }
+            else -> {
+                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.08f, h * 0.48f - legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
+                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.81f, h * 0.48f + legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
+                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.135f, h * 0.74f - legSwing * 0.008f * h))
+                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.865f, h * 0.74f + legSwing * 0.008f * h))
+            }
+        }
 
-        // body: rounded square, tuned narrower/taller and less rounded corners
+        // body
+        drawRoundRect(
+            color = bodyShadow,
+            topLeft = Offset(w * 0.26f, h * 0.235f),
+            size = Size(w * 0.48f, h * 0.60f),
+            cornerRadius = CornerRadius(w * 0.14f)
+        )
         drawRoundRect(
             color = bodyColor,
             topLeft = Offset(w * 0.27f, h * 0.22f),
             size = Size(w * 0.46f, h * 0.58f),
-            cornerRadius = CornerRadius(w * 0.10f)
+            cornerRadius = CornerRadius(w * 0.14f)
         )
 
-        // spiky anime hair
+        // hair
         val hairBaseY = h * 0.24f
         drawPath(
             path = androidx.compose.ui.graphics.Path().apply {
@@ -518,54 +594,174 @@ private fun ChubbyCelebrationCharacter() {
             color = hairColor
         )
 
-        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.075f, center = Offset(w * 0.32f, h * 0.56f))
-        drawCircle(color = cheek.copy(alpha = 0.55f), radius = w * 0.075f, center = Offset(w * 0.68f, h * 0.56f))
+        drawCircle(color = cheek.copy(alpha = 0.6f), radius = w * 0.075f, center = Offset(w * 0.32f, h * 0.56f))
+        drawCircle(color = cheek.copy(alpha = 0.6f), radius = w * 0.075f, center = Offset(w * 0.68f, h * 0.56f))
 
-        val eyeHeight = (h * 0.10f) * blink
-        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.37f, h * 0.48f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
-        drawOval(color = Color(0xFF2B2B2B), topLeft = Offset(w * 0.57f, h * 0.48f - eyeHeight / 2f), size = Size(w * 0.08f, eyeHeight))
+        val eyeHeight = if (reaction == CharacterReaction.SURPRISED) h * 0.16f else (h * 0.10f) * blink
+        drawOval(color = Color.White, topLeft = Offset(w * 0.36f, h * 0.47f - eyeHeight / 2f), size = Size(w * 0.10f, eyeHeight))
+        drawOval(color = Color.White, topLeft = Offset(w * 0.56f, h * 0.47f - eyeHeight / 2f), size = Size(w * 0.10f, eyeHeight))
+        drawCircle(color = Color(0xFF16324A), radius = eyeHeight * 0.28f, center = Offset(w * 0.41f, h * 0.47f))
+        drawCircle(color = Color(0xFF16324A), radius = eyeHeight * 0.28f, center = Offset(w * 0.61f, h * 0.47f))
 
-        drawArc(
-            color = Color(0xFF2B2B2B),
-            startAngle = 20f,
-            sweepAngle = 140f,
-            useCenter = false,
-            topLeft = Offset(w * 0.36f, h * 0.50f),
-            size = Size(w * 0.28f, h * 0.22f),
-            style = Stroke(width = w * 0.028f, cap = StrokeCap.Round)
-        )
+        if (reaction == CharacterReaction.SURPRISED) {
+            drawCircle(color = Color(0xFF16324A), radius = w * 0.045f, center = Offset(w * 0.5f, h * 0.60f))
+        } else {
+            drawArc(
+                color = Color(0xFF16324A),
+                startAngle = 20f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(w * 0.36f, h * 0.50f),
+                size = Size(w * 0.28f, h * 0.22f),
+                style = Stroke(width = w * 0.028f, cap = StrokeCap.Round)
+            )
+        }
+    }
+}
+@Composable
+private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
+    if (strikeCount <= STRIKE_VIDEO_COUNT) {
+        StrikeVideoOverlay(strikeCount = strikeCount, onFinished = onFinished)
+    } else {
+        StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
+    }
+}
+
+private fun strikeVideoResId(context: Context, strikeCount: Int): Int {
+    // strike_video_1, strike_video_2, ... — যতগুলো raw ফাইল আছে ততগুলোর মধ্যে
+    // strikeCount অনুযায়ী round-robin ভাবে বাছাই হবে (1st strike->1, 2nd->2, 3rd->3, 4th->1, ...)
+    val available = mutableListOf<Int>()
+    var index = 1
+    while (true) {
+        val resId = context.resources.getIdentifier("strike_video_$index", "raw", context.packageName)
+        if (resId == 0) break
+        available += resId
+        index++
+    }
+    if (available.isEmpty()) {
+        val legacy = context.resources.getIdentifier("strike_video", "raw", context.packageName)
+        return legacy
+    }
+    val chosenIndex = (strikeCount - 1).coerceAtLeast(0) % available.size
+    return available[chosenIndex]
+}
+
+@Composable
+private fun StrikeVideoOverlay(strikeCount: Int, onFinished: () -> Unit) {
+    val context = LocalContext.current
+    val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
+    val alpha = remember { Animatable(0f) }
+    var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
+    var videoPrepared by remember(strikeCount) { mutableStateOf(false) }
+
+    fun finishOnce() {
+        if (!finishedOnce) {
+            finishedOnce = true
+            onFinished()
+        }
+    }
+
+    LaunchedEffect(strikeCount) {
+        alpha.snapTo(0f)
+        alpha.animateTo(1f, tween(220))
+        // Fallback ONLY for the case the video resource is missing/broken and
+        // never even starts playing. Once it starts, it always plays to its
+        // own full length via onCompletionListener below.
+        delay(6000)
+        if (!videoPrepared) finishOnce()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .graphicsLayer { this.alpha = alpha.value }
+            .zIndex(500f)
+            .pointerInput("strike-video-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            AndroidView(
+                factory = { ctx ->
+                    android.widget.VideoView(ctx).apply {
+                        val resId = strikeVideoResId(ctx, strikeCount)
+                        if (resId != 0) {
+                            setVideoURI(Uri.parse("android.resource://${ctx.packageName}/$resId"))
+                            setOnCompletionListener { finishOnce() }
+                            setOnErrorListener { _, _, _ -> finishOnce(); true }
+                            setOnPreparedListener { player ->
+                                videoPrepared = true
+                                player.isLooping = false
+                                start()
+                            }
+                        } else {
+                            finishOnce()
+                        }
+                    }
+                },
+                modifier = Modifier.width(300.dp).height(300.dp)
+            )
+            Spacer(Modifier.height(14.dp))
+            Text(
+                message,
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.widthIn(max = 300.dp).padding(horizontal = 24.dp)
+            )
+        }
     }
 }
 
 @Composable
-private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
+private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
+    val context = LocalContext.current
     val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
+    val reaction = remember(strikeCount) { reactionForStrike(strikeCount) }
     val scale = remember { Animatable(0.3f) }
     val alpha = remember { Animatable(0f) }
+    var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
+    val overlayScope = rememberCoroutineScope()
+
+    fun finishOnce() {
+        if (finishedOnce) return
+        finishedOnce = true
+        overlayScope.launch {
+            alpha.animateTo(0f, tween(220))
+            TimerSoundPlayer.stop()
+            onFinished()
+        }
+    }
+
     LaunchedEffect(strikeCount) {
         scale.snapTo(0.3f)
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
         scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
-        delay(5200)
-        alpha.animateTo(0f, tween(280))
-        TimerSoundPlayer.stop()
-        onFinished()
+
+        // Character keeps reacting for exactly as long as the strike sound plays.
+        // If there's no sound resource, fall back to a minimum visible duration.
+        val soundFinished = kotlinx.coroutines.CompletableDeferred<Unit>()
+        playStrikeSound(context, strikeCount) { soundFinished.complete(Unit) }
+        kotlinx.coroutines.withTimeoutOrNull(30000) { soundFinished.await() }
+
+        finishOnce()
     }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFD90429))
+            .background(Color(0xFF0B3D91))
             .graphicsLayer { this.alpha = alpha.value }
             .zIndex(500f)
-            .pointerInput("strike-celebration-block") { detectTapGestures(onTap = {}) },
+            .pointerInput("strike-celebration-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
         ) {
-            ChubbyCelebrationCharacter()
+            ChubbyCelebrationCharacter(reaction = reaction)
             Spacer(Modifier.height(14.dp))
             Text(
                 "$strikeCount Strike${if (strikeCount > 1) "s" else ""}!",
@@ -585,7 +781,6 @@ private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Un
         }
     }
 }
-
 /* ---------------- flip-digit building blocks ---------------- */
 @Composable
 private fun FlipDigitCell(
@@ -1013,7 +1208,68 @@ private fun NumberWheelColumn(
         )
     }
 }
+@Composable
+private fun StyledTimerSlider(
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    accentColor: Color = TimerAccent
+) {
+    var trackWidthPx by remember { mutableStateOf(0f) }
+    val rangeSize = valueRange.endInclusive - valueRange.start
+    val fraction = if (rangeSize == 0f) 0f else ((value - valueRange.start) / rangeSize).coerceIn(0f, 1f)
 
+    fun updateFromX(positionX: Float) {
+        if (trackWidthPx <= 0f) return
+        val newFraction = (positionX / trackWidthPx).coerceIn(0f, 1f)
+        onValueChange(valueRange.start + rangeSize * newFraction)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .onGloballyPositioned { trackWidthPx = it.size.width.toFloat() }
+            .pointerInput(valueRange.start, valueRange.endInclusive) {
+                detectTapGestures(onTap = { updateFromX(it.x) })
+            }
+            .pointerInput(valueRange.start, valueRange.endInclusive) {
+                detectDragGestures(
+                    onDragStart = { updateFromX(it.x) }
+                ) { change, _ ->
+                    change.consume()
+                    updateFromX(change.position.x)
+                }
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxWidth()
+                .height(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = 0.12f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxWidth(fraction)
+                .height(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xFF16324A))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset { IntOffset((trackWidthPx * fraction).roundToInt() - 14, 0) }
+                .size(28.dp)
+                .shadow(6.dp, CircleShape, ambientColor = accentColor, spotColor = accentColor)
+                .clip(CircleShape)
+                .background(Color.White)
+                .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+        )
+    }
+}
 @Composable
 private fun TimerBoxSettingsPanel(
     settings: TimerBoxSettings,
@@ -1049,43 +1305,38 @@ private fun TimerBoxSettingsPanel(
                 Spacer(Modifier.height(14.dp))
 
                 Text("Width  ${"%.0f".format(widthPercent * 100)}%", color = Color.LightGray, fontSize = 13.sp)
-                Slider(
+                StyledTimerSlider(
                     value = widthPercent,
                     valueRange = if (isLandscape) 0.5f..3f else 0.4f..1f,
-                    onValueChange = { widthPercent = it; push() },
-                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                    onValueChange = { widthPercent = it; push() }
                 )
 
                 Text("Box height  ${boxHeight.toInt()}dp", color = Color.LightGray, fontSize = 13.sp)
-                Slider(
+                StyledTimerSlider(
                     value = boxHeight,
                     valueRange = 60f..420f,
-                    onValueChange = { boxHeight = it; push() },
-                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                    onValueChange = { boxHeight = it; push() }
                 )
 
                 Text("Number size  ${fontSize.toInt()}sp", color = Color.LightGray, fontSize = 13.sp)
-                Slider(
+                StyledTimerSlider(
                     value = fontSize,
                     valueRange = 24f..420f,
-                    onValueChange = { fontSize = it; push() },
-                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                    onValueChange = { fontSize = it; push() }
                 )
 
                 Text("Number weight  $fontWeightValue", color = Color.LightGray, fontSize = 13.sp)
-                Slider(
+                StyledTimerSlider(
                     value = fontWeightValue.toFloat(),
                     valueRange = 100f..900f,
-                    onValueChange = { fontWeightValue = it.toInt(); push() },
-                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                    onValueChange = { fontWeightValue = it.toInt(); push() }
                 )
 
                 Text("Spacing  ${spacing.toInt()}dp", color = Color.LightGray, fontSize = 13.sp)
-                Slider(
+                StyledTimerSlider(
                     value = spacing,
                     valueRange = 0f..40f,
-                    onValueChange = { spacing = it; push() },
-                    colors = SliderDefaults.colors(thumbColor = TimerAccent, activeTrackColor = TimerAccent)
+                    onValueChange = { spacing = it; push() }
                 )
 
                 Spacer(Modifier.height(8.dp))
@@ -1426,21 +1677,43 @@ private fun TimerSettingsDialog(
 
 /* ---------------- Quick stopwatch / countdown ---------------- */
 
+private object QuickTimerState {
+    var mode by mutableStateOf("stopwatch")
+    var isRunning by mutableStateOf(false)
+    var elapsedMillis by mutableStateOf(0L)
+    var countdownTotalMillis by mutableStateOf(5 * 60_000L)
+    var remainingMillis by mutableStateOf(5 * 60_000L)
+    var startTimestamp by mutableStateOf(0L)
+    var hasStarted by mutableStateOf(false)
+
+    fun pause() {
+        if (!isRunning) return
+        val now = System.currentTimeMillis()
+        if (mode == "stopwatch") {
+            elapsedMillis = now - startTimestamp
+        } else {
+            val spent = now - startTimestamp
+            remainingMillis = (countdownTotalMillis - spent).coerceAtLeast(0L)
+        }
+        isRunning = false
+    }
+}
+
 @Composable
 private fun QuickTimerDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    var mode by rememberSaveable { mutableStateOf("stopwatch") }
-    var isRunning by rememberSaveable { mutableStateOf(false) }
-    var elapsedMillis by rememberSaveable { mutableStateOf(0L) }
-    var countdownTotalMillis by rememberSaveable { mutableStateOf(5 * 60_000L) }
-    var remainingMillis by rememberSaveable { mutableStateOf(countdownTotalMillis) }
-    var startTimestamp by rememberSaveable { mutableStateOf(0L) }
+    var mode by QuickTimerState::mode
+    var isRunning by QuickTimerState::isRunning
+    var elapsedMillis by QuickTimerState::elapsedMillis
+    var countdownTotalMillis by QuickTimerState::countdownTotalMillis
+    var remainingMillis by QuickTimerState::remainingMillis
+    var startTimestamp by QuickTimerState::startTimestamp
+    var hasStarted by QuickTimerState::hasStarted
     var finished by rememberSaveable { mutableStateOf(false) }
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
     var pickerHours by rememberSaveable { mutableStateOf(((countdownTotalMillis / 3_600_000L).toInt())) }
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
     var showCustomTimeDialog by remember { mutableStateOf(false) }
-    var hasStarted by rememberSaveable { mutableStateOf(false) }
     var portraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false)) }
     var landscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true)) }
     var maxWidthLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
@@ -1475,10 +1748,22 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
             playRawSound(context, "timer_up")
         }
     }
-
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
+        DisposableEffect(Unit) {
+            onDispose { QuickTimerState.pause() }
+        }
+        val quickLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+        DisposableEffect(quickLifecycleOwner) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                    QuickTimerState.pause()
+                }
+            }
+            quickLifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { quickLifecycleOwner.lifecycle.removeObserver(observer) }
+        }
         val density = LocalDensity.current
         val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
         var brightnessLevel by remember {
