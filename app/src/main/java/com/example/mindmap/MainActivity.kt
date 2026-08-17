@@ -34,6 +34,7 @@ import com.example.mindmap.ui.viewmodel.SettingsViewModelFactory
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.mindmap.ui.screens.FloatingPopupSettingsState.ensureLoaded(applicationContext)
         handleViewIntent(intent)
         val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "mindmap_db")
             .addMigrations(AppDatabase.MIGRATION_4_5)
@@ -80,16 +81,17 @@ class MainActivity : ComponentActivity() {
     // Home button চাপ দিয়ে/app-switch করে user বেরিয়ে গেলে ডাকা হয় - রোটেশনে ডাকা হয় না
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        val pipEnabled = com.example.mindmap.loadPipEnabled(applicationContext)
+        val floatingPopupEnabled = com.example.mindmap.ui.screens.FloatingPopupSettingsState.enabled
         val timerRunning = com.example.mindmap.TimerRunningState.isAnyTimerRunning.value
-        if (pipEnabled && timerRunning) {
-            runCatching {
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(3, 2))
-                    .build()
-                enterPictureInPictureMode(params)
-            }
+        if (floatingPopupEnabled && timerRunning) {
+            com.example.mindmap.FloatingTimerService.start(applicationContext)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.example.mindmap.ui.screens.FloatingPopupSettingsState.ensureLoaded(applicationContext)
+        com.example.mindmap.FloatingTimerService.stop(applicationContext)
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -105,6 +107,9 @@ class MainActivity : ComponentActivity() {
                 }
                 ExternalOpenState.pendingPdfUri.value = uri.toString()
             }
+        }
+        if (intent?.getBooleanExtra("open_timer", false) == true) {
+            com.example.mindmap.TimerNavigationState.requestOpenTimer.value = true
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.example.mindmap.ui.screens
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -244,7 +245,6 @@ private fun ReorderableProductivityCards(
     cardComposables: Map<String, @Composable () -> Unit>,
     onReorder: (List<String>) -> Unit
 ) {
-    var localOrder by remember(cardIds) { mutableStateOf(cardIds) }
     val density = LocalDensity.current
     val itemHeight = 108.dp
     val itemSpacing = 14.dp
@@ -252,13 +252,24 @@ private fun ReorderableProductivityCards(
     val itemSpacingPx = with(density) { itemSpacing.toPx() }
     val slotHeightPx = itemHeightPx + itemSpacingPx
 
+    // canonical order: only re-synced from the parent-supplied cardIds while
+    // nothing is currently being dragged, so an in-flight drag/settle is
+    // never interrupted by an upstream recomposition.
+    var order by remember { mutableStateOf(cardIds) }
     var draggingId by remember { mutableStateOf<String?>(null) }
-    var dragOffset by remember { mutableStateOf(0f) }
-    var orderChangedDuringDrag by remember { mutableStateOf(false) }
-    var dragStartOrder by remember { mutableStateOf<List<String>>(emptyList()) }
+    var dragDeltaY by remember { mutableStateOf(0f) }
+    val reorderScope = rememberCoroutineScope()
+    // per-card settle Animatables keyed by id — they persist across drags
+    // instead of being recreated, which is what let the gesture get "stuck"
+    // after the first reorder.
+    val settleOffsets = remember { mutableStateMapOf<String, Animatable<Float, AnimationVector1D>>() }
+
+    LaunchedEffect(cardIds) {
+        if (draggingId == null) order = cardIds
+    }
 
     val totalHeight = with(density) {
-        (slotHeightPx * localOrder.size - itemSpacingPx).coerceAtLeast(0f).toDp()
+        (slotHeightPx * order.size - itemSpacingPx).coerceAtLeast(0f).toDp()
     }
 
     Box(
@@ -266,100 +277,76 @@ private fun ReorderableProductivityCards(
             .fillMaxWidth()
             .height(totalHeight)
     ) {
-        localOrder.forEach { id ->
+        order.forEachIndexed { index, id ->
             key(id) {
-                val targetIndex = localOrder.indexOf(id)
                 val isDragging = draggingId == id
-                val animatedSlot = remember { Animatable(targetIndex.toFloat()) }
-                // প্রতিটা কার্ডের নিজস্ব (isolated) settle state — অন্য কার্ডের
-                // settle animation-এর সাথে কখনো mix হবে না।
-                val releaseOffset = remember { Animatable(0f) }
-                var settlingDrag by remember { mutableStateOf(false) }
-                var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-                val cardDragScope = rememberCoroutineScope()
+                val settle = settleOffsets.getOrPut(id) { Animatable(0f) }
+                val animatedSlot = remember { Animatable((index * slotHeightPx)) }
+                val targetY = index * slotHeightPx
 
-                LaunchedEffect(targetIndex, isDragging) {
-                    if (isDragging) {
-                        animatedSlot.snapTo(targetIndex.toFloat())
-                    } else {
-                        animatedSlot.animateTo(targetIndex.toFloat(), tween(220))
+                LaunchedEffect(targetY, isDragging) {
+                    if (!isDragging) {
+                        animatedSlot.animateTo(targetY, tween(220))
                     }
                 }
 
-                val baseOffsetY = if (isDragging) targetIndex * slotHeightPx else animatedSlot.value * slotHeightPx
-                val dragDeltaY = when {
-                    isDragging -> dragOffset
-                    settlingDrag -> releaseOffset.value
-                    else -> 0f
-                }
+                val currentY = if (isDragging) targetY + dragDeltaY else animatedSlot.value + settle.value
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(itemHeight)
                         .zIndex(if (isDragging) 2f else 0f)
-                        .graphicsLayer { translationY = baseOffsetY + dragDeltaY }
+                        .graphicsLayer { translationY = currentY }
                         .pointerInput(id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
-                                    // এই কার্ডের নিজের আগের settle থাকলে বাতিল করে সাথে সাথে ক্লিন state এ শুরু
-                                    settleJob?.cancel()
-                                    settlingDrag = false
+                                    reorderScope.launch { settle.stop() }
                                     draggingId = id
-                                    dragStartOrder = localOrder
-                                    dragOffset = 0f
-                                    orderChangedDuringDrag = false
+                                    dragDeltaY = 0f
                                 },
                                 onDragEnd = {
                                     if (draggingId != id) return@detectDragGesturesAfterLongPress
-                                    if (orderChangedDuringDrag) onReorder(localOrder)
-                                    val releaseFrom = dragOffset
+                                    val finalOrder = order
+                                    val finalIndex = finalOrder.indexOf(id).coerceAtLeast(0)
+                                    val leftover = dragDeltaY
                                     draggingId = null
-                                    settleJob = cardDragScope.launch {
-                                        try {
-                                            releaseOffset.snapTo(releaseFrom)
-                                            settlingDrag = true
-                                            releaseOffset.animateTo(0f, tween(150))
-                                        } finally {
-                                            settlingDrag = false
-                                        }
+                                    dragDeltaY = 0f
+                                    reorderScope.launch {
+                                        animatedSlot.snapTo(finalIndex * slotHeightPx)
+                                        settle.snapTo(leftover)
+                                        settle.animateTo(0f, tween(150))
                                     }
-                                    dragOffset = 0f
-                                    orderChangedDuringDrag = false
+                                    onReorder(finalOrder)
                                 },
                                 onDragCancel = {
                                     if (draggingId != id) return@detectDragGesturesAfterLongPress
-                                    localOrder = dragStartOrder
-                                    val releaseFrom = dragOffset
+                                    val finalIndex = order.indexOf(id).coerceAtLeast(0)
+                                    val leftover = dragDeltaY
                                     draggingId = null
-                                    settleJob = cardDragScope.launch {
-                                        try {
-                                            releaseOffset.snapTo(releaseFrom)
-                                            settlingDrag = true
-                                            releaseOffset.animateTo(0f, tween(160))
-                                        } finally {
-                                            settlingDrag = false
-                                        }
+                                    dragDeltaY = 0f
+                                    reorderScope.launch {
+                                        animatedSlot.snapTo(finalIndex * slotHeightPx)
+                                        settle.snapTo(leftover)
+                                        settle.animateTo(0f, tween(160))
                                     }
-                                    dragOffset = 0f
-                                    orderChangedDuringDrag = false
                                 }
                             ) { change, amount ->
                                 change.consume()
                                 if (draggingId != id) return@detectDragGesturesAfterLongPress
-                                dragOffset += amount.y
-                                val currentIndex = localOrder.indexOf(id)
+                                dragDeltaY += amount.y
+                                val currentIndex = order.indexOf(id)
                                 val direction = when {
-                                    dragOffset >= slotHeightPx / 2 && currentIndex < localOrder.lastIndex -> 1
-                                    dragOffset <= -slotHeightPx / 2 && currentIndex > 0 -> -1
+                                    dragDeltaY >= slotHeightPx / 2 && currentIndex < order.lastIndex -> 1
+                                    dragDeltaY <= -slotHeightPx / 2 && currentIndex > 0 -> -1
                                     else -> 0
                                 }
                                 if (direction != 0) {
-                                    val reordered = localOrder.toMutableList()
+                                    val reordered = order.toMutableList()
                                     val moved = reordered.removeAt(currentIndex)
                                     reordered.add(currentIndex + direction, moved)
-                                    localOrder = reordered
-                                    dragOffset -= direction * slotHeightPx
-                                    orderChangedDuringDrag = true
+                                    order = reordered
+                                    dragDeltaY -= direction * slotHeightPx
                                 }
                             }
                         }
@@ -470,7 +457,6 @@ private fun ProductivityCard(
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(22.dp))
             .background(Brush.linearGradient(listOf(cardColor, cardColor.copy(alpha = 0.92f))))
-            .border(1.dp, ProdCardBorder, RoundedCornerShape(22.dp))
             .pointerInput(title) {
                 detectTapGestures(
                     onPress = {

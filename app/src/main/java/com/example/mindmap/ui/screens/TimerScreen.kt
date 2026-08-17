@@ -81,7 +81,7 @@ private val TimerAccent = Color(0xFF64FFDA)
 
 /* ---------------- persistence ---------------- */
 
-private data class StudySubject(
+internal data class StudySubject(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val accumulatedMillis: Long = 0L,
@@ -152,6 +152,30 @@ private object DigitStyleState {
     }
 }
 
+private fun loadFloatingTimerPopupEnabled(context: Context): Boolean =
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).getBoolean("floating_popup_enabled", false)
+
+private fun saveFloatingTimerPopupEnabled(context: Context, value: Boolean) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).edit().putBoolean("floating_popup_enabled", value).apply()
+}
+
+internal object FloatingPopupSettingsState {
+    var enabled by mutableStateOf(false)
+    private var loaded = false
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            enabled = loadFloatingTimerPopupEnabled(context)
+            loaded = true
+        }
+    }
+
+    fun update(context: Context, value: Boolean) {
+        enabled = value
+        saveFloatingTimerPopupEnabled(context, value)
+    }
+}
+
 private fun loadStudySubjects(context: Context): List<StudySubject> = runCatching {
     val raw = context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).getString("subjects", "[]") ?: "[]"
     val array = org.json.JSONArray(raw)
@@ -186,10 +210,10 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
     context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).edit().putString("subjects", array.toString()).apply()
 }
 
-private fun StudySubject.currentElapsedMillis(nowMillis: Long): Long =
+internal fun StudySubject.currentElapsedMillis(nowMillis: Long): Long =
     accumulatedMillis + if (isRunning) (nowMillis - startedAtMillis).coerceAtLeast(0L) else 0L
 
-private object StudyTimerState {
+internal object StudyTimerState {
     var subjects by mutableStateOf<List<StudySubject>>(emptyList())
     var pendingCelebration by mutableStateOf<Pair<String, Int>?>(null)
     private var loaded = false
@@ -1604,7 +1628,9 @@ fun TimerHomeDialog(
                 // Timer section (Clock/Stopwatch/Countdown/Study) ছেড়ে গেলেই এই onDispose চলবে,
                 // orientation change এ চলবে না কারণ MainActivity manifest-এ configChanges হ্যান্ডেল করা আছে
                 // এবং এই DisposableEffect এখন শুধু activity key-তে bind, orientation-এ recompose হবে না।
-                StudyTimerState.pauseAll(context)
+                if (!FloatingPopupSettingsState.enabled) {
+                    StudyTimerState.pauseAll(context)
+                }
                 activity?.requestedOrientation = previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
         }
@@ -1614,7 +1640,7 @@ fun TimerHomeDialog(
         val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !FloatingPopupSettingsState.enabled) {
                     StudyTimerState.pauseAll(context)
                 }
             }
@@ -1755,7 +1781,8 @@ private fun TimerSettingsDialog(
     val context = LocalContext.current
     StrikeSettingsState.ensureLoaded(context)
     DigitStyleState.ensureLoaded(context)
-    var pipEnabled by remember { mutableStateOf(com.example.mindmap.loadPipEnabled(context)) }
+    FloatingPopupSettingsState.ensureLoaded(context)
+    var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
@@ -1776,7 +1803,6 @@ private fun TimerSettingsDialog(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("24-hour time", fontSize = 15.sp)
-                        Text("Off shows 12-hour with AM/PM", color = Color.LightGray, fontSize = 12.sp)
                     }
                     Switch(
                         checked = is24Hour,
@@ -1787,22 +1813,29 @@ private fun TimerSettingsDialog(
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Floating timer", fontSize = 15.sp)
-                        Text("App minimize করলে ছোট box-এ timer দেখাবে", color = Color.LightGray, fontSize = 12.sp)
+                        Text("Floating timer popup", fontSize = 15.sp)
                     }
                     Switch(
-                        checked = pipEnabled,
+                        checked = floatingPopupEnabled,
                         onCheckedChange = { value ->
-                            pipEnabled = value
-                            com.example.mindmap.savePipEnabled(context, value)
+                            if (value && !android.provider.Settings.canDrawOverlays(context)) {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                    )
+                                }
+                            }
+                            floatingPopupEnabled = value
+                            FloatingPopupSettingsState.update(context, value)
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )
                 }
                 Spacer(Modifier.height(20.dp))
                 Text("Digit change style", color = Color.LightGray, fontSize = 14.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("Clock, Stopwatch & Countdown ", color = Color.LightGray, fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                     listOf(
@@ -1829,8 +1862,6 @@ private fun TimerSettingsDialog(
 
                 Spacer(Modifier.height(20.dp))
                 Text("Strike timer", color = Color.LightGray, fontSize = 14.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("Strike animation repeats after this much time", color = Color.LightGray, fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -1913,7 +1944,7 @@ private fun TimerSettingsDialog(
 
 /* ---------------- Quick stopwatch / countdown ---------------- */
 
-private object QuickTimerState {
+internal object QuickTimerState {
     var mode by mutableStateOf("stopwatch")
     var isRunning by mutableStateOf(false)
     var elapsedMillis by mutableStateOf(0L)
@@ -1921,6 +1952,7 @@ private object QuickTimerState {
     var remainingMillis by mutableStateOf(5 * 60_000L)
     var startTimestamp by mutableStateOf(0L)
     var hasStarted by mutableStateOf(false)
+    var timeUp by mutableStateOf(false)
 
     fun pause() {
         if (!isRunning) return
@@ -1945,7 +1977,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var remainingMillis by QuickTimerState::remainingMillis
     var startTimestamp by QuickTimerState::startTimestamp
     var hasStarted by QuickTimerState::hasStarted
-    var finished by rememberSaveable { mutableStateOf(false) }
+    var finished by QuickTimerState::timeUp
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
     var pickerHours by rememberSaveable { mutableStateOf(((countdownTotalMillis / 3_600_000L).toInt())) }
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
@@ -1988,12 +2020,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
         DisposableEffect(Unit) {
-            onDispose { QuickTimerState.pause() }
+            onDispose { if (!FloatingPopupSettingsState.enabled) QuickTimerState.pause() }
         }
         val quickLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
         DisposableEffect(quickLifecycleOwner) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !FloatingPopupSettingsState.enabled) {
                     QuickTimerState.pause()
                 }
             }
@@ -2292,6 +2324,8 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
 // সবসময় TimerRunningState-এ আপডেট রাখে, যাতে minimize করার মুহূর্তে সঠিক সিদ্ধান্ত নেওয়া যায়
 @Composable
 fun TimerRunningWatcher() {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { FloatingPopupSettingsState.ensureLoaded(context) }
     val quickRunning = QuickTimerState.isRunning
     val studySubjects = StudyTimerState.subjects
     LaunchedEffect(quickRunning, studySubjects) {

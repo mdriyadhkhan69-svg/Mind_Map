@@ -376,6 +376,13 @@ fun MindMapApp(
         com.example.mindmap.ExternalOpenState.pendingPdfUri.value = null
     }
 
+    val requestOpenTimer by com.example.mindmap.TimerNavigationState.requestOpenTimer
+    LaunchedEffect(requestOpenTimer) {
+        if (requestOpenTimer) {
+            openHome("timer")
+            com.example.mindmap.TimerNavigationState.requestOpenTimer.value = false
+        }
+    }
     if (activeHome == "pdf_library") {
         PdfLibraryHomeDialog(
             onDismiss = { openHome("productivity") },
