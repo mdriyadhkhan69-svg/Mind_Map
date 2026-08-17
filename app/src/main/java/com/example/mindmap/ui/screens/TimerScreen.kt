@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -1719,23 +1720,31 @@ fun TimerHomeDialog(
                         .align(Alignment.Center)
                         .fillMaxWidth()
                         .padding(end = animatedEndPadding, bottom = animatedBottomPadding)
+                ) {
+                    LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape, boxSettings = activeClockBoxSettings)
+                }
+
+                // Central-only brightness gesture zone: bounded box so a drag
+                // starting near the edges/top/bottom never reaches this handler.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth(0.6f)
+                        .fillMaxHeight(0.5f)
                         .pointerInput("timer-home-brightness") {
                             detectDragGestures { change, dragAmount ->
                                 change.consume()
                                 applyHomeBrightness(homeBrightnessLevel - dragAmount.y / 600f)
                             }
                         }
-                ) {
-                    LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape, boxSettings = activeClockBoxSettings)
-                }
+                )
 
-                LaunchedEffect(TimerNavigationState.requestOpenSection.value) {
-                    when (TimerNavigationState.requestOpenSection.value) {
-                        "quick" -> { showQuickTimer = true; TimerNavigationState.requestOpenSection.value = null }
-                        "study" -> { showStudy = true; TimerNavigationState.requestOpenSection.value = null }
+                LaunchedEffect(com.example.mindmap.TimerNavigationState.requestOpenSection.value) {
+                    when (com.example.mindmap.TimerNavigationState.requestOpenSection.value) {
+                        "quick" -> { showQuickTimer = true; com.example.mindmap.TimerNavigationState.requestOpenSection.value = null }
+                        "study" -> { showStudy = true; com.example.mindmap.TimerNavigationState.requestOpenSection.value = null }
                     }
                 }
-
                 AnimatedVisibility(
                     visible = controlsVisible,
                     modifier = Modifier.align(Alignment.TopCenter),
@@ -2201,13 +2210,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                 end = animatedEndPadding,
                                 top = animatedQuickTopPadding,
                                 bottom = animatedQuickBottomPadding
-                            )
-                            .pointerInput("quick-timer-brightness") {
-                                detectDragGestures { change, dragAmount ->
-                                    change.consume()
-                                    applyBrightness(brightnessLevel - dragAmount.y / 600f)
-                                }
-                            },
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         SplitTimeDisplay(
@@ -2220,6 +2223,23 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             modifier = Modifier.width(displayWidth)
                         )
                     }
+
+                    // Central-only brightness gesture zone: bounded box so a drag
+                    // starting near the edges/top/bottom (or over side/bottom
+                    // control panels, which are composed after this and stay
+                    // on top) never reaches this handler.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .fillMaxWidth(0.6f)
+                            .fillMaxHeight(0.5f)
+                            .pointerInput("quick-timer-brightness") {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    applyBrightness(brightnessLevel - dragAmount.y / 600f)
+                                }
+                            }
+                    )
 
                     if (finished) {
                         TimeUpOverlay(isLandscape = isLandscape) {
@@ -2599,7 +2619,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(12.dp))
-                                            .background(if (subject.isRunning) Color(0xFFFF6E6E).copy(alpha = 0.85f) else TimerAccent.copy(alpha = 0.9f))
+                                            .background(if (subject.isRunning) Color(0xFFFF6E6E).copy(alpha = 0.85f) else SoftNeutral.copy(alpha = 0.92f))
                                             .pointerInput(subject.id, subject.isRunning) {
                                                 detectTapGestures(onTap = { toggleRunning(subject) })
                                             }

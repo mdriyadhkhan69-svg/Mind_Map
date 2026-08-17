@@ -3,11 +3,16 @@ package com.example.mindmap
 import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
+import android.animation.ValueAnimator
 import android.graphics.PixelFormat
+import android.graphics.Point
+import android.view.animation.DecelerateInterpolator
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -35,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +76,58 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
     private var windowManager: WindowManager? = null
     private var composeView: ComposeView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+
+    // Real screen size (portrait/landscape aware, no hardcoded pixels) used to
+    // clamp the floating popup so it can never be dragged off-screen.
+    private fun screenBounds(): Point {
+        val point = Point()
+        runCatching { windowManager?.defaultDisplay?.getRealSize(point) }
+        if (point.x <= 0 || point.y <= 0) {
+            val metrics = resources.displayMetrics
+            point.x = metrics.widthPixels
+            point.y = metrics.heightPixels
+        }
+        return point
+    }
+
+    // Clamps the popup's top-left (x, y) so the FULL rectangle (using the
+    // popup's actual measured width/height) stays within the screen bounds.
+    private fun clampToScreen(x: Int, y: Int, viewWidth: Int, viewHeight: Int): Point {
+        val bounds = screenBounds()
+        val maxX = (bounds.x - viewWidth).coerceAtLeast(0)
+        val maxY = (bounds.y - viewHeight).coerceAtLeast(0)
+        return Point(x.coerceIn(0, maxX), y.coerceIn(0, maxY))
+    }
+
+    // On a single tap, if the popup is currently sitting close enough to the
+    // LEFT or RIGHT edge that its controls (e.g. the X button) are hard to
+    // reach, smoothly slide it inward just enough to expose them. Does
+    // nothing if the popup is already comfortably inside the screen.
+    private fun nudgeAwayFromEdgeIfNeeded() {
+        val p = layoutParams ?: return
+        val view = composeView ?: return
+        if (view.width <= 0) return
+        val density = resources.displayMetrics.density
+        val edgeThresholdPx = (20 * density).roundToInt()
+        val safeInsetPx = (44 * density).roundToInt()
+        val bounds = screenBounds()
+        val maxX = (bounds.x - view.width).coerceAtLeast(0)
+        val targetX = when {
+            p.x <= edgeThresholdPx -> safeInsetPx.coerceAtMost(maxX)
+            p.x >= maxX - edgeThresholdPx -> (maxX - safeInsetPx).coerceAtLeast(0)
+            else -> return
+        }
+        if (targetX == p.x) return
+        ValueAnimator.ofInt(p.x, targetX).apply {
+            duration = 220
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animator ->
+                p.x = animator.animatedValue as Int
+                runCatching { windowManager?.updateViewLayout(view, p) }
+            }
+            start()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -111,15 +169,19 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
             FloatingTimerPopupContent(
                 onPositionChange = { dx, dy ->
                     val p = layoutParams ?: return@FloatingTimerPopupContent
-                    p.x = (p.x + dx).roundToInt()
-                    p.y = (p.y + dy).roundToInt()
+                    val rawX = (p.x + dx).roundToInt()
+                    val rawY = (p.y + dy).roundToInt()
+                    val clamped = clampToScreen(rawX, rawY, view.width, view.height)
+                    p.x = clamped.x
+                    p.y = clamped.y
                     runCatching { windowManager?.updateViewLayout(view, p) }
                 },
                 onClose = {
                     pauseActiveTimer()
                     stopSelf()
                 },
-                onOpenApp = { section -> openApp(section) }
+                onOpenApp = { section -> openApp(section) },
+                onEdgeNudge = { nudgeAwayFromEdgeIfNeeded() }
             )
         }
         composeView = view
@@ -171,7 +233,8 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
 private fun FloatingTimerPopupContent(
     onPositionChange: (Float, Float) -> Unit,
     onClose: () -> Unit,
-    onOpenApp: (String) -> Unit
+    onOpenApp: (String) -> Unit,
+    onEdgeNudge: () -> Unit
 ) {
     val context = LocalContext.current
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -225,10 +288,17 @@ private fun FloatingTimerPopupContent(
     }
 
     var expanded by remember { mutableStateOf(false) }
+    var pressed by remember { mutableStateOf(false) }
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = tween(140),
+        label = "floatingPopupPressScale"
+    )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
             .clip(RoundedCornerShape(16.dp))
             .background(if (timeUp) Color(0xFF7A0E0E) else Color(0xEE171A2B))
             .pointerInput(Unit) {
@@ -239,7 +309,15 @@ private fun FloatingTimerPopupContent(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { expanded = !expanded },
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = {
+                        expanded = !expanded
+                        onEdgeNudge()
+                    },
                     onDoubleTap = { onOpenApp(currentSection) }
                 )
             }
@@ -270,49 +348,79 @@ private fun FloatingTimerPopupContent(
             Spacer(Modifier.height(6.dp))
             Row {
                 val isRunning = if (quickRunning) QuickTimerState.isRunning else runningSubject?.isRunning == true
+                var playPausePressed by remember { mutableStateOf(false) }
+                val playPauseScale by animateFloatAsState(
+                    targetValue = if (playPausePressed) 0.85f else 1f,
+                    animationSpec = tween(120),
+                    label = "floatingPopupPlayPauseScale"
+                )
                 Icon(
                     imageVector = if (isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = "toggle",
                     tint = Color(0xFF64FFDA),
                     modifier = Modifier
                         .size(22.dp)
+                        .graphicsLayer { scaleX = playPauseScale; scaleY = playPauseScale }
                         .pointerInput(Unit) {
-                            detectTapGestures(onTap = {
-                                when {
-                                    quickRunning || (QuickTimerState.hasStarted && runningSubject == null) -> {
-                                        if (QuickTimerState.isRunning) {
-                                            QuickTimerState.pause()
-                                        } else {
-                                            QuickTimerState.isRunning = true
-                                            QuickTimerState.startTimestamp = System.currentTimeMillis() -
-                                                    (if (QuickTimerState.mode == "stopwatch") QuickTimerState.elapsedMillis
-                                                    else QuickTimerState.countdownTotalMillis - QuickTimerState.remainingMillis)
+                            detectTapGestures(
+                                onPress = {
+                                    playPausePressed = true
+                                    tryAwaitRelease()
+                                    playPausePressed = false
+                                },
+                                onTap = {
+                                    when {
+                                        quickRunning || (QuickTimerState.hasStarted && runningSubject == null) -> {
+                                            if (QuickTimerState.isRunning) {
+                                                QuickTimerState.pause()
+                                            } else {
+                                                QuickTimerState.isRunning = true
+                                                QuickTimerState.startTimestamp = System.currentTimeMillis() -
+                                                        (if (QuickTimerState.mode == "stopwatch") QuickTimerState.elapsedMillis
+                                                        else QuickTimerState.countdownTotalMillis - QuickTimerState.remainingMillis)
+                                            }
                                         }
-                                    }
-                                    runningSubject != null -> {
-                                        val nowMillis = System.currentTimeMillis()
-                                        val updated = StudyTimerState.subjects.map { s ->
-                                            if (s.id == runningSubject.id) {
-                                                s.copy(
-                                                    isRunning = false,
-                                                    accumulatedMillis = s.currentElapsedMillis(nowMillis)
-                                                )
-                                            } else s
+                                        runningSubject != null -> {
+                                            val nowMillis = System.currentTimeMillis()
+                                            val updated = StudyTimerState.subjects.map { s ->
+                                                if (s.id == runningSubject.id) {
+                                                    s.copy(
+                                                        isRunning = false,
+                                                        accumulatedMillis = s.currentElapsedMillis(nowMillis)
+                                                    )
+                                                } else s
+                                            }
+                                            StudyTimerState.persist(context, updated)
                                         }
-                                        StudyTimerState.persist(context, updated)
                                     }
                                 }
-                            })
+                            )
                         }
                 )
                 Spacer(Modifier.width(14.dp))
+                var closePressed by remember { mutableStateOf(false) }
+                val closeScale by animateFloatAsState(
+                    targetValue = if (closePressed) 0.85f else 1f,
+                    animationSpec = tween(120),
+                    label = "floatingPopupCloseScale"
+                )
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "close",
                     tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier
                         .size(22.dp)
-                        .pointerInput(Unit) { detectTapGestures(onTap = { onClose() }) }
+                        .graphicsLayer { scaleX = closeScale; scaleY = closeScale }
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    closePressed = true
+                                    tryAwaitRelease()
+                                    closePressed = false
+                                },
+                                onTap = { onClose() }
+                            )
+                        }
                 )
             }
         }

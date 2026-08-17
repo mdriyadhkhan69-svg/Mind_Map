@@ -51,6 +51,8 @@ import com.example.mindmap.ui.viewmodel.CalendarViewModel
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 /* ---------------- style + settings persistence ---------------- */
 
 private data class CalendarStyle(
@@ -159,8 +161,7 @@ fun CalendarHomeDialog(
     var showSettings by remember { mutableStateOf(false) }
     var activeTab by remember { mutableStateOf("calendar") }
     var actionForDate by remember { mutableStateOf<String?>(null) }
-    var addTextForDate by remember { mutableStateOf<String?>(null) }
-    var addTimerForDate by remember { mutableStateOf<String?>(null) }
+    var selectedDateKey by remember { mutableStateOf<String?>(null) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(Unit) {
@@ -216,7 +217,9 @@ fun CalendarHomeDialog(
                         textColor = textColor,
                         accent = accent,
                         resetSignal = calendarResetSignal,
-                        onDoubleTapDate = { dateKey -> actionForDate = dateKey }
+                        selectedDateKey = selectedDateKey,
+                        onTapDate = { dateKey -> selectedDateKey = dateKey },
+                        onTripleTapDate = { dateKey -> actionForDate = dateKey }
                     )
                 } else {
                     CalendarUpcomingList(
@@ -237,8 +240,14 @@ fun CalendarHomeDialog(
             dateKey = dateKey,
             existing = existing,
             onDismiss = { actionForDate = null },
-            onAddText = { actionForDate = null; addTextForDate = dateKey },
-            onAddTimer = { actionForDate = null; addTimerForDate = dateKey },
+            onSaveOccasion = { newText ->
+                val base = existing ?: CalendarEventEntity(dateKey = dateKey)
+                persistEvent(base.copy(text = newText))
+            },
+            onSaveTimer = { hour, minute ->
+                val base = existing ?: CalendarEventEntity(dateKey = dateKey)
+                persistEvent(base.copy(hasTimer = true, timerHour = hour, timerMinute = minute))
+            },
             onToggleComplete = {
                 val base = existing ?: CalendarEventEntity(dateKey = dateKey)
                 persistEvent(base.copy(isCompleted = !base.isCompleted))
@@ -253,49 +262,6 @@ fun CalendarHomeDialog(
             }
         )
     }
-
-    addTextForDate?.let { dateKey ->
-        val existing = eventsByDate[dateKey]
-        StyledInputDialog(
-            title = "Add Text - $dateKey",
-            initialValue = existing?.text.orEmpty(),
-            onDismiss = { addTextForDate = null }
-        ) { newText ->
-            val base = existing ?: CalendarEventEntity(dateKey = dateKey)
-            persistEvent(base.copy(text = newText))
-            addTextForDate = null
-        }
-    }
-
-    addTimerForDate?.let { dateKey ->
-        val existing = eventsByDate[dateKey]
-        CalendarTimerDialog(
-            dateKey = dateKey,
-            initialHour = existing?.timerHour?.takeIf { it >= 0 } ?: 9,
-            initialMinute = existing?.timerMinute?.takeIf { it >= 0 } ?: 0,
-            needsExactAlarmPermission = !canScheduleExactAlarms(context),
-            onRequestExactAlarmPermission = {
-                runCatching {
-                    context.startActivity(
-                        Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
-                    )
-                }
-            },
-            onDismiss = { addTimerForDate = null },
-            onSave = { hour, minute ->
-                val base = existing ?: CalendarEventEntity(dateKey = dateKey)
-                persistEvent(base.copy(hasTimer = true, timerHour = hour, timerMinute = minute))
-                addTimerForDate = null
-            },
-            onRemoveTimer = existing?.takeIf { it.hasTimer }?.let { ev ->
-                {
-                    persistEvent(ev.copy(hasTimer = false, timerHour = -1, timerMinute = -1))
-                    addTimerForDate = null
-                }
-            }
-        )
-    }
-
     if (showSettings) {
         CalendarSettingsDialog(
             style = style,
@@ -314,7 +280,9 @@ private fun CalendarMonthPager(
     textColor: Color,
     accent: Color,
     resetSignal: Int,
-    onDoubleTapDate: (String) -> Unit
+    selectedDateKey: String?,
+    onTapDate: (String) -> Unit,
+    onTripleTapDate: (String) -> Unit
 ) {
     val initialPage = remember { monthIndexForToday() }
     val pagerState = rememberPagerState(initialPage = initialPage) { CAL_TOTAL_MONTHS }
@@ -353,11 +321,13 @@ private fun CalendarMonthPager(
                                     CalendarDateCell(
                                         day = cell.day,
                                         isToday = cell.dateKey == today,
+                                        isSelected = cell.dateKey == selectedDateKey,
                                         event = eventsByDate[cell.dateKey],
                                         cardColor = cardColor,
                                         textColor = textColor,
                                         accent = accent,
-                                        onDoubleTap = { onDoubleTapDate(cell.dateKey) }
+                                        onTap = { onTapDate(cell.dateKey) },
+                                        onTripleTap = { onTripleTapDate(cell.dateKey) }
                                     )
                                 }
                             }
@@ -373,21 +343,43 @@ private fun CalendarMonthPager(
 private fun CalendarDateCell(
     day: Int,
     isToday: Boolean,
+    isSelected: Boolean,
     event: CalendarEventEntity?,
     cardColor: Color,
     textColor: Color,
     accent: Color,
-    onDoubleTap: () -> Unit
+    onTap: () -> Unit,
+    onTripleTap: () -> Unit
 ) {
     val hasContent = event != null && (event.text.isNotBlank() || event.hasTimer)
+    val selectionBlue = Color(0xFF3B82F6)
+    val tapScope = rememberCoroutineScope()
+    var tapCount by remember { mutableStateOf(0) }
+    var tapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(cardColor.copy(alpha = if (isToday) 1f else 0.7f))
-            .border(if (isToday) 2.dp else 1.dp, if (isToday) accent else textColor.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-            .pointerInput(day) { detectTapGestures(onDoubleTap = { onDoubleTap() }) }
+            .border(
+                width = if (isToday || isSelected) 2.dp else 1.dp,
+                color = if (isToday) accent else if (isSelected) selectionBlue else textColor.copy(alpha = 0.08f),
+                shape = RoundedCornerShape(12.dp)
+            )
+            .pointerInput(day) {
+                detectTapGestures(
+                    onTap = {
+                        tapCount += 1
+                        tapJob?.cancel()
+                        tapJob = tapScope.launch {
+                            delay(280)
+                            if (tapCount >= 3) onTripleTap() else onTap()
+                            tapCount = 0
+                        }
+                    }
+                )
+            }
             .padding(6.dp)
     ) {
         Column {
@@ -466,13 +458,19 @@ private fun CalendarDateOptionsDialog(
     dateKey: String,
     existing: CalendarEventEntity?,
     onDismiss: () -> Unit,
-    onAddText: () -> Unit,
-    onAddTimer: () -> Unit,
+    onSaveOccasion: (String) -> Unit,
+    onSaveTimer: (Int, Int) -> Unit,
     onToggleComplete: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
+    var panelMode by remember(dateKey) { mutableStateOf("options") }
+    var occasionText by remember(dateKey) { mutableStateOf(existing?.text.orEmpty()) }
+    val existingHour24 = existing?.timerHour?.takeIf { it >= 0 } ?: 9
+    var timerHourText by remember(dateKey) { mutableStateOf((if (existingHour24 % 12 == 0) 12 else existingHour24 % 12).toString()) }
+    var timerMinuteText by remember(dateKey) { mutableStateOf((existing?.timerMinute?.takeIf { it >= 0 } ?: 0).toString()) }
+    var timerIsPm by remember(dateKey) { mutableStateOf(existingHour24 >= 12) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(
@@ -492,19 +490,103 @@ private fun CalendarDateOptionsDialog(
                     contentColor = SoftNeutral,
                     shadowElevation = 10.dp,
                     modifier = Modifier
-                        .widthIn(min = 200.dp)
+                        .widthIn(min = 220.dp, max = 260.dp)
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text(dateKey, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SoftNeutral)
-                        Spacer(Modifier.height(6.dp))
-                        TextButton(onClick = onAddText, modifier = Modifier.fillMaxWidth()) { Text("Add Text", color = SoftNeutral) }
-                        TextButton(onClick = onAddTimer, modifier = Modifier.fillMaxWidth()) { Text("Add Timer", color = SoftNeutral) }
-                        TextButton(onClick = onToggleComplete, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete", color = SoftNeutral)
-                        }
-                        if (onDelete != null) {
-                            TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete", color = Color(0xFFFF6E6E)) }
+                        Spacer(Modifier.height(8.dp))
+                        when (panelMode) {
+                            "occasion" -> {
+                                OutlinedTextField(
+                                    value = occasionText,
+                                    onValueChange = { occasionText = it },
+                                    label = { Text("Occasion") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = { panelMode = "options" }) { Text("Cancel", color = Color.LightGray) }
+                                    TextButton(onClick = {
+                                        onSaveOccasion(occasionText)
+                                        panelMode = "options"
+                                    }) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
+                                }
+                            }
+                            "timer" -> {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = timerHourText,
+                                        onValueChange = { timerHourText = it.filter(Char::isDigit).take(2) },
+                                        label = { Text("Hour") },
+                                        singleLine = true,
+                                        modifier = Modifier.width(64.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = timerMinuteText,
+                                        onValueChange = { timerMinuteText = it.filter(Char::isDigit).take(2) },
+                                        label = { Text("Min") },
+                                        singleLine = true,
+                                        modifier = Modifier.width(64.dp)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Color.White.copy(alpha = 0.08f))
+                                            .pointerInput("calendar-ampm-toggle") {
+                                                detectTapGestures(onTap = { timerIsPm = !timerIsPm })
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 12.dp)
+                                    ) {
+                                        Text(if (timerIsPm) "PM" else "AM", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = { panelMode = "options" }) { Text("Cancel", color = Color.LightGray) }
+                                    TextButton(onClick = {
+                                        val hour12 = (timerHourText.toIntOrNull() ?: 12).coerceIn(1, 12)
+                                        val minute = (timerMinuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
+                                        val hour24 = when {
+                                            timerIsPm && hour12 != 12 -> hour12 + 12
+                                            !timerIsPm && hour12 == 12 -> 0
+                                            else -> hour12
+                                        }
+                                        onSaveTimer(hour24, minute)
+                                        panelMode = "options"
+                                    }) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
+                                }
+                            }
+                            else -> {
+                                if (existing?.text?.isNotBlank() == true) {
+                                    Text(existing.text, color = SoftNeutral, fontSize = 14.sp, modifier = Modifier.padding(bottom = 6.dp))
+                                } else {
+                                    TextButton(onClick = { panelMode = "occasion" }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("Add Occasion +", color = SoftNeutral)
+                                    }
+                                }
+                                if (existing?.hasTimer == true) {
+                                    Text(
+                                        "%02d:%02d".format(existing.timerHour, existing.timerMinute),
+                                        color = Color(0xFF64FFDA),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(bottom = 6.dp)
+                                    )
+                                } else {
+                                    TextButton(onClick = { panelMode = "timer" }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("Add Timer +", color = SoftNeutral)
+                                    }
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                TextButton(onClick = onToggleComplete, modifier = Modifier.fillMaxWidth()) {
+                                    Text(if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete", color = SoftNeutral)
+                                }
+                                if (onDelete != null) {
+                                    TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete", color = Color(0xFFFF6E6E)) }
+                                }
+                            }
                         }
                     }
                 }
