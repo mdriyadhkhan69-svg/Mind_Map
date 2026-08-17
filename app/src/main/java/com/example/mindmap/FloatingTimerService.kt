@@ -11,7 +11,9 @@ import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -35,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,7 +112,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
         if (view.width <= 0) return
         val density = resources.displayMetrics.density
         val edgeThresholdPx = (20 * density).roundToInt()
-        val safeInsetPx = (44 * density).roundToInt()
+        val safeInsetPx = (28 * density).roundToInt()
         val bounds = screenBounds()
         val maxX = (bounds.x - view.width).coerceAtLeast(0)
         val targetX = when {
@@ -190,7 +193,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
 
     private fun pauseActiveTimer() {
         if (QuickTimerState.isRunning) {
-            QuickTimerState.pause()
+            QuickTimerState.pause(this)
         }
         StudyTimerState.subjects.firstOrNull { it.isRunning }?.let { running ->
             val now = System.currentTimeMillis()
@@ -248,6 +251,9 @@ private fun FloatingTimerPopupContent(
     val quickRunning = QuickTimerState.isRunning
     val quickActive = QuickTimerState.hasStarted
     val runningSubject = StudyTimerState.subjects.firstOrNull { it.isRunning }
+    val currentQuickRunning by rememberUpdatedState(quickRunning)
+    val currentQuickActive by rememberUpdatedState(quickActive)
+    val currentRunningSubject by rememberUpdatedState(runningSubject)
     val timeUp = QuickTimerState.timeUp
     val strikeActive = StudyTimerState.pendingCelebration != null
     val currentSection = if (quickActive) "quick" else if (runningSubject != null) "study" else "quick"
@@ -350,17 +356,25 @@ private fun FloatingTimerPopupContent(
                 val isRunning = if (quickRunning) QuickTimerState.isRunning else runningSubject?.isRunning == true
                 var playPausePressed by remember { mutableStateOf(false) }
                 val playPauseScale by animateFloatAsState(
-                    targetValue = if (playPausePressed) 0.85f else 1f,
-                    animationSpec = tween(120),
+                    targetValue = if (playPausePressed) 0.86f else 1f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
                     label = "floatingPopupPlayPauseScale"
+                )
+                val playPauseRippleAlpha by animateFloatAsState(
+                    targetValue = if (playPausePressed) 0.28f else 0f,
+                    animationSpec = tween(if (playPausePressed) 80 else 220),
+                    label = "floatingPopupPlayPauseRipple"
                 )
                 Icon(
                     imageVector = if (isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = "toggle",
                     tint = Color(0xFF64FFDA),
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(26.dp)
                         .graphicsLayer { scaleX = playPauseScale; scaleY = playPauseScale }
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFF64FFDA).copy(alpha = playPauseRippleAlpha))
+                        .padding(2.dp)
                         .pointerInput(Unit) {
                             detectTapGestures(
                                 onPress = {
@@ -369,18 +383,17 @@ private fun FloatingTimerPopupContent(
                                     playPausePressed = false
                                 },
                                 onTap = {
+                                    val tappedRunningSubject = currentRunningSubject
                                     when {
-                                        quickRunning || (QuickTimerState.hasStarted && runningSubject == null) -> {
+                                        currentQuickRunning || (currentQuickActive && tappedRunningSubject == null) -> {
                                             if (QuickTimerState.isRunning) {
-                                                QuickTimerState.pause()
+                                                QuickTimerState.pause(context)
                                             } else {
-                                                QuickTimerState.isRunning = true
-                                                QuickTimerState.startTimestamp = System.currentTimeMillis() -
-                                                        (if (QuickTimerState.mode == "stopwatch") QuickTimerState.elapsedMillis
-                                                        else QuickTimerState.countdownTotalMillis - QuickTimerState.remainingMillis)
+                                                QuickTimerState.resume()
                                             }
                                         }
-                                        runningSubject != null -> {
+                                        tappedRunningSubject != null -> {
+                                            val runningSubject = tappedRunningSubject
                                             val nowMillis = System.currentTimeMillis()
                                             val updated = StudyTimerState.subjects.map { s ->
                                                 if (s.id == runningSubject.id) {

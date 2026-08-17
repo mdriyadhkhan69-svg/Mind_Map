@@ -373,8 +373,8 @@ private fun CalendarDateCell(
                         tapCount += 1
                         tapJob?.cancel()
                         tapJob = tapScope.launch {
-                            delay(280)
-                            if (tapCount >= 3) onTripleTap() else onTap()
+                            delay(220)
+                            if (tapCount >= 2) onTripleTap() else onTap()
                             tapCount = 0
                         }
                     }

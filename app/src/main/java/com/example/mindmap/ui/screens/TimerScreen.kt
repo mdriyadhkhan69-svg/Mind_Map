@@ -1635,6 +1635,7 @@ fun TimerHomeDialog(
     onNavigateToCalendar: () -> Unit
 ) {
     val context = LocalContext.current
+    LaunchedEffect(Unit) { QuickTimerState.ensureLoaded(context) }
     var is24Hour by remember { mutableStateOf(loadIs24Hour(context)) }
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
@@ -2004,6 +2005,29 @@ private fun TimerSettingsDialog(
 
 /* ---------------- Quick stopwatch / countdown ---------------- */
 
+private const val QUICK_TIMER_PREFS = "quick_timer_state"
+
+private fun saveQuickTimerStateToPrefs(context: Context) {
+    context.getSharedPreferences(QUICK_TIMER_PREFS, Context.MODE_PRIVATE).edit()
+        .putString("mode", QuickTimerState.mode)
+        .putLong("elapsed", QuickTimerState.elapsedMillis)
+        .putLong("countdown_total", QuickTimerState.countdownTotalMillis)
+        .putLong("remaining", QuickTimerState.remainingMillis)
+        .putBoolean("has_started", QuickTimerState.hasStarted)
+        .apply()
+}
+
+private fun loadQuickTimerStateFromPrefs(context: Context) {
+    val prefs = context.getSharedPreferences(QUICK_TIMER_PREFS, Context.MODE_PRIVATE)
+    if (!prefs.contains("has_started")) return
+    QuickTimerState.mode = prefs.getString("mode", "stopwatch") ?: "stopwatch"
+    QuickTimerState.elapsedMillis = prefs.getLong("elapsed", 0L)
+    QuickTimerState.countdownTotalMillis = prefs.getLong("countdown_total", 5 * 60_000L)
+    QuickTimerState.remainingMillis = prefs.getLong("remaining", QuickTimerState.countdownTotalMillis)
+    QuickTimerState.hasStarted = prefs.getBoolean("has_started", false)
+    QuickTimerState.isRunning = false
+}
+
 internal object QuickTimerState {
     var mode by mutableStateOf("stopwatch")
     var isRunning by mutableStateOf(false)
@@ -2013,23 +2037,44 @@ internal object QuickTimerState {
     var startTimestamp by mutableStateOf(0L)
     var hasStarted by mutableStateOf(false)
     var timeUp by mutableStateOf(false)
+    private var stateLoaded = false
 
-    fun pause() {
-        if (!isRunning) return
-        val now = System.currentTimeMillis()
-        if (mode == "stopwatch") {
-            elapsedMillis = now - startTimestamp
-        } else {
-            val spent = now - startTimestamp
-            remainingMillis = (countdownTotalMillis - spent).coerceAtLeast(0L)
+    // App শুরুতে একবার persisted state ফিরিয়ে আনে — reset নয়, আগের paused time
+    fun ensureLoaded(context: Context) {
+        if (!stateLoaded) {
+            loadQuickTimerStateFromPrefs(context)
+            stateLoaded = true
         }
-        isRunning = false
+    }
+
+    // পজ করে exact সময় preserve করে এবং persist করে — reset করে না
+    fun pause(context: Context? = null) {
+        if (isRunning) {
+            val now = System.currentTimeMillis()
+            if (mode == "stopwatch") {
+                elapsedMillis = now - startTimestamp
+            } else {
+                val spent = now - startTimestamp
+                remainingMillis = (countdownTotalMillis - spent).coerceAtLeast(0L)
+            }
+            isRunning = false
+        }
+        context?.let { saveQuickTimerStateToPrefs(it) }
+    }
+
+    // যেখান থেকে pause হয়েছিল ঠিক সেখান থেকেই resume করে — elapsed/remaining touch করে না
+    fun resume() {
+        if (isRunning) return
+        startTimestamp = System.currentTimeMillis() -
+                (if (mode == "stopwatch") elapsedMillis else countdownTotalMillis - remainingMillis)
+        isRunning = true
     }
 }
 
 @Composable
 private fun QuickTimerDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
+    LaunchedEffect(Unit) { QuickTimerState.ensureLoaded(context) }
     var mode by QuickTimerState::mode
     var isRunning by QuickTimerState::isRunning
     var elapsedMillis by QuickTimerState::elapsedMillis
@@ -2080,13 +2125,13 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
         DisposableEffect(Unit) {
-            onDispose { if (!FloatingPopupSettingsState.enabled) QuickTimerState.pause() }
+            onDispose { if (!FloatingPopupSettingsState.enabled) QuickTimerState.pause(context) }
         }
         val quickLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
         DisposableEffect(quickLifecycleOwner) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !FloatingPopupSettingsState.enabled) {
-                    QuickTimerState.pause()
+                    QuickTimerState.pause(context)
                 }
             }
             quickLifecycleOwner.lifecycle.addObserver(observer)

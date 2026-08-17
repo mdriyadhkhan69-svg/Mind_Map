@@ -406,6 +406,9 @@ fun MindMapApp(
         } else {
             com.example.mindmap.FloatingTimerService.stop(context)
         }
+        if (!isForeground && !FloatingPopupSettingsState.enabled && QuickTimerState.isRunning) {
+            QuickTimerState.pause(context)
+        }
     }
     if (activeHome == "pdf_library") {
         PdfLibraryHomeDialog(
