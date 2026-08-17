@@ -176,6 +176,30 @@ internal object FloatingPopupSettingsState {
     }
 }
 
+private fun loadFloatingPopupLabelEnabled(context: Context): Boolean =
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).getBoolean("floating_popup_label_enabled", false)
+
+private fun saveFloatingPopupLabelEnabled(context: Context, value: Boolean) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).edit().putBoolean("floating_popup_label_enabled", value).apply()
+}
+
+internal object FloatingPopupLabelSettingsState {
+    var enabled by mutableStateOf(false)
+    private var loaded = false
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            enabled = loadFloatingPopupLabelEnabled(context)
+            loaded = true
+        }
+    }
+
+    fun update(context: Context, value: Boolean) {
+        enabled = value
+        saveFloatingPopupLabelEnabled(context, value)
+    }
+}
+
 private fun loadStudySubjects(context: Context): List<StudySubject> = runCatching {
     val raw = context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).getString("subjects", "[]") ?: "[]"
     val array = org.json.JSONArray(raw)
@@ -1616,6 +1640,10 @@ fun TimerHomeDialog(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
     var showQuickTimer by rememberSaveable { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        TimerForegroundState.activeScreen = "quick"
+        onDispose { if (TimerForegroundState.activeScreen == "quick") TimerForegroundState.activeScreen = null }
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
@@ -1664,12 +1692,6 @@ fun TimerHomeDialog(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput("timer-home-brightness") {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            applyHomeBrightness(homeBrightnessLevel - dragAmount.y / 600f)
-                        }
-                    }
                     .pointerInput("timer-home-tap") {
                         detectTapGestures(onTap = { controlsVisible = !controlsVisible })
                     }
@@ -1697,8 +1719,21 @@ fun TimerHomeDialog(
                         .align(Alignment.Center)
                         .fillMaxWidth()
                         .padding(end = animatedEndPadding, bottom = animatedBottomPadding)
+                        .pointerInput("timer-home-brightness") {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                applyHomeBrightness(homeBrightnessLevel - dragAmount.y / 600f)
+                            }
+                        }
                 ) {
                     LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape, boxSettings = activeClockBoxSettings)
+                }
+
+                LaunchedEffect(TimerNavigationState.requestOpenSection.value) {
+                    when (TimerNavigationState.requestOpenSection.value) {
+                        "quick" -> { showQuickTimer = true; TimerNavigationState.requestOpenSection.value = null }
+                        "study" -> { showStudy = true; TimerNavigationState.requestOpenSection.value = null }
+                    }
                 }
 
                 AnimatedVisibility(
@@ -1782,7 +1817,9 @@ private fun TimerSettingsDialog(
     StrikeSettingsState.ensureLoaded(context)
     DigitStyleState.ensureLoaded(context)
     FloatingPopupSettingsState.ensureLoaded(context)
+    FloatingPopupLabelSettingsState.ensureLoaded(context)
     var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
+    var floatingPopupLabelEnabled by remember { mutableStateOf(FloatingPopupLabelSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
@@ -1830,6 +1867,20 @@ private fun TimerSettingsDialog(
                             }
                             floatingPopupEnabled = value
                             FloatingPopupSettingsState.update(context, value)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Show timer type in popup", fontSize = 15.sp)
+                    }
+                    Switch(
+                        checked = floatingPopupLabelEnabled,
+                        onCheckedChange = { value ->
+                            floatingPopupLabelEnabled = value
+                            FloatingPopupLabelSettingsState.update(context, value)
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )
@@ -2077,7 +2128,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(mode, isRunning) {
-                            detectDragGestures(
+                            detectHorizontalDragGestures(
                                 onDragEnd = {
                                     if (kotlin.math.abs(horizontalDragAccum) > swipeThresholdPx && !isRunning) {
                                         mode = if (horizontalDragAccum < 0) "countdown" else "stopwatch"
@@ -2089,11 +2140,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                 onDragCancel = { horizontalDragAccum = 0f }
                             ) { change, dragAmount ->
                                 change.consume()
-                                if (kotlin.math.abs(dragAmount.x) > kotlin.math.abs(dragAmount.y)) {
-                                    horizontalDragAccum += dragAmount.x
-                                } else {
-                                    applyBrightness(brightnessLevel - dragAmount.y / 600f)
-                                }
+                                horizontalDragAccum += dragAmount
                             }
                         }
                         .pointerInput("quick-timer-tap") {
@@ -2148,11 +2195,19 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         label = "quickTimerTopPadding"
                     )
                     Box(
-                        modifier = Modifier.fillMaxSize().padding(
-                            end = animatedEndPadding,
-                            top = animatedQuickTopPadding,
-                            bottom = animatedQuickBottomPadding
-                        ),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                end = animatedEndPadding,
+                                top = animatedQuickTopPadding,
+                                bottom = animatedQuickBottomPadding
+                            )
+                            .pointerInput("quick-timer-brightness") {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    applyBrightness(brightnessLevel - dragAmount.y / 600f)
+                                }
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         SplitTimeDisplay(
@@ -2454,15 +2509,21 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
     }
 
     fun toggleRunning(subject: StudySubject) {
+        val now = System.currentTimeMillis()
         val updated = subjects.map { s ->
             when {
                 s.id == subject.id && s.isRunning -> s.copy(
                     isRunning = false,
-                    accumulatedMillis = s.currentElapsedMillis(System.currentTimeMillis())
+                    accumulatedMillis = s.currentElapsedMillis(now)
                 )
                 s.id == subject.id && !s.isRunning -> s.copy(
                     isRunning = true,
-                    startedAtMillis = System.currentTimeMillis()
+                    startedAtMillis = now
+                )
+                // ekbare shudhu ekta Study Timer i active thakbe — onno chalu subject-ke pause kore dao
+                s.isRunning -> s.copy(
+                    isRunning = false,
+                    accumulatedMillis = s.currentElapsedMillis(now)
                 )
                 else -> s
             }
@@ -2470,6 +2531,10 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
         persist(updated)
     }
 
+    DisposableEffect(Unit) {
+        TimerForegroundState.activeScreen = "study"
+        onDispose { if (TimerForegroundState.activeScreen == "study") TimerForegroundState.activeScreen = null }
+    }
     var studyControlsVisible by rememberSaveable { mutableStateOf(true) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(studyControlsVisible)

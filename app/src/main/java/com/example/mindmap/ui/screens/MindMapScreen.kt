@@ -383,6 +383,30 @@ fun MindMapApp(
             com.example.mindmap.TimerNavigationState.requestOpenTimer.value = false
         }
     }
+
+    LaunchedEffect(
+        FloatingPopupSettingsState.enabled,
+        QuickTimerState.hasStarted,
+        StudyTimerState.subjects,
+        TimerForegroundState.activeScreen,
+        com.example.mindmap.AppForegroundState.isForeground.value
+    ) {
+        val quickActive = QuickTimerState.hasStarted
+        val studyActive = StudyTimerState.subjects.any { it.isRunning }
+        val relevantScreen = when {
+            quickActive -> "quick"
+            studyActive -> "study"
+            else -> null
+        }
+        val isForeground = com.example.mindmap.AppForegroundState.isForeground.value
+        val viewingOwnScreen = isForeground && relevantScreen != null && TimerForegroundState.activeScreen == relevantScreen
+        val shouldShowPopup = FloatingPopupSettingsState.enabled && (quickActive || studyActive) && !viewingOwnScreen
+        if (shouldShowPopup) {
+            com.example.mindmap.FloatingTimerService.start(context)
+        } else {
+            com.example.mindmap.FloatingTimerService.stop(context)
+        }
+    }
     if (activeHome == "pdf_library") {
         PdfLibraryHomeDialog(
             onDismiss = { openHome("productivity") },

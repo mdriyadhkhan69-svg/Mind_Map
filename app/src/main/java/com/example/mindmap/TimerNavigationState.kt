@@ -6,4 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 // Floating popup double-tap করলে main app খুলে সরাসরি Timer পেজে নিয়ে যাওয়ার জন্য
 object TimerNavigationState {
     val requestOpenTimer: MutableState<Boolean> = mutableStateOf(false)
+    // "quick" (Countdown/Stopwatch) অথবা "study" — কোন sub-screen খুলতে হবে
+    val requestOpenSection: MutableState<String?> = mutableStateOf(null)
 }

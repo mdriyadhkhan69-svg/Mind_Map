@@ -54,6 +54,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.mindmap.ui.screens.QuickTimerState
 import com.example.mindmap.ui.screens.StudyTimerState
+import com.example.mindmap.ui.screens.FloatingPopupLabelSettingsState
 import com.example.mindmap.ui.screens.currentElapsedMillis
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -114,22 +115,38 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     p.y = (p.y + dy).roundToInt()
                     runCatching { windowManager?.updateViewLayout(view, p) }
                 },
-                onClose = { stopSelf() },
-                onOpenApp = { openApp() }
+                onClose = {
+                    pauseActiveTimer()
+                    stopSelf()
+                },
+                onOpenApp = { section -> openApp(section) }
             )
         }
         composeView = view
         runCatching { wm.addView(view, params) }
     }
 
-    private fun openApp() {
+    private fun pauseActiveTimer() {
+        if (QuickTimerState.isRunning) {
+            QuickTimerState.pause()
+        }
+        StudyTimerState.subjects.firstOrNull { it.isRunning }?.let { running ->
+            val now = System.currentTimeMillis()
+            val updated = StudyTimerState.subjects.map { s ->
+                if (s.id == running.id) s.copy(isRunning = false, accumulatedMillis = s.currentElapsedMillis(now)) else s
+            }
+            StudyTimerState.persist(this, updated)
+        }
+    }
+
+    private fun openApp(section: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             putExtra("open_timer", true)
+            putExtra("open_timer_section", section)
         }
         startActivity(intent)
     }
-
     override fun onDestroy() {
         composeView?.let { view -> runCatching { windowManager?.removeView(view) } }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
@@ -154,7 +171,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
 private fun FloatingTimerPopupContent(
     onPositionChange: (Float, Float) -> Unit,
     onClose: () -> Unit,
-    onOpenApp: () -> Unit
+    onOpenApp: (String) -> Unit
 ) {
     val context = LocalContext.current
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -166,16 +183,11 @@ private fun FloatingTimerPopupContent(
     }
 
     val quickRunning = QuickTimerState.isRunning
+    val quickActive = QuickTimerState.hasStarted
     val runningSubject = StudyTimerState.subjects.firstOrNull { it.isRunning }
     val timeUp = QuickTimerState.timeUp
     val strikeActive = StudyTimerState.pendingCelebration != null
-
-    // Nothing left to show → auto-dismiss so the popup never sits orphaned.
-    LaunchedEffect(quickRunning, runningSubject, timeUp) {
-        if (!quickRunning && runningSubject == null && !timeUp) {
-            onClose()
-        }
-    }
+    val currentSection = if (quickActive) "quick" else if (runningSubject != null) "study" else "quick"
 
     val label: String
     val timeText: String
@@ -184,11 +196,11 @@ private fun FloatingTimerPopupContent(
             label = "COUNTDOWN"
             timeText = ""
         }
-        quickRunning -> {
+        quickActive -> {
             val millis = if (QuickTimerState.mode == "stopwatch") {
-                (now - QuickTimerState.startTimestamp).coerceAtLeast(0L)
+                if (quickRunning) (now - QuickTimerState.startTimestamp).coerceAtLeast(0L) else QuickTimerState.elapsedMillis
             } else {
-                (QuickTimerState.countdownTotalMillis - (now - QuickTimerState.startTimestamp)).coerceAtLeast(0L)
+                if (quickRunning) (QuickTimerState.countdownTotalMillis - (now - QuickTimerState.startTimestamp)).coerceAtLeast(0L) else QuickTimerState.remainingMillis
             }
             val totalSeconds = millis / 1000
             val h = totalSeconds / 3600
@@ -228,17 +240,26 @@ private fun FloatingTimerPopupContent(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { expanded = !expanded },
-                    onDoubleTap = { onOpenApp() }
+                    onDoubleTap = { onOpenApp(currentSection) }
                 )
             }
             .padding(10.dp)
     ) {
-        Text(
-            text = if (strikeActive) "★ STRIKE" else label,
-            color = if (strikeActive) Color(0xFFFFD700) else Color(0xFF64FFDA),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-        )
+        if (strikeActive) {
+            Text(
+                text = "★",
+                color = Color(0xFFFFD700),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        } else if (FloatingPopupLabelSettingsState.enabled) {
+            Text(
+                text = label,
+                color = Color(0xFF64FFDA),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
         Text(
             text = if (timeUp) "TIME UP" else timeText,
             color = Color.White,

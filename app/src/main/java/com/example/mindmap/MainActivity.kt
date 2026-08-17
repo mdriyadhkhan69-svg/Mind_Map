@@ -78,22 +78,17 @@ class MainActivity : ComponentActivity() {
         handleViewIntent(intent)
     }
 
-    // Home button চাপ দিয়ে/app-switch করে user বেরিয়ে গেলে ডাকা হয় - রোটেশনে ডাকা হয় না
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        val floatingPopupEnabled = com.example.mindmap.ui.screens.FloatingPopupSettingsState.enabled
-        val timerRunning = com.example.mindmap.TimerRunningState.isAnyTimerRunning.value
-        if (floatingPopupEnabled && timerRunning) {
-            com.example.mindmap.FloatingTimerService.start(applicationContext)
-        }
-    }
-
     override fun onResume() {
         super.onResume()
         com.example.mindmap.ui.screens.FloatingPopupSettingsState.ensureLoaded(applicationContext)
-        com.example.mindmap.FloatingTimerService.stop(applicationContext)
+        com.example.mindmap.ui.screens.FloatingPopupLabelSettingsState.ensureLoaded(applicationContext)
+        com.example.mindmap.AppForegroundState.isForeground.value = true
     }
 
+    override fun onStop() {
+        super.onStop()
+        com.example.mindmap.AppForegroundState.isForeground.value = false
+    }
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         com.example.mindmap.PipState.isInPictureInPicture.value = isInPictureInPictureMode
@@ -110,6 +105,9 @@ class MainActivity : ComponentActivity() {
         }
         if (intent?.getBooleanExtra("open_timer", false) == true) {
             com.example.mindmap.TimerNavigationState.requestOpenTimer.value = true
+        }
+        intent?.getStringExtra("open_timer_section")?.let { section ->
+            com.example.mindmap.TimerNavigationState.requestOpenSection.value = section
         }
     }
 }
