@@ -180,7 +180,6 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     runCatching { windowManager?.updateViewLayout(view, p) }
                 },
                 onClose = {
-                    pauseActiveTimer()
                     stopSelf()
                 },
                 onOpenApp = { section -> openApp(section) },

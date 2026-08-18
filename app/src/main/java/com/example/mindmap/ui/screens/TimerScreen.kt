@@ -1658,9 +1658,9 @@ fun TimerHomeDialog(
                 // Timer section (Clock/Stopwatch/Countdown/Study) ছেড়ে গেলেই এই onDispose চলবে,
                 // orientation change এ চলবে না কারণ MainActivity manifest-এ configChanges হ্যান্ডেল করা আছে
                 // এবং এই DisposableEffect এখন শুধু activity key-তে bind, orientation-এ recompose হবে না।
-                if (!FloatingPopupSettingsState.enabled) {
-                    StudyTimerState.pauseAll(context)
-                }
+                // ei jaygay age StudyTimerState.pauseAll() call kora hoto internal navigation e o,
+                // jeta app background na hoyeo Study Timer pause kore dito. Actual background pause
+                // ekhon MindMapApp er global LaunchedEffect theke hoy (AppForegroundState onujayi).
                 activity?.requestedOrientation = previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
         }
@@ -2125,7 +2125,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
         DisposableEffect(Unit) {
-            onDispose { if (!FloatingPopupSettingsState.enabled) QuickTimerState.pause(context) }
+            onDispose {
+                // ei dialog dismiss/navigate hole (background na hoyeo) age forcibly pause kore dito.
+                // ekhon shudhu current state persist kora hocche, running thakle running e i thakbe;
+                // actual background-pause MindMapApp er global lifecycle logic theke hobe.
+                saveQuickTimerStateToPrefs(context)
+            }
         }
         val quickLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
         DisposableEffect(quickLifecycleOwner) {
