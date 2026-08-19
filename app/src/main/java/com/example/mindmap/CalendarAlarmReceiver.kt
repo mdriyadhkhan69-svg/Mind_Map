@@ -17,13 +17,28 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
         val text = rawText.split(OccasionSeparator).map { it.trim() }.filter { it.isNotBlank() }.joinToString(", ")
         val eventId = intent.getLongExtra("event_id", 0L)
 
-        val channelId = "calendar_reminders"
+        val channelId = "calendar_reminders_v2"
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(
-                NotificationChannel(channelId, "Calendar Reminders", NotificationManager.IMPORTANCE_HIGH)
-            )
+            // Sound ekhon AlarmActivity nijei loop kore bajabe, tai notification channel silent —
+            // nahole notification-er short sound + activity-r looping alarm ekshathe baje jabe
+            val channel = NotificationChannel(channelId, "Calendar Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, null)
+            }
+            manager.createNotificationChannel(channel)
         }
+
+        val fullScreenIntent = Intent(context, AlarmActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("event_id", eventId)
+            putExtra("date_key", dateKey)
+            putExtra("text", rawText)
+        }
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            context, eventId.toInt(), fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val openIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -37,9 +52,15 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
             .setContentText(text.ifBlank { "Reminder" })
             .setStyle(NotificationCompat.BigTextStyle().bigText(text.ifBlank { "Reminder" }))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(pendingOpen)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
             .build()
         manager.notify(eventId.toInt(), notification)
+
+        // Phone unlock thaka obosthay onno app khola thakleo full black screen jeno
+        // sathe sathe chole ase, tar jonno directly activity-o start korar chesta
+        runCatching { context.startActivity(fullScreenIntent) }
     }
 }
