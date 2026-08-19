@@ -15,6 +15,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -1642,10 +1645,6 @@ fun TimerHomeDialog(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
     var showQuickTimer by rememberSaveable { mutableStateOf(false) }
-    DisposableEffect(Unit) {
-        TimerForegroundState.activeScreen = "quick"
-        onDispose { if (TimerForegroundState.activeScreen == "quick") TimerForegroundState.activeScreen = null }
-    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
@@ -2075,6 +2074,10 @@ internal object QuickTimerState {
 private fun QuickTimerDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     LaunchedEffect(Unit) { QuickTimerState.ensureLoaded(context) }
+    DisposableEffect(Unit) {
+        TimerForegroundState.activeScreen = "quick"
+        onDispose { if (TimerForegroundState.activeScreen == "quick") TimerForegroundState.activeScreen = null }
+    }
     var mode by QuickTimerState::mode
     var isRunning by QuickTimerState::isRunning
     var elapsedMillis by QuickTimerState::elapsedMillis
@@ -2098,7 +2101,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     }
     LaunchedEffect(isRunning, mode) {
         if (isRunning) {
-            startTimestamp = System.currentTimeMillis() - (if (mode == "stopwatch") elapsedMillis else countdownTotalMillis - remainingMillis)
             while (isRunning) {
                 delay(200)
                 val now = System.currentTimeMillis()
@@ -2230,12 +2232,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             TimerPanelButton(
                                 text = "Stopwatch",
                                 selected = mode == "stopwatch",
-                                onClick = { if (!isRunning) { mode = "stopwatch"; finished = false; hasStarted = false; elapsedMillis = 0L } }
+                                onClick = { if (!isRunning && mode != "stopwatch") { mode = "stopwatch"; finished = false } }
                             )
                             TimerPanelButton(
                                 text = "Countdown",
                                 selected = mode == "countdown",
-                                onClick = { if (!isRunning) { mode = "countdown"; finished = false; hasStarted = false; remainingMillis = countdownTotalMillis } }
+                                onClick = { if (!isRunning && mode != "countdown") { mode = "countdown"; finished = false } }
                             )
                         }
                     }
@@ -2277,16 +2279,36 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                     // Central-only brightness gesture zone: bounded box so a drag
                     // starting near the edges/top/bottom (or over side/bottom
                     // control panels, which are composed after this and stay
-                    // on top) never reaches this handler.
+                    // on top) never reaches this handler. Additionally, only
+                    // vertical-dominant drags are consumed here — a horizontal
+                    // drag (even starting in this zone) is left unconsumed so
+                    // it still reaches the outer stopwatch<->countdown swipe
+                    // detector instead of being eaten as a brightness change.
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .fillMaxWidth(0.6f)
                             .fillMaxHeight(0.5f)
                             .pointerInput("quick-timer-brightness") {
-                                detectDragGestures { change, dragAmount ->
-                                    change.consume()
-                                    applyBrightness(brightnessLevel - dragAmount.y / 600f)
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    var isVertical: Boolean? = null
+                                    var lastPosition = down.position
+                                    val slop = viewConfiguration.touchSlop
+                                    drag(down.id) { change ->
+                                        val total = change.position - down.position
+                                        if (isVertical == null &&
+                                            (kotlin.math.abs(total.x) > slop || kotlin.math.abs(total.y) > slop)
+                                        ) {
+                                            isVertical = kotlin.math.abs(total.y) >= kotlin.math.abs(total.x)
+                                        }
+                                        if (isVertical == true) {
+                                            change.consume()
+                                            val deltaY = change.position.y - lastPosition.y
+                                            applyBrightness(brightnessLevel - deltaY / 600f)
+                                        }
+                                        lastPosition = change.position
+                                    }
                                 }
                             }
                     )
@@ -2328,8 +2350,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         horizontalPadding = 14.dp,
                                         verticalPadding = 10.dp
                                     ) {
-                                        isRunning = !isRunning
-                                        if (isRunning) hasStarted = true
+                                        if (isRunning) {
+                                            QuickTimerState.pause(context)
+                                        } else {
+                                            hasStarted = true
+                                            QuickTimerState.resume()
+                                        }
                                     }
                                     if (hasStarted) {
                                         TimerPanelButton(
@@ -2375,8 +2401,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                     text = if (isRunning) "Pause" else "Start",
                                     modifier = Modifier.padding(bottom = if (hasStarted || showTimeSetPanel) 16.dp else 0.dp)
                                 ) {
-                                    isRunning = !isRunning
-                                    if (isRunning) hasStarted = true
+                                    if (isRunning) {
+                                        QuickTimerState.pause(context)
+                                    } else {
+                                        hasStarted = true
+                                        QuickTimerState.resume()
+                                    }
                                 }
                                 if (hasStarted) {
                                     TimerPanelButton(
