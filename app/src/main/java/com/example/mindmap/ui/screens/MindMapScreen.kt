@@ -387,20 +387,26 @@ fun MindMapApp(
     LaunchedEffect(
         FloatingPopupSettingsState.enabled,
         QuickTimerState.hasStarted,
+        QuickTimerState.isRunning,
         StudyTimerState.subjects,
         TimerForegroundState.activeScreen,
         com.example.mindmap.AppForegroundState.isForeground.value
     ) {
         val quickActive = QuickTimerState.hasStarted
-        val studyActive = StudyTimerState.subjects.any { it.isRunning }
+        val quickRunning = QuickTimerState.isRunning
+        val studyRunning = StudyTimerState.subjects.any { it.isRunning }
+        // Same priority order used by FloatingTimerService to decide what the
+        // popup displays: a running quick timer, then a running study
+        // subject, then a paused-but-started quick timer.
         val relevantScreen = when {
+            quickRunning -> "quick"
+            studyRunning -> "study"
             quickActive -> "quick"
-            studyActive -> "study"
             else -> null
         }
         val isForeground = com.example.mindmap.AppForegroundState.isForeground.value
         val viewingOwnScreen = isForeground && relevantScreen != null && TimerForegroundState.activeScreen == relevantScreen
-        val shouldShowPopup = FloatingPopupSettingsState.enabled && (quickActive || studyActive) && !viewingOwnScreen
+        val shouldShowPopup = FloatingPopupSettingsState.enabled && (quickActive || studyRunning) && !viewingOwnScreen
         if (shouldShowPopup) {
             com.example.mindmap.FloatingTimerService.start(context)
         } else {

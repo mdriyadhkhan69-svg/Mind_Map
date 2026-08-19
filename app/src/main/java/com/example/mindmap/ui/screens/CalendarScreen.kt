@@ -51,8 +51,21 @@ import com.example.mindmap.ui.viewmodel.CalendarViewModel
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+internal const val OccasionSeparator = "\u001E"
+
+internal fun occasionsOf(event: CalendarEventEntity?): List<String> =
+    event?.text.orEmpty().split(OccasionSeparator).map { it.trim() }.filter { it.isNotBlank() }
+
+internal fun joinOccasions(occasions: List<String>): String =
+    occasions.map { it.trim() }.filter { it.isNotBlank() }.joinToString(OccasionSeparator)
+
+internal fun formatOccasionsForDisplay(event: CalendarEventEntity?): String =
+    occasionsOf(event).joinToString(", ")
+
 /* ---------------- style + settings persistence ---------------- */
 
 private data class CalendarStyle(
@@ -240,9 +253,9 @@ fun CalendarHomeDialog(
             dateKey = dateKey,
             existing = existing,
             onDismiss = { actionForDate = null },
-            onSaveOccasion = { newText ->
+            onSaveOccasions = { occasions ->
                 val base = existing ?: CalendarEventEntity(dateKey = dateKey)
-                persistEvent(base.copy(text = newText))
+                persistEvent(base.copy(text = joinOccasions(occasions)))
             },
             onSaveTimer = { hour, minute ->
                 val base = existing ?: CalendarEventEntity(dateKey = dateKey)
@@ -390,8 +403,12 @@ private fun CalendarDateCell(
                 fontWeight = if (isToday) FontWeight.Black else FontWeight.SemiBold
             )
             if (hasContent && event != null) {
-                if (event.text.isNotBlank()) {
-                    Text(event.text, color = textColor.copy(alpha = 0.85f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val cellOccasions = occasionsOf(event)
+                if (cellOccasions.isNotEmpty()) {
+                    Text(
+                        cellOccasions.first() + if (cellOccasions.size > 1) " +${cellOccasions.size - 1}" else "",
+                        color = textColor.copy(alpha = 0.85f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
                 }
                 if (event.hasTimer) {
                     Text("%02d:%02d".format(event.timerHour, event.timerMinute), color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -439,8 +456,9 @@ private fun CalendarUpcomingList(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(event.dateKey, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    if (event.text.isNotBlank()) {
-                        Text(event.text, color = textColor, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val upcomingOccasions = occasionsOf(event)
+                    if (upcomingOccasions.isNotEmpty()) {
+                        Text(upcomingOccasions.joinToString(" • "), color = textColor, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 if (event.hasTimer) {
@@ -458,7 +476,7 @@ private fun CalendarDateOptionsDialog(
     dateKey: String,
     existing: CalendarEventEntity?,
     onDismiss: () -> Unit,
-    onSaveOccasion: (String) -> Unit,
+    onSaveOccasions: (List<String>) -> Unit,
     onSaveTimer: (Int, Int) -> Unit,
     onToggleComplete: () -> Unit,
     onDelete: (() -> Unit)?
@@ -466,7 +484,8 @@ private fun CalendarDateOptionsDialog(
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
     var panelMode by remember(dateKey) { mutableStateOf("options") }
-    var occasionText by remember(dateKey) { mutableStateOf(existing?.text.orEmpty()) }
+    val occasionList = remember(dateKey) { mutableStateListOf(*occasionsOf(existing).toTypedArray()) }
+    var newOccasionText by remember(dateKey) { mutableStateOf("") }
     val existingHour24 = existing?.timerHour?.takeIf { it >= 0 } ?: 9
     var timerHourText by remember(dateKey) { mutableStateOf((if (existingHour24 % 12 == 0) 12 else existingHour24 % 12).toString()) }
     var timerMinuteText by remember(dateKey) { mutableStateOf((existing?.timerMinute?.takeIf { it >= 0 } ?: 0).toString()) }
@@ -498,18 +517,65 @@ private fun CalendarDateOptionsDialog(
                         Spacer(Modifier.height(8.dp))
                         when (panelMode) {
                             "occasion" -> {
-                                OutlinedTextField(
-                                    value = occasionText,
-                                    onValueChange = { occasionText = it },
-                                    label = { Text("Occasion") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                Column(modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+                                    occasionList.forEachIndexed { index, occasion ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                occasion,
+                                                color = SoftNeutral,
+                                                fontSize = 14.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Text(
+                                                "✕",
+                                                color = Color(0xFFFF6E6E),
+                                                fontSize = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier
+                                                    .padding(start = 8.dp)
+                                                    .pointerInput("remove-occasion-$index") {
+                                                        detectTapGestures(onTap = { occasionList.removeAt(index) })
+                                                    }
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedTextField(
+                                        value = newOccasionText,
+                                        onValueChange = { newOccasionText = it },
+                                        label = { Text("New occasion") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        "+",
+                                        color = Color(0xFF64FFDA),
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .padding(start = 8.dp)
+                                            .pointerInput("add-occasion") {
+                                                detectTapGestures(onTap = {
+                                                    if (newOccasionText.isNotBlank()) {
+                                                        occasionList.add(newOccasionText.trim())
+                                                        newOccasionText = ""
+                                                    }
+                                                })
+                                            }
+                                    )
+                                }
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                     TextButton(onClick = { panelMode = "options" }) { Text("Cancel", color = Color.LightGray) }
                                     TextButton(onClick = {
-                                        onSaveOccasion(occasionText)
+                                        onSaveOccasions(occasionList.toList())
                                         panelMode = "options"
                                     }) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
                                 }
@@ -559,8 +625,16 @@ private fun CalendarDateOptionsDialog(
                                 }
                             }
                             else -> {
-                                if (existing?.text?.isNotBlank() == true) {
-                                    Text(existing.text, color = SoftNeutral, fontSize = 14.sp, modifier = Modifier.padding(bottom = 6.dp))
+                                if (occasionsOf(existing).isNotEmpty()) {
+                                    Text(
+                                        occasionsOf(existing).joinToString(" • "),
+                                        color = SoftNeutral, fontSize = 14.sp, maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    )
+                                    TextButton(onClick = { panelMode = "occasion" }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("Edit Occasion", color = SoftNeutral)
+                                    }
                                 } else {
                                     TextButton(onClick = { panelMode = "occasion" }, modifier = Modifier.fillMaxWidth()) {
                                         Text("Add Occasion +", color = SoftNeutral)

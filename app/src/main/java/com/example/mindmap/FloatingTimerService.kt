@@ -11,12 +11,20 @@ import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,6 +87,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
     private var windowManager: WindowManager? = null
     private var composeView: ComposeView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+    private var removeTargetView: ComposeView? = null
 
     // Real screen size (portrait/landscape aware, no hardcoded pixels) used to
     // clamp the floating popup so it can never be dragged off-screen.
@@ -142,6 +151,44 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
         showOverlay()
     }
 
+    private fun removeTargetCenter(): Point {
+        val bounds = screenBounds()
+        val bottomMarginPx = (110 * resources.displayMetrics.density).roundToInt()
+        return Point(bounds.x / 2, bounds.y - bottomMarginPx)
+    }
+
+    private fun showRemoveTarget() {
+        if (removeTargetView != null) return
+        val wm = windowManager ?: return
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+        val center = removeTargetCenter()
+        val sizePx = (72 * resources.displayMetrics.density).roundToInt()
+        params.x = center.x - sizePx / 2
+        params.y = center.y - sizePx / 2
+        val view = ComposeView(this)
+        view.setViewTreeLifecycleOwner(this)
+        view.setViewTreeViewModelStoreOwner(this)
+        view.setViewTreeSavedStateRegistryOwner(this)
+        view.setContent { RemoveTargetOverlay() }
+        removeTargetView = view
+        runCatching { wm.addView(view, params) }
+    }
+
+    private fun hideRemoveTarget() {
+        val view = removeTargetView ?: return
+        runCatching { windowManager?.removeView(view) }
+        removeTargetView = null
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     @SuppressLint("ClickableViewAccessibility")
@@ -178,12 +225,32 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     p.x = clamped.x
                     p.y = clamped.y
                     runCatching { windowManager?.updateViewLayout(view, p) }
+                    if (FloatingPopupDragState.isDragging) {
+                        val target = removeTargetCenter()
+                        val popupCenterX = clamped.x + view.width / 2f
+                        val popupCenterY = clamped.y + view.height / 2f
+                        val distance = kotlin.math.hypot(popupCenterX - target.x, popupCenterY - target.y)
+                        val thresholdPx = 64f * resources.displayMetrics.density
+                        FloatingPopupDragState.isNearRemove = distance <= thresholdPx
+                    }
                 },
                 onClose = {
                     stopSelf()
                 },
                 onOpenApp = { section -> openApp(section) },
-                onEdgeNudge = { nudgeAwayFromEdgeIfNeeded() }
+                onEdgeNudge = { nudgeAwayFromEdgeIfNeeded() },
+                onDragStart = {
+                    FloatingPopupDragState.isNearRemove = false
+                    FloatingPopupDragState.isDragging = true
+                    showRemoveTarget()
+                },
+                onDragEnd = {
+                    val shouldRemove = FloatingPopupDragState.isNearRemove
+                    FloatingPopupDragState.isDragging = false
+                    FloatingPopupDragState.isNearRemove = false
+                    hideRemoveTarget()
+                    if (shouldRemove) stopSelf()
+                }
             )
         }
         composeView = view
@@ -213,6 +280,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
     }
     override fun onDestroy() {
         composeView?.let { view -> runCatching { windowManager?.removeView(view) } }
+        hideRemoveTarget()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         super.onDestroy()
     }
@@ -231,12 +299,52 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
     }
 }
 
+private object FloatingPopupDragState {
+    var isDragging by mutableStateOf(false)
+    var isNearRemove by mutableStateOf(false)
+}
+
+@Composable
+private fun RemoveTargetOverlay() {
+    val isDragging = FloatingPopupDragState.isDragging
+    val isNear = FloatingPopupDragState.isNearRemove
+    val scale by animateFloatAsState(
+        targetValue = if (isNear) 1.18f else 1f,
+        animationSpec = tween(160),
+        label = "removeTargetScale"
+    )
+    AnimatedVisibility(
+        visible = isDragging,
+        enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.6f),
+        exit = fadeOut(tween(160)) + scaleOut(tween(160), targetScale = 0.6f)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(CircleShape)
+                .background(if (isNear) Color(0xFFFF3B30) else Color(0xFFFF3B30).copy(alpha = 0.75f))
+                .border(2.dp, Color.White.copy(alpha = if (isNear) 0.95f else 0.6f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Remove timer popup",
+                tint = Color.White,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun FloatingTimerPopupContent(
     onPositionChange: (Float, Float) -> Unit,
     onClose: () -> Unit,
     onOpenApp: (String) -> Unit,
-    onEdgeNudge: () -> Unit
+    onEdgeNudge: () -> Unit,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit
 ) {
     val context = LocalContext.current
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -255,7 +363,16 @@ private fun FloatingTimerPopupContent(
     val currentRunningSubject by rememberUpdatedState(runningSubject)
     val timeUp = QuickTimerState.timeUp
     val strikeActive = StudyTimerState.pendingCelebration != null
-    val currentSection = if (quickActive) "quick" else if (runningSubject != null) "study" else "quick"
+    // Single source of truth: whichever timer the popup currently
+    // represents. Controls below always act on this exact value, so the
+    // popup can never control a different timer than the one it's showing.
+    val currentSection = when {
+        quickRunning -> "quick"
+        runningSubject != null -> "study"
+        quickActive -> "quick"
+        else -> "quick"
+    }
+    val currentSectionState by rememberUpdatedState(currentSection)
 
     val label: String
     val timeText: String
@@ -264,7 +381,7 @@ private fun FloatingTimerPopupContent(
             label = "COUNTDOWN"
             timeText = ""
         }
-        quickActive -> {
+        currentSection == "quick" && quickActive -> {
             val millis = if (QuickTimerState.mode == "stopwatch") {
                 if (quickRunning) (now - QuickTimerState.startTimestamp).coerceAtLeast(0L) else QuickTimerState.elapsedMillis
             } else {
@@ -277,7 +394,7 @@ private fun FloatingTimerPopupContent(
             label = if (QuickTimerState.mode == "stopwatch") "STOPWATCH" else "COUNTDOWN"
             timeText = if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
         }
-        runningSubject != null -> {
+        currentSection == "study" && runningSubject != null -> {
             val elapsed = runningSubject.currentElapsedMillis(now)
             val totalSeconds = elapsed / 1000
             val h = totalSeconds / 3600
@@ -307,7 +424,11 @@ private fun FloatingTimerPopupContent(
             .clip(RoundedCornerShape(16.dp))
             .background(if (timeUp) Color(0xFF7A0E0E) else Color(0xEE171A2B))
             .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
+                detectDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() }
+                ) { change, dragAmount ->
                     change.consume()
                     onPositionChange(dragAmount.x, dragAmount.y)
                 }
@@ -352,7 +473,11 @@ private fun FloatingTimerPopupContent(
         if (expanded && !timeUp) {
             Spacer(Modifier.height(6.dp))
             Row {
-                val isRunning = if (quickRunning) QuickTimerState.isRunning else runningSubject?.isRunning == true
+                val isRunning = when (currentSectionState) {
+                    "quick" -> QuickTimerState.isRunning
+                    "study" -> currentRunningSubject?.isRunning == true
+                    else -> false
+                }
                 var playPausePressed by remember { mutableStateOf(false) }
                 val playPauseScale by animateFloatAsState(
                     targetValue = if (playPausePressed) 0.86f else 1f,
@@ -382,27 +507,27 @@ private fun FloatingTimerPopupContent(
                                     playPausePressed = false
                                 },
                                 onTap = {
-                                    val tappedRunningSubject = currentRunningSubject
-                                    when {
-                                        currentQuickRunning || (currentQuickActive && tappedRunningSubject == null) -> {
+                                    when (currentSectionState) {
+                                        "quick" -> {
                                             if (QuickTimerState.isRunning) {
                                                 QuickTimerState.pause(context)
                                             } else {
                                                 QuickTimerState.resume()
                                             }
                                         }
-                                        tappedRunningSubject != null -> {
-                                            val runningSubject = tappedRunningSubject
-                                            val nowMillis = System.currentTimeMillis()
-                                            val updated = StudyTimerState.subjects.map { s ->
-                                                if (s.id == runningSubject.id) {
-                                                    s.copy(
-                                                        isRunning = false,
-                                                        accumulatedMillis = s.currentElapsedMillis(nowMillis)
-                                                    )
-                                                } else s
+                                        "study" -> {
+                                            currentRunningSubject?.let { runningSubject ->
+                                                val nowMillis = System.currentTimeMillis()
+                                                val updated = StudyTimerState.subjects.map { s ->
+                                                    if (s.id == runningSubject.id) {
+                                                        s.copy(
+                                                            isRunning = false,
+                                                            accumulatedMillis = s.currentElapsedMillis(nowMillis)
+                                                        )
+                                                    } else s
+                                                }
+                                                StudyTimerState.persist(context, updated)
                                             }
-                                            StudyTimerState.persist(context, updated)
                                         }
                                     }
                                 }

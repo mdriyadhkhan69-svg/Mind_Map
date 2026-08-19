@@ -166,7 +166,7 @@ fun ProductivityHomeScreen(
                     ProductivityCard(title = "Calendar", icon = Icons.Default.CalendarMonth, accent = Color(0xFFFFD166), cardColor = effectiveCardColor, onClick = onOpenCalendar) {
                         Text(todayLabel, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(
-                            todayEvent?.text?.takeIf { it.isNotBlank() }
+                            formatOccasionsForDisplay(todayEvent).takeIf { it.isNotBlank() }
                                 ?: if (todayEvent?.hasTimer == true) "Reminder set for today" else "No events today",
                             color = ProdTextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
