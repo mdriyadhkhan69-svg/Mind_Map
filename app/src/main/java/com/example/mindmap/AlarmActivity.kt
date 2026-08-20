@@ -10,6 +10,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -19,8 +20,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -99,7 +105,6 @@ class AlarmActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
-
 @Composable
 private fun AlarmScreen(dateKey: String, occasionText: String, onDismiss: () -> Unit) {
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
@@ -108,32 +113,68 @@ private fun AlarmScreen(dateKey: String, occasionText: String, onDismiss: () -> 
                 modifier = Modifier
                     .align(Alignment.Center)
                     .fillMaxWidth()
-                    .padding(24.dp)
+                    .padding(horizontal = 28.dp)
                     .offset(y = (-72).dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(dateKey, color = Color(0xFF64FFDA), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(16.dp))
+                Text(
+                    dateKey,
+                    color = Color(0xFFEDE6DA),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.6.sp
+                )
+                Spacer(Modifier.height(18.dp))
                 Text(
                     occasionText,
                     color = Color.White,
-                    fontSize = 26.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
+                    lineHeight = 36.sp,
+                    letterSpacing = 0.2.sp,
                     textAlign = TextAlign.Center
                 )
             }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 80.dp)
-                    .size(84.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFFF5252))
-                    .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Stop alarm", tint = Color.White, modifier = Modifier.size(44.dp))
-            }
+            AlarmCloseButton(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp),
+                onDismiss = onDismiss
+            )
         }
+    }
+}
+
+@Composable
+private fun AlarmCloseButton(modifier: Modifier = Modifier, onDismiss: () -> Unit) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.88f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(120),
+        label = "alarmCloseScale"
+    )
+    val backgroundColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (pressed) Color(0xFFFF6B5C) else Color(0xFF2A2A32),
+        animationSpec = androidx.compose.animation.core.tween(140),
+        label = "alarmCloseColor"
+    )
+    Box(
+        modifier = modifier
+            .size(84.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(CircleShape)
+            .background(backgroundColor)
+            .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { onDismiss() }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Default.Close, contentDescription = "Stop alarm", tint = Color.White, modifier = Modifier.size(40.dp))
     }
 }

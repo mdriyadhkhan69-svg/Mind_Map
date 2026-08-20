@@ -16,6 +16,9 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -76,7 +79,10 @@ import com.example.mindmap.ui.screens.FloatingPopupVisibility
 import com.example.mindmap.ui.screens.QuickTimerPopupState
 import com.example.mindmap.ui.screens.StudyTimerPopupState
 import com.example.mindmap.ui.screens.currentElapsedMillis
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
@@ -94,6 +100,70 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
     private var studyComposeView: ComposeView? = null
     private var studyLayoutParams: WindowManager.LayoutParams? = null
     private var removeTargetView: ComposeView? = null
+
+    private fun toggleMerge() {
+        val quickView = quickComposeView
+        val studyView = studyComposeView
+        val quickParams = quickLayoutParams
+        val studyParams = studyLayoutParams
+        if (quickView == null || studyView == null || quickParams == null || studyParams == null) return
+        if (!FloatingPopupVisibility.showQuick || !FloatingPopupVisibility.showStudy) return
+
+        if (!PopupMergeState.isMerged) {
+            // Snap Study directly beneath Quick, same X, zero gap — the two
+            // separate windows read as one combined container.
+            val targetX = quickParams.x
+            val targetY = quickParams.y + quickView.height
+            animateLayoutParam(studyView, studyParams, targetX, targetY) {
+                PopupMergeState.isMerged = true
+            }
+        } else {
+            // Separate back to a small clean offset near where they merged.
+            val targetX = quickParams.x
+            val targetY = quickParams.y + quickView.height + (14 * resources.displayMetrics.density).roundToInt()
+            animateLayoutParam(studyView, studyParams, targetX, targetY) {
+                PopupMergeState.isMerged = false
+            }
+        }
+    }
+
+    private fun animateLayoutParam(
+        view: ComposeView,
+        params: WindowManager.LayoutParams,
+        targetX: Int,
+        targetY: Int,
+        onEnd: () -> Unit
+    ) {
+        val startX = params.x
+        val startY = params.y
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 220
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { animator ->
+                val fraction = animator.animatedValue as Float
+                params.x = (startX + (targetX - startX) * fraction).roundToInt()
+                params.y = (startY + (targetY - startY) * fraction).roundToInt()
+                runCatching { windowManager?.updateViewLayout(view, params) }
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    onEnd()
+                }
+            })
+            start()
+        }
+    }
+
+    private fun reflowMergedIfNeeded() {
+        if (!PopupMergeState.isMerged) return
+        val quickView = quickComposeView ?: return
+        val studyView = studyComposeView ?: return
+        val quickParams = quickLayoutParams ?: return
+        val studyParams = studyLayoutParams ?: return
+        studyParams.x = quickParams.x
+        studyParams.y = quickParams.y + quickView.height
+        runCatching { windowManager?.updateViewLayout(studyView, studyParams) }
+    }
 
     private fun screenBounds(): Point {
         val point = Point()
@@ -250,7 +320,9 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     QuickPopupDragState.isNearRemove = false
                     if (!StudyPopupDragState.isDragging) hideRemoveTarget()
                     if (shouldRemove) QuickTimerPopupState.manuallyDismissed = true
-                }
+                    else reflowMergedIfNeeded()
+                },
+                onTripleTap = { toggleMerge() }
             )
         }
         quickComposeView = quickView
@@ -311,8 +383,13 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     if (shouldRemove) {
                         val runningId = StudyTimerState.subjects.firstOrNull { it.isRunning }?.id
                         StudyTimerPopupState.manuallyDismissedSubjectId = runningId
+                        PopupMergeState.isMerged = false
+                    } else if (PopupMergeState.isMerged) {
+                        // Dragging Study away while merged breaks the merge.
+                        PopupMergeState.isMerged = false
                     }
-                }
+                },
+                onTripleTap = { toggleMerge() }
             )
         }
         studyComposeView = studyView
@@ -360,15 +437,24 @@ private object StudyPopupDragState {
     var isNearRemove by mutableStateOf(false)
 }
 
+// Triple-tap either popup toggles a shared "merged" visual state. Merging
+// never touches QuickTimerState/StudyTimerState — only window position/size,
+// so the two timers stay fully independent as required.
+private object PopupMergeState {
+    var isMerged by mutableStateOf(false)
+}
+
 @Composable
 private fun RemoveTargetOverlay() {
     val isDragging = QuickPopupDragState.isDragging || StudyPopupDragState.isDragging
     val isNear = QuickPopupDragState.isNearRemove || StudyPopupDragState.isNearRemove
     val scale by animateFloatAsState(
-        targetValue = if (isNear) 1.18f else 1f,
-        animationSpec = tween(160),
+        targetValue = if (isNear) 1.22f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "removeTargetScale"
     )
+    val removeCoreColor = Color(0xFFE53E3E)
+    val removeGlowColor = Color(0xFFFF6B5C)
     AnimatedVisibility(
         visible = isDragging,
         enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.6f),
@@ -378,16 +464,31 @@ private fun RemoveTargetOverlay() {
             modifier = Modifier
                 .size(72.dp)
                 .graphicsLayer { scaleX = scale; scaleY = scale }
+                .shadow(
+                    elevation = if (isNear) 22.dp else 10.dp,
+                    shape = CircleShape,
+                    ambientColor = removeGlowColor,
+                    spotColor = removeGlowColor,
+                    clip = false
+                )
                 .clip(CircleShape)
-                .background(if (isNear) Color(0xFFFF3B30) else Color(0xFFFF3B30).copy(alpha = 0.75f))
-                .border(2.dp, Color.White.copy(alpha = if (isNear) 0.95f else 0.6f), CircleShape),
+                .background(
+                    Brush.radialGradient(
+                        colors = if (isNear) {
+                            listOf(removeGlowColor, removeCoreColor)
+                        } else {
+                            listOf(removeCoreColor.copy(alpha = 0.85f), removeCoreColor.copy(alpha = 0.72f))
+                        }
+                    ),
+                    shape = CircleShape
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = "Remove timer popup",
                 tint = Color.White,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(30.dp)
             )
         }
     }
@@ -400,7 +501,8 @@ private fun FloatingTimerPopupContent(
     onOpenApp: () -> Unit,
     onEdgeNudge: () -> Unit,
     onDragStart: () -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    onTripleTap: () -> Unit = {}
 ) {
     if (!FloatingPopupVisibility.showQuick) return
     val context = LocalContext.current
@@ -451,6 +553,10 @@ private fun FloatingTimerPopupContent(
         label = "floatingPopupPressScale"
     )
 
+    val quickTapScope = rememberCoroutineScope()
+    var quickTapCount by remember { mutableStateOf(0) }
+    var quickTapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -475,10 +581,18 @@ private fun FloatingTimerPopupContent(
                         pressed = false
                     },
                     onTap = {
-                        expanded = !expanded
-                        onEdgeNudge()
-                    },
-                    onDoubleTap = { onOpenApp() }
+                        quickTapCount += 1
+                        quickTapJob?.cancel()
+                        quickTapJob = quickTapScope.launch {
+                            delay(260)
+                            when (quickTapCount) {
+                                1 -> { expanded = !expanded; onEdgeNudge() }
+                                2 -> onOpenApp()
+                                else -> onTripleTap()
+                            }
+                            quickTapCount = 0
+                        }
+                    }
                 )
             }
             .padding(10.dp)
@@ -486,7 +600,7 @@ private fun FloatingTimerPopupContent(
         if (FloatingPopupLabelSettingsState.enabled) {
             Text(
                 text = label,
-                color = Color(0xFF64FFDA),
+                color = Color(0xFFEDE6DA),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -515,12 +629,12 @@ private fun FloatingTimerPopupContent(
                 Icon(
                     imageVector = if (isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = "toggle",
-                    tint = Color(0xFF64FFDA),
+                    tint = Color(0xFFEDE6DA),
                     modifier = Modifier
                         .size(26.dp)
                         .graphicsLayer { scaleX = playPauseScale; scaleY = playPauseScale }
                         .clip(RoundedCornerShape(50))
-                        .background(Color(0xFF64FFDA).copy(alpha = playPauseRippleAlpha))
+                        .background(Color(0xFFEDE6DA).copy(alpha = playPauseRippleAlpha))
                         .padding(2.dp)
                         .pointerInput(Unit) {
                             detectTapGestures(
@@ -576,7 +690,8 @@ private fun StudyTimerPopupContent(
     onOpenApp: () -> Unit,
     onEdgeNudge: () -> Unit,
     onDragStart: () -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    onTripleTap: () -> Unit = {}
 ) {
     if (!FloatingPopupVisibility.showStudy) return
     val context = LocalContext.current
@@ -610,11 +725,20 @@ private fun StudyTimerPopupContent(
         label = "studyFloatingPopupPressScale"
     )
 
+    val studyTapScope = rememberCoroutineScope()
+    var studyTapCount by remember { mutableStateOf(0) }
+    var studyTapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val mergedShape = if (PopupMergeState.isMerged) {
+        RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+    } else {
+        RoundedCornerShape(16.dp)
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
-            .clip(RoundedCornerShape(16.dp))
+            .clip(mergedShape)
             .background(Color(0xEE171A2B))
             .pointerInput(Unit) {
                 detectDragGestures(
@@ -634,10 +758,18 @@ private fun StudyTimerPopupContent(
                         pressed = false
                     },
                     onTap = {
-                        expanded = !expanded
-                        onEdgeNudge()
-                    },
-                    onDoubleTap = { onOpenApp() }
+                        studyTapCount += 1
+                        studyTapJob?.cancel()
+                        studyTapJob = studyTapScope.launch {
+                            delay(260)
+                            when (studyTapCount) {
+                                1 -> { expanded = !expanded; onEdgeNudge() }
+                                2 -> onOpenApp()
+                                else -> onTripleTap()
+                            }
+                            studyTapCount = 0
+                        }
+                    }
                 )
             }
             .padding(10.dp)
@@ -652,7 +784,7 @@ private fun StudyTimerPopupContent(
         } else if (FloatingPopupLabelSettingsState.enabled) {
             Text(
                 text = label,
-                color = Color(0xFF64FFDA),
+                color = Color(0xFFEDE6DA),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -680,12 +812,12 @@ private fun StudyTimerPopupContent(
                 Icon(
                     imageVector = Icons.Default.Pause,
                     contentDescription = "pause",
-                    tint = Color(0xFF64FFDA),
+                    tint = Color(0xFFEDE6DA),
                     modifier = Modifier
                         .size(26.dp)
                         .graphicsLayer { scaleX = playPauseScale; scaleY = playPauseScale }
                         .clip(RoundedCornerShape(50))
-                        .background(Color(0xFF64FFDA).copy(alpha = playPauseRippleAlpha))
+                        .background(Color(0xFFEDE6DA).copy(alpha = playPauseRippleAlpha))
                         .padding(2.dp)
                         .pointerInput(Unit) {
                             detectTapGestures(

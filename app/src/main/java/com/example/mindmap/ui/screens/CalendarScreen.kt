@@ -865,7 +865,7 @@ private fun CalendarSettingsDialog(
                 CalendarColorRow("Text color", Color(style.textArgb ?: 0xFFFFFFFF)) { picker = "text" }
                 CalendarColorRow("Accent color", Color(style.accentArgb ?: 0xFFEDE6DA)) { picker = "accent" }
                 Spacer(Modifier.height(14.dp))
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold) }
             }
         }
     }
