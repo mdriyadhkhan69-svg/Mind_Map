@@ -53,6 +53,15 @@ import java.util.Calendar
 import java.util.Locale
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 internal const val OccasionSeparator = "\u001E"
@@ -261,6 +270,12 @@ fun CalendarHomeDialog(
                 val base = existing ?: CalendarEventEntity(dateKey = dateKey)
                 persistEvent(base.copy(hasTimer = true, timerHour = hour, timerMinute = minute))
             },
+            onRemoveTimer = existing?.takeIf { it.hasTimer }?.let { ev ->
+                {
+                    CalendarAlarmScheduler.cancel(context, ev)
+                    persistEvent(ev.copy(hasTimer = false, timerHour = -1, timerMinute = -1))
+                }
+            },
             onToggleComplete = {
                 val base = existing ?: CalendarEventEntity(dateKey = dateKey)
                 persistEvent(base.copy(isCompleted = !base.isCompleted))
@@ -369,12 +384,25 @@ private fun CalendarDateCell(
     val tapScope = rememberCoroutineScope()
     var tapCount by remember { mutableStateOf(0) }
     var tapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var pressed by remember { mutableStateOf(false) }
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = tween(110, easing = FastOutSlowInEasing),
+        label = "calendarCellPressScale"
+    )
+    val pressGloss by animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = tween(if (pressed) 80 else 220),
+        label = "calendarCellPressGloss"
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
             .clip(RoundedCornerShape(12.dp))
             .background(cardColor.copy(alpha = if (isToday) 1f else 0.7f))
+            .background(Color.White.copy(alpha = pressGloss * 0.10f))
             .border(
                 width = if (isToday || isSelected) 2.dp else 1.dp,
                 color = if (isToday) accent else if (isSelected) selectionBlue else textColor.copy(alpha = 0.08f),
@@ -382,6 +410,11 @@ private fun CalendarDateCell(
             )
             .pointerInput(day) {
                 detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
                     onTap = {
                         tapCount += 1
                         tapJob?.cancel()
@@ -472,12 +505,87 @@ private fun CalendarUpcomingList(
 /* ---------------- dialogs ---------------- */
 
 @Composable
+private fun CompactWheelColumn(
+    range: IntRange,
+    selected: Int,
+    onSelectedChange: (Int) -> Unit,
+    itemHeight: Dp = 30.dp,
+    visibleCount: Int = 3,
+    columnWidth: Dp = 46.dp
+) {
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { itemHeight.toPx() }
+    val values = remember(range) { range.toList() }
+    val listState = rememberLazyListState()
+    val flingBehavior = rememberSnapFlingBehavior(listState)
+
+    LaunchedEffect(selected, values) {
+        val targetIndex = values.indexOf(selected).coerceAtLeast(0)
+        if (!listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIndex) {
+            listState.scrollToItem(targetIndex)
+        }
+    }
+
+    LaunchedEffect(listState) {
+        combine(
+            snapshotFlow { listState.firstVisibleItemIndex },
+            snapshotFlow { listState.firstVisibleItemScrollOffset },
+            snapshotFlow { listState.isScrollInProgress }
+        ) { index, offset, scrolling -> Triple(index, offset, scrolling) }
+            .collect { (index, offset, scrolling) ->
+                if (!scrolling) {
+                    val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
+                    val value = values[centeredIndex]
+                    if (value != selected) onSelectedChange(value)
+                }
+            }
+    }
+
+    Box(modifier = Modifier.height(itemHeight * visibleCount), contentAlignment = Alignment.Center) {
+        LazyColumn(
+            state = listState,
+            flingBehavior = flingBehavior,
+            contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
+            modifier = Modifier.fillMaxHeight().width(columnWidth)
+        ) {
+            items(values) { value ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(itemHeight)
+                        .pointerInput(value) {
+                            detectTapGestures(onTap = { onSelectedChange(value) })
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    val isSelected = value == selected
+                    Text(
+                        "%02d".format(value),
+                        color = if (isSelected) SoftNeutral else SoftNeutral.copy(alpha = 0.35f),
+                        fontSize = if (isSelected) 16.sp else 13.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+        Box(
+            Modifier
+                .width(columnWidth)
+                .height(itemHeight)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+        )
+    }
+}
+
+@Composable
 private fun CalendarDateOptionsDialog(
     dateKey: String,
     existing: CalendarEventEntity?,
     onDismiss: () -> Unit,
     onSaveOccasions: (List<String>) -> Unit,
     onSaveTimer: (Int, Int) -> Unit,
+    onRemoveTimer: (() -> Unit)?,
     onToggleComplete: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
@@ -523,12 +631,11 @@ private fun CalendarDateOptionsDialog(
                                             verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                                         ) {
-                                            Text(
-                                                occasion,
-                                                color = SoftNeutral,
-                                                fontSize = 14.sp,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
+                                            OutlinedTextField(
+                                                value = occasion,
+                                                onValueChange = { occasionList[index] = it },
+                                                singleLine = true,
+                                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = SoftNeutral),
                                                 modifier = Modifier.weight(1f)
                                             )
                                             Text(
@@ -556,7 +663,7 @@ private fun CalendarDateOptionsDialog(
                                     )
                                     Text(
                                         "+",
-                                        color = Color(0xFF64FFDA),
+                                        color = SoftNeutral,
                                         fontSize = 24.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier
@@ -575,26 +682,28 @@ private fun CalendarDateOptionsDialog(
                                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                     TextButton(onClick = { panelMode = "options" }) { Text("Cancel", color = Color.LightGray) }
                                     TextButton(onClick = {
-                                        onSaveOccasions(occasionList.toList())
+                                        val finalList = occasionList.toMutableList()
+                                        if (newOccasionText.isNotBlank()) {
+                                            finalList.add(newOccasionText.trim())
+                                            newOccasionText = ""
+                                        }
+                                        onSaveOccasions(finalList.filter { it.isNotBlank() })
                                         panelMode = "options"
-                                    }) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
+                                    }) { Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                                 }
                             }
                             "timer" -> {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(
-                                        value = timerHourText,
-                                        onValueChange = { timerHourText = it.filter(Char::isDigit).take(2) },
-                                        label = { Text("Hour") },
-                                        singleLine = true,
-                                        modifier = Modifier.width(64.dp)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    CompactWheelColumn(
+                                        range = 1..12,
+                                        selected = (timerHourText.toIntOrNull() ?: 12).coerceIn(1, 12),
+                                        onSelectedChange = { timerHourText = it.toString() }
                                     )
-                                    OutlinedTextField(
-                                        value = timerMinuteText,
-                                        onValueChange = { timerMinuteText = it.filter(Char::isDigit).take(2) },
-                                        label = { Text("Min") },
-                                        singleLine = true,
-                                        modifier = Modifier.width(64.dp)
+                                    Text(":", color = SoftNeutral, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                                    CompactWheelColumn(
+                                        range = 0..59,
+                                        selected = (timerMinuteText.toIntOrNull() ?: 0).coerceIn(0, 59),
+                                        onSelectedChange = { timerMinuteText = it.toString() }
                                     )
                                     Box(
                                         modifier = Modifier
@@ -621,7 +730,7 @@ private fun CalendarDateOptionsDialog(
                                         }
                                         onSaveTimer(hour24, minute)
                                         panelMode = "options"
-                                    }) { Text("Done", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
+                                    }) { Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                                 }
                             }
                             else -> {
@@ -643,11 +752,22 @@ private fun CalendarDateOptionsDialog(
                                 if (existing?.hasTimer == true) {
                                     Text(
                                         "%02d:%02d".format(existing.timerHour, existing.timerMinute),
-                                        color = Color(0xFF64FFDA),
+                                        color = SoftNeutral,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 6.dp)
+                                        modifier = Modifier.padding(bottom = 2.dp)
                                     )
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        TextButton(onClick = { panelMode = "timer" }, modifier = Modifier.weight(1f)) {
+                                            Text("Edit Timer", color = SoftNeutral)
+                                        }
+                                        if (onRemoveTimer != null) {
+                                            TextButton(onClick = { onRemoveTimer(); panelMode = "options" }, modifier = Modifier.weight(1f)) {
+                                                Text("Remove Timer", color = Color(0xFFFF6E6E))
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(4.dp))
                                 } else {
                                     TextButton(onClick = { panelMode = "timer" }, modifier = Modifier.fillMaxWidth()) {
                                         Text("Add Timer +", color = SoftNeutral)
