@@ -90,7 +90,8 @@ internal data class StudySubject(
     val name: String,
     val accumulatedMillis: Long = 0L,
     val isRunning: Boolean = false,
-    val startedAtMillis: Long = 0L
+    val startedAtMillis: Long = 0L,
+    val popupEnabled: Boolean = false
 )
 
 private fun loadIs24Hour(context: Context): Boolean =
@@ -203,7 +204,22 @@ internal object FloatingPopupLabelSettingsState {
         saveFloatingPopupLabelEnabled(context, value)
     }
 }
+// Separate popup-visibility state for the normal (Countdown/Stopwatch) popup vs the
+// Study Timer popup, so Study Timer never reuses the normal popup's state.
+internal object QuickTimerPopupState {
+    var manuallyDismissed by mutableStateOf(false)
+}
 
+internal object StudyTimerPopupState {
+    var manuallyDismissedSubjectId by mutableStateOf<String?>(null)
+}
+
+// Computed by MindMapApp's LaunchedEffect and observed by FloatingTimerService's
+// two independent floating widgets.
+internal object FloatingPopupVisibility {
+    var showQuick by mutableStateOf(false)
+    var showStudy by mutableStateOf(false)
+}
 private fun loadStudySubjects(context: Context): List<StudySubject> = runCatching {
     val raw = context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).getString("subjects", "[]") ?: "[]"
     val array = org.json.JSONArray(raw)
@@ -216,7 +232,8 @@ private fun loadStudySubjects(context: Context): List<StudySubject> = runCatchin
                     name = o.optString("name"),
                     accumulatedMillis = o.optLong("accumulatedMillis", 0L),
                     isRunning = o.optBoolean("isRunning", false),
-                    startedAtMillis = o.optLong("startedAtMillis", 0L)
+                    startedAtMillis = o.optLong("startedAtMillis", 0L),
+                    popupEnabled = o.optBoolean("popupEnabled", false)
                 )
             )
         }
@@ -233,6 +250,7 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
                 .put("accumulatedMillis", s.accumulatedMillis)
                 .put("isRunning", s.isRunning)
                 .put("startedAtMillis", s.startedAtMillis)
+                .put("popupEnabled", s.popupEnabled)
         )
     }
     context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).edit().putString("subjects", array.toString()).apply()
@@ -2354,6 +2372,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             QuickTimerState.pause(context)
                                         } else {
                                             hasStarted = true
+                                            QuickTimerPopupState.manuallyDismissed = false
                                             QuickTimerState.resume()
                                         }
                                     }
@@ -2628,6 +2647,10 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                 else -> s
             }
         }
+        if (!subject.isRunning) {
+            // Manually starting this subject makes its popup eligible again.
+            StudyTimerPopupState.manuallyDismissedSubjectId = null
+        }
         persist(updated)
     }
 
@@ -2757,6 +2780,20 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                         customiseForSubject = subject
                         optionsForSubject = null
                     }) { Text("Customise time", color = SoftNeutral) }
+                    TextButton(onClick = {
+                        val newValue = !subject.popupEnabled
+                        val updated = subjects.map { s -> if (s.id == subject.id) s.copy(popupEnabled = newValue) else s }
+                        persist(updated)
+                        if (!newValue) {
+                            StudyTimerPopupState.manuallyDismissedSubjectId = null
+                        }
+                        optionsForSubject = subject.copy(popupEnabled = newValue)
+                    }) {
+                        Text(
+                            if (subject.popupEnabled) "Popup Box for Study Timer: On" else "Popup Box for Study Timer: Off",
+                            color = SoftNeutral
+                        )
+                    }
                     TextButton(onClick = {
                         persist(subjects.filterNot { it.id == subject.id })
                         optionsForSubject = null

@@ -388,30 +388,42 @@ fun MindMapApp(
         FloatingPopupSettingsState.enabled,
         QuickTimerState.hasStarted,
         QuickTimerState.isRunning,
+        QuickTimerPopupState.manuallyDismissed,
         StudyTimerState.subjects,
+        StudyTimerPopupState.manuallyDismissedSubjectId,
         TimerForegroundState.activeScreen,
         com.example.mindmap.AppForegroundState.isForeground.value
     ) {
         val quickActive = QuickTimerState.hasStarted
-        val quickRunning = QuickTimerState.isRunning
-        val studyRunning = StudyTimerState.subjects.any { it.isRunning }
-        // Same priority order used by FloatingTimerService to decide what the
-        // popup displays: a running quick timer, then a running study
-        // subject, then a paused-but-started quick timer.
-        val relevantScreen = when {
-            quickRunning -> "quick"
-            studyRunning -> "study"
-            quickActive -> "quick"
-            else -> null
-        }
+        val runningStudySubject = StudyTimerState.subjects.firstOrNull { it.isRunning }
         val isForeground = com.example.mindmap.AppForegroundState.isForeground.value
-        val viewingOwnScreen = isForeground && relevantScreen != null && TimerForegroundState.activeScreen == relevantScreen
-        val shouldShowPopup = FloatingPopupSettingsState.enabled && (quickActive || studyRunning) && !viewingOwnScreen
-        if (shouldShowPopup) {
+        val viewingQuickScreen = isForeground && TimerForegroundState.activeScreen == "quick"
+        val viewingStudyScreen = isForeground && TimerForegroundState.activeScreen == "study"
+
+        // Normal (Countdown/Stopwatch) popup: fully independent from Study Timer.
+        val shouldShowQuickPopup = FloatingPopupSettingsState.enabled &&
+                quickActive &&
+                !viewingQuickScreen &&
+                !QuickTimerPopupState.manuallyDismissed
+
+        // Study Timer popup: only when its own per-session toggle is on, and
+        // never reuses the normal popup's state/visibility.
+        val shouldShowStudyPopup = FloatingPopupSettingsState.enabled &&
+                runningStudySubject != null &&
+                runningStudySubject.popupEnabled &&
+                !viewingStudyScreen &&
+                StudyTimerPopupState.manuallyDismissedSubjectId != runningStudySubject.id
+
+        FloatingPopupVisibility.showQuick = shouldShowQuickPopup
+        FloatingPopupVisibility.showStudy = shouldShowStudyPopup
+
+        if (shouldShowQuickPopup || shouldShowStudyPopup) {
             com.example.mindmap.FloatingTimerService.start(context)
         } else {
             com.example.mindmap.FloatingTimerService.stop(context)
         }
+        // Background running permission stays governed solely by the main
+        // Timer Popup Box setting, independent of each popup's own visibility.
         if (!isForeground && !FloatingPopupSettingsState.enabled) {
             if (QuickTimerState.isRunning) {
                 QuickTimerState.pause(context)
