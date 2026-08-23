@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.border
@@ -76,6 +77,15 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import com.example.mindmap.ui.theme.SoftNeutral
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
 
 
 
@@ -502,7 +512,7 @@ private fun StudyCelebrationHost() {
 
 /* ---------------- responsive timer box settings ---------------- */
 
-private data class TimerBoxSettings(
+internal data class TimerBoxSettings(
     val widthPercent: Float = 0.88f,
     val boxHeightDp: Float = 130f,
     val fontSizeSp: Float = 78f,
@@ -746,9 +756,38 @@ private fun CuteBouncingCharacter() {
     }
 }
 
+private fun DrawScope.drawSparkleStar(center: Offset, radius: Float, color: Color, alpha: Float) {
+    if (alpha <= 0.01f) return
+    val path = Path().apply {
+        moveTo(center.x, center.y - radius)
+        cubicTo(
+            center.x + radius * 0.12f, center.y - radius * 0.12f,
+            center.x + radius * 0.88f, center.y - radius * 0.12f,
+            center.x + radius, center.y
+        )
+        cubicTo(
+            center.x + radius * 0.12f, center.y + radius * 0.12f,
+            center.x + radius * 0.12f, center.y + radius * 0.88f,
+            center.x, center.y + radius
+        )
+        cubicTo(
+            center.x - radius * 0.12f, center.y + radius * 0.12f,
+            center.x - radius * 0.88f, center.y + radius * 0.12f,
+            center.x - radius, center.y
+        )
+        cubicTo(
+            center.x - radius * 0.12f, center.y - radius * 0.12f,
+            center.x - radius * 0.12f, center.y - radius * 0.88f,
+            center.x, center.y - radius
+        )
+        close()
+    }
+    drawPath(path, color = color.copy(alpha = alpha))
+}
+
 @Composable
 private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
-    val infinite = rememberInfiniteTransition(label = "chubbyCharacter")
+    val infinite = rememberInfiniteTransition(label = "animeGirlCharacter")
     val bounce by infinite.animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -759,7 +798,7 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
     )
     val sway by infinite.animateFloat(
         initialValue = -1f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(380, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(420, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "sway"
     )
     val armFlap by infinite.animateFloat(
@@ -771,12 +810,22 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
         initialValue = 1f, targetValue = 1f,
         animationSpec = infiniteRepeatable(
             keyframes {
-                durationMillis = 2200
-                1f at 0; 1f at 1900; 0.12f at 2000; 1f at 2100; 1f at 2200
+                durationMillis = 2600
+                1f at 0; 1f at 2300; 0.1f at 2400; 1f at 2500; 1f at 2600
             },
             RepeatMode.Restart
         ),
         label = "blink"
+    )
+    val twinkle by infinite.animateFloat(
+        initialValue = 0.35f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(650, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "twinkle"
+    )
+    val twinkle2 by infinite.animateFloat(
+        initialValue = 1f, targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(tween(820, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "twinkle2"
     )
     val entrance = remember { Animatable(0f) }
     LaunchedEffect(reaction) {
@@ -794,7 +843,7 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
 
     Canvas(
         modifier = Modifier
-            .size(230.dp)
+            .size(240.dp)
             .graphicsLayer {
                 translationX = swayAmount
                 translationY = (-bounceAmount) + ((1f - entrance.value) * 80f)
@@ -806,110 +855,188 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
     ) {
         val w = size.width
         val h = size.height
-        val bodyColor = Color(0xFF4FA8FF)
-        val bodyShadow = Color(0xFF2E7FE0)
-        val limbColor = Color(0xFF3D8FF0)
-        val footColor = Color(0xFF1F6FE0)
-        val cheek = Color(0xFFFF8FB3)
-        val hairColor = Color(0xFF16324A)
-        val legSwing = sway * 6f
-
-        // legs
+        val skinColor = Color(0xFFFFE3D6)
+        val hairColor = Color(0xFFFFC2D1)
+        val hairShadow = Color(0xFFFFA8C0)
+        val sweaterColor = Color(0xFFC9BEEB)
+        val sweaterShadow = Color(0xFFAE9EDD)
+        val sleeveColor = Color(0xFFB6E8D3)
+        val hemColor = Color(0xFFB6E8D3)
+        val shoeColor = Color(0xFF5B4A47)
+        val blushColor = Color(0xFFFF9FB5)
+        val darkLine = Color(0xFF4A3A3E)
+        val legSwing = sway * 5f
         val legLift = if (reaction == CharacterReaction.JUMP) bounce * 10f else 0f
-        drawRoundRect(
-            color = limbColor,
-            topLeft = Offset(w * 0.34f - legSwing * 0.01f * w, h * 0.80f - legLift),
-            size = Size(w * 0.13f, h * 0.15f),
-            cornerRadius = CornerRadius(w * 0.06f)
-        )
-        drawRoundRect(
-            color = limbColor,
-            topLeft = Offset(w * 0.55f + legSwing * 0.01f * w, h * 0.80f - legLift),
-            size = Size(w * 0.13f, h * 0.15f),
-            cornerRadius = CornerRadius(w * 0.06f)
-        )
-        drawOval(color = footColor, topLeft = Offset(w * 0.31f - legSwing * 0.01f * w, h * 0.92f - legLift), size = Size(w * 0.19f, h * 0.075f))
-        drawOval(color = footColor, topLeft = Offset(w * 0.52f + legSwing * 0.01f * w, h * 0.92f - legLift), size = Size(w * 0.19f, h * 0.075f))
 
-        // arms — reaction dependent
+        // twinkling sparkle stars around her
+        drawSparkleStar(Offset(w * 0.14f, h * 0.18f), w * 0.05f, Color(0xFFFFF3C4), twinkle)
+        drawSparkleStar(Offset(w * 0.86f, h * 0.30f), w * 0.035f, Color(0xFFFFF3C4), twinkle2)
+        drawSparkleStar(Offset(w * 0.80f, h * 0.10f), w * 0.028f, Color.White, twinkle)
+
+        // legs / socks / shoes
+        drawRoundRect(
+            color = Color.White,
+            topLeft = Offset(w * 0.37f - legSwing * 0.01f * w, h * 0.80f - legLift),
+            size = Size(w * 0.10f, h * 0.12f),
+            cornerRadius = CornerRadius(w * 0.04f)
+        )
+        drawRoundRect(
+            color = Color.White,
+            topLeft = Offset(w * 0.55f + legSwing * 0.01f * w, h * 0.80f - legLift),
+            size = Size(w * 0.10f, h * 0.12f),
+            cornerRadius = CornerRadius(w * 0.04f)
+        )
+        drawOval(color = shoeColor, topLeft = Offset(w * 0.34f - legSwing * 0.01f * w, h * 0.90f - legLift), size = Size(w * 0.15f, h * 0.065f))
+        drawOval(color = shoeColor, topLeft = Offset(w * 0.53f + legSwing * 0.01f * w, h * 0.90f - legLift), size = Size(w * 0.15f, h * 0.065f))
+
+        // arms — reaction dependent (mint sleeve + skin hand)
         when (reaction) {
             CharacterReaction.CLAP -> {
-                val clapOffset = (1f - armFlap) * w * 0.10f
-                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.5f - w * 0.06f - clapOffset, h * 0.46f), size = Size(w * 0.11f, h * 0.20f), cornerRadius = CornerRadius(w * 0.05f))
-                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.5f - w * 0.05f + clapOffset, h * 0.46f), size = Size(w * 0.11f, h * 0.20f), cornerRadius = CornerRadius(w * 0.05f))
-                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.5f - clapOffset, h * 0.44f))
-                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.5f + clapOffset, h * 0.44f))
+                val clapOffset = (1f - armFlap) * w * 0.09f
+                drawRoundRect(color = sleeveColor, topLeft = Offset(w * 0.5f - w * 0.055f - clapOffset, h * 0.46f), size = Size(w * 0.10f, h * 0.18f), cornerRadius = CornerRadius(w * 0.045f))
+                drawRoundRect(color = sleeveColor, topLeft = Offset(w * 0.5f - w * 0.045f + clapOffset, h * 0.46f), size = Size(w * 0.10f, h * 0.18f), cornerRadius = CornerRadius(w * 0.045f))
+                drawCircle(color = skinColor, radius = w * 0.05f, center = Offset(w * 0.5f - clapOffset, h * 0.45f))
+                drawCircle(color = skinColor, radius = w * 0.05f, center = Offset(w * 0.5f + clapOffset, h * 0.45f))
             }
             CharacterReaction.WAVE -> {
-                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.09f, h * 0.50f), size = Size(w * 0.11f, h * 0.22f), cornerRadius = CornerRadius(w * 0.05f))
-                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.145f, h * 0.72f))
+                drawRoundRect(color = sleeveColor, topLeft = Offset(w * 0.10f, h * 0.50f), size = Size(w * 0.10f, h * 0.20f), cornerRadius = CornerRadius(w * 0.045f))
+                drawCircle(color = skinColor, radius = w * 0.05f, center = Offset(w * 0.15f, h * 0.71f))
                 val waveAngle = armFlap * 30f - 15f
-                rotate(degrees = waveAngle, pivot = Offset(w * 0.82f, h * 0.42f)) {
-                    drawRoundRect(color = limbColor, topLeft = Offset(w * 0.78f, h * 0.20f), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
-                    drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.835f, h * 0.20f))
+                rotate(degrees = waveAngle, pivot = Offset(w * 0.81f, h * 0.43f)) {
+                    drawRoundRect(color = sleeveColor, topLeft = Offset(w * 0.77f, h * 0.22f), size = Size(w * 0.10f, h * 0.22f), cornerRadius = CornerRadius(w * 0.045f))
+                    drawCircle(color = skinColor, radius = w * 0.05f, center = Offset(w * 0.825f, h * 0.22f))
                 }
             }
             else -> {
-                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.08f, h * 0.48f - legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
-                drawRoundRect(color = limbColor, topLeft = Offset(w * 0.81f, h * 0.48f + legSwing * 0.008f * h), size = Size(w * 0.11f, h * 0.24f), cornerRadius = CornerRadius(w * 0.05f))
-                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.135f, h * 0.74f - legSwing * 0.008f * h))
-                drawCircle(color = footColor, radius = w * 0.055f, center = Offset(w * 0.865f, h * 0.74f + legSwing * 0.008f * h))
+                drawRoundRect(color = sleeveColor, topLeft = Offset(w * 0.09f, h * 0.48f - legSwing * 0.008f * h), size = Size(w * 0.10f, h * 0.22f), cornerRadius = CornerRadius(w * 0.045f))
+                drawRoundRect(color = sleeveColor, topLeft = Offset(w * 0.81f, h * 0.48f + legSwing * 0.008f * h), size = Size(w * 0.10f, h * 0.22f), cornerRadius = CornerRadius(w * 0.045f))
+                drawCircle(color = skinColor, radius = w * 0.05f, center = Offset(w * 0.14f, h * 0.72f - legSwing * 0.008f * h))
+                drawCircle(color = skinColor, radius = w * 0.05f, center = Offset(w * 0.86f, h * 0.72f + legSwing * 0.008f * h))
             }
         }
 
-        // body
+        // sweater body + mint hem
         drawRoundRect(
-            color = bodyShadow,
-            topLeft = Offset(w * 0.26f, h * 0.235f),
-            size = Size(w * 0.48f, h * 0.60f),
-            cornerRadius = CornerRadius(w * 0.14f)
+            color = sweaterShadow,
+            topLeft = Offset(w * 0.28f, h * 0.235f),
+            size = Size(w * 0.44f, h * 0.56f),
+            cornerRadius = CornerRadius(w * 0.13f)
         )
         drawRoundRect(
-            color = bodyColor,
-            topLeft = Offset(w * 0.27f, h * 0.22f),
-            size = Size(w * 0.46f, h * 0.58f),
-            cornerRadius = CornerRadius(w * 0.14f)
+            color = sweaterColor,
+            topLeft = Offset(w * 0.29f, h * 0.22f),
+            size = Size(w * 0.42f, h * 0.52f),
+            cornerRadius = CornerRadius(w * 0.13f)
+        )
+        drawRoundRect(
+            color = hemColor,
+            topLeft = Offset(w * 0.29f, h * 0.66f),
+            size = Size(w * 0.42f, h * 0.09f),
+            cornerRadius = CornerRadius(w * 0.05f)
         )
 
-        // hair
-        val hairBaseY = h * 0.24f
+        // long flowing hair behind head
+        val headCenter = Offset(w * 0.5f, h * 0.32f)
+        val headRadius = w * 0.235f
         drawPath(
-            path = androidx.compose.ui.graphics.Path().apply {
-                moveTo(w * 0.30f, hairBaseY)
-                lineTo(w * 0.36f, hairBaseY - h * 0.13f)
-                lineTo(w * 0.42f, hairBaseY)
-                lineTo(w * 0.47f, hairBaseY - h * 0.17f)
-                lineTo(w * 0.53f, hairBaseY)
-                lineTo(w * 0.58f, hairBaseY - h * 0.13f)
-                lineTo(w * 0.64f, hairBaseY)
-                lineTo(w * 0.70f, hairBaseY - h * 0.10f)
-                lineTo(w * 0.70f, hairBaseY + h * 0.02f)
-                lineTo(w * 0.30f, hairBaseY + h * 0.02f)
+            path = Path().apply {
+                moveTo(headCenter.x - headRadius * 0.85f, headCenter.y - headRadius * 0.3f)
+                cubicTo(
+                    headCenter.x - headRadius * 1.35f, headCenter.y + headRadius * 0.6f,
+                    headCenter.x - headRadius * 1.15f, h * 0.78f,
+                    headCenter.x - headRadius * 0.55f, h * 0.86f
+                )
+                cubicTo(
+                    headCenter.x - headRadius * 0.75f, h * 0.55f,
+                    headCenter.x - headRadius * 0.95f, headCenter.y + headRadius * 0.2f,
+                    headCenter.x - headRadius * 0.55f, headCenter.y - headRadius * 0.55f
+                )
+                close()
+            },
+            color = hairColor
+        )
+        drawPath(
+            path = Path().apply {
+                moveTo(headCenter.x + headRadius * 0.85f, headCenter.y - headRadius * 0.3f)
+                cubicTo(
+                    headCenter.x + headRadius * 1.35f, headCenter.y + headRadius * 0.6f,
+                    headCenter.x + headRadius * 1.15f, h * 0.78f,
+                    headCenter.x + headRadius * 0.55f, h * 0.86f
+                )
+                cubicTo(
+                    headCenter.x + headRadius * 0.75f, h * 0.55f,
+                    headCenter.x + headRadius * 0.95f, headCenter.y + headRadius * 0.2f,
+                    headCenter.x + headRadius * 0.55f, headCenter.y - headRadius * 0.55f
+                )
+                close()
+            },
+            color = hairShadow
+        )
+
+        // head
+        drawCircle(color = skinColor, radius = headRadius, center = headCenter)
+
+        // hair top / bangs
+        drawArc(
+            color = hairColor,
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = true,
+            topLeft = Offset(headCenter.x - headRadius, headCenter.y - headRadius * 1.05f),
+            size = Size(headRadius * 2f, headRadius * 1.5f)
+        )
+        drawPath(
+            path = Path().apply {
+                moveTo(headCenter.x - headRadius * 0.9f, headCenter.y - headRadius * 0.1f)
+                lineTo(headCenter.x - headRadius * 0.55f, headCenter.y - headRadius * 0.55f)
+                lineTo(headCenter.x - headRadius * 0.25f, headCenter.y - headRadius * 0.12f)
+                lineTo(headCenter.x, headCenter.y - headRadius * 0.6f)
+                lineTo(headCenter.x + headRadius * 0.25f, headCenter.y - headRadius * 0.12f)
+                lineTo(headCenter.x + headRadius * 0.55f, headCenter.y - headRadius * 0.55f)
+                lineTo(headCenter.x + headRadius * 0.9f, headCenter.y - headRadius * 0.1f)
+                lineTo(headCenter.x + headRadius * 0.9f, headCenter.y + headRadius * 0.05f)
+                lineTo(headCenter.x - headRadius * 0.9f, headCenter.y + headRadius * 0.05f)
                 close()
             },
             color = hairColor
         )
 
-        drawCircle(color = cheek.copy(alpha = 0.6f), radius = w * 0.075f, center = Offset(w * 0.32f, h * 0.56f))
-        drawCircle(color = cheek.copy(alpha = 0.6f), radius = w * 0.075f, center = Offset(w * 0.68f, h * 0.56f))
+        // blush
+        drawCircle(color = blushColor.copy(alpha = 0.55f), radius = headRadius * 0.22f, center = Offset(headCenter.x - headRadius * 0.55f, headCenter.y + headRadius * 0.28f))
+        drawCircle(color = blushColor.copy(alpha = 0.55f), radius = headRadius * 0.22f, center = Offset(headCenter.x + headRadius * 0.55f, headCenter.y + headRadius * 0.28f))
 
-        val eyeHeight = if (reaction == CharacterReaction.SURPRISED) h * 0.16f else (h * 0.10f) * blink
-        drawOval(color = Color.White, topLeft = Offset(w * 0.36f, h * 0.47f - eyeHeight / 2f), size = Size(w * 0.10f, eyeHeight))
-        drawOval(color = Color.White, topLeft = Offset(w * 0.56f, h * 0.47f - eyeHeight / 2f), size = Size(w * 0.10f, eyeHeight))
-        drawCircle(color = Color(0xFF16324A), radius = eyeHeight * 0.28f, center = Offset(w * 0.41f, h * 0.47f))
-        drawCircle(color = Color(0xFF16324A), radius = eyeHeight * 0.28f, center = Offset(w * 0.61f, h * 0.47f))
+        // big sparkly eyes
+        val eyeHeight = if (reaction == CharacterReaction.SURPRISED) headRadius * 0.62f else headRadius * 0.42f * blink
+        val eyeWidth = headRadius * 0.32f
+        val leftEyeCenter = Offset(headCenter.x - headRadius * 0.42f, headCenter.y + headRadius * 0.06f)
+        val rightEyeCenter = Offset(headCenter.x + headRadius * 0.42f, headCenter.y + headRadius * 0.06f)
+        listOf(leftEyeCenter, rightEyeCenter).forEach { eyeCenter ->
+            drawOval(
+                color = darkLine,
+                topLeft = Offset(eyeCenter.x - eyeWidth / 2f, eyeCenter.y - eyeHeight / 2f),
+                size = Size(eyeWidth, eyeHeight)
+            )
+            drawOval(
+                color = Color(0xFF8A5A46),
+                topLeft = Offset(eyeCenter.x - eyeWidth * 0.36f, eyeCenter.y - eyeHeight * 0.36f),
+                size = Size(eyeWidth * 0.72f, eyeHeight * 0.72f)
+            )
+            drawCircle(color = Color.White, radius = eyeWidth * 0.16f, center = Offset(eyeCenter.x - eyeWidth * 0.14f, eyeCenter.y - eyeHeight * 0.22f))
+            drawCircle(color = Color.White.copy(alpha = 0.85f), radius = eyeWidth * 0.08f, center = Offset(eyeCenter.x + eyeWidth * 0.16f, eyeCenter.y + eyeHeight * 0.14f))
+        }
 
+        // mouth
         if (reaction == CharacterReaction.SURPRISED) {
-            drawCircle(color = Color(0xFF16324A), radius = w * 0.045f, center = Offset(w * 0.5f, h * 0.60f))
+            drawOval(color = darkLine, topLeft = Offset(headCenter.x - headRadius * 0.06f, headCenter.y + headRadius * 0.45f), size = Size(headRadius * 0.12f, headRadius * 0.14f))
         } else {
             drawArc(
-                color = Color(0xFF16324A),
-                startAngle = 20f,
-                sweepAngle = 140f,
+                color = darkLine,
+                startAngle = 15f,
+                sweepAngle = 150f,
                 useCenter = false,
-                topLeft = Offset(w * 0.36f, h * 0.50f),
-                size = Size(w * 0.28f, h * 0.22f),
-                style = Stroke(width = w * 0.028f, cap = StrokeCap.Round)
+                topLeft = Offset(headCenter.x - headRadius * 0.20f, headCenter.y + headRadius * 0.32f),
+                size = Size(headRadius * 0.40f, headRadius * 0.24f),
+                style = Stroke(width = w * 0.014f, cap = StrokeCap.Round)
             )
         }
     }
@@ -1653,6 +1780,9 @@ private fun NumberWheelColumn(
     val values = remember(range) { range.toList() }
     val listState = rememberLazyListState()
     val flingBehavior = rememberSnapFlingBehavior(listState)
+    var isEditing by remember { mutableStateOf(false) }
+    var editText by remember { mutableStateOf("") }
+    val editFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(selected, values) {
         val targetIndex = values.indexOf(selected).coerceAtLeast(0)
@@ -1672,6 +1802,18 @@ private fun NumberWheelColumn(
             }
     }
 
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            editText = selected.toString()
+            editFocusRequester.requestFocus()
+        }
+    }
+
+    fun commitEdit() {
+        editText.toIntOrNull()?.coerceIn(range.first, range.last)?.let(onSelectedChange)
+        isEditing = false
+    }
+
     Box(modifier = modifier.height(itemHeight * visibleCount), contentAlignment = Alignment.Center) {
         LazyColumn(
             state = listState,
@@ -1680,14 +1822,24 @@ private fun NumberWheelColumn(
             modifier = Modifier.fillMaxHeight().width(columnWidth)
         ) {
             items(values) { value ->
-                Box(modifier = Modifier.fillMaxWidth().height(itemHeight), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(itemHeight)
+                        .pointerInput(value) {
+                            detectTapGestures(onTap = { onSelectedChange(value) })
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
                     val isSelected = value == selected
-                    Text(
-                        "%02d".format(value),
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.35f),
-                        fontSize = if (isSelected) 22.sp else 17.sp,
-                        fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal
-                    )
+                    if (!(isSelected && isEditing)) {
+                        Text(
+                            "%02d".format(value),
+                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.35f),
+                            fontSize = if (isSelected) 22.sp else 17.sp,
+                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal
+                        )
+                    }
                 }
             }
         }
@@ -1696,8 +1848,33 @@ private fun NumberWheelColumn(
                 .fillMaxWidth()
                 .height(itemHeight)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color.White.copy(alpha = 0.10f))
-        )
+                .background(Color.White.copy(alpha = if (isEditing) 0.18f else 0.10f))
+                .pointerInput(selected) {
+                    detectTapGestures(onTap = { isEditing = true })
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (isEditing) {
+                BasicTextField(
+                    value = editText,
+                    onValueChange = { editText = it.filter(Char::isDigit).take(2) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    ),
+                    cursorBrush = SolidColor(Color.White),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { commitEdit() }),
+                    modifier = Modifier
+                        .width(columnWidth)
+                        .focusRequester(editFocusRequester)
+                        .onFocusChanged { focusState -> if (!focusState.isFocused && isEditing) commitEdit() }
+                )
+            }
+        }
     }
 }
 @Composable
@@ -1867,15 +2044,13 @@ private fun CountdownTimeSetPanel(
     colonFontSize: androidx.compose.ui.unit.TextUnit = 20.sp
 ) {
     Row(
-        modifier = modifier
-            .widthIn(max = panelMaxWidth)
-            .pointerInput("countdown-custom-tap") { detectTapGestures(onTap = { onCustomTap() }) },
+        modifier = modifier.widthIn(max = panelMaxWidth),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
         Text(":", color = Color.White, fontSize = colonFontSize, fontWeight = FontWeight.Black)
-        NumberWheelColumn(range = 0..59, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
+        NumberWheelColumn(range = 0..99, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
     }
 }
 

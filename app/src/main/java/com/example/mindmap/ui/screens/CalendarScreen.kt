@@ -57,6 +57,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -64,6 +68,15 @@ import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
 internal const val OccasionSeparator = "\u001E"
 
 internal fun occasionsOf(event: CalendarEventEntity?): List<String> =
@@ -579,6 +592,81 @@ private fun CompactWheelColumn(
 }
 
 @Composable
+private fun PanelIconTap(
+    onTap: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.78f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "panelIconTapScale"
+    )
+    Box(
+        modifier = Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { onTap() }
+                )
+            }
+    ) { content() }
+}
+
+@Composable
+private fun PremiumPanelButton(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    bold: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.95f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "panelBtnScale"
+    )
+    val bgAlpha by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.14f else 0f,
+        animationSpec = tween(if (pressed) 90 else 220),
+        label = "panelBtnBg"
+    )
+    Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(11.dp))
+            .background(color.copy(alpha = bgAlpha))
+            .then(
+                if (enabled) Modifier.pointerInput(text) {
+                    detectTapGestures(
+                        onPress = {
+                            pressed = true
+                            tryAwaitRelease()
+                            pressed = false
+                        },
+                        onTap = { onClick() }
+                    )
+                } else Modifier
+            )
+            .padding(horizontal = 14.dp, vertical = 11.dp)
+    ) {
+        Text(
+            text,
+            color = if (enabled) color else color.copy(alpha = 0.35f),
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 14.sp
+        )
+    }
+}
+
+@Composable
 private fun CalendarDateOptionsDialog(
     dateKey: String,
     existing: CalendarEventEntity?,
@@ -608,14 +696,19 @@ private fun CalendarDateOptionsDialog(
             AnimatedVisibility(
                 visible = visible,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 12.dp),
-                enter = fadeIn(tween(160)) + slideInVertically(tween(200)) { -it / 3 },
-                exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { -it / 3 }
+                enter = fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                        slideInVertically(spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } +
+                        scaleIn(spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow), initialScale = 0.9f),
+                exit = fadeOut(tween(150, easing = FastOutSlowInEasing)) +
+                        slideOutVertically(tween(170, easing = FastOutSlowInEasing)) { -it / 3 } +
+                        scaleOut(tween(170), targetScale = 0.92f)
             ) {
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     color = Color(0xFF1E1E2E),
                     contentColor = SoftNeutral,
-                    shadowElevation = 10.dp,
+                    shadowElevation = 16.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                     modifier = Modifier
                         .widthIn(min = 220.dp, max = 260.dp)
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
@@ -638,17 +731,15 @@ private fun CalendarDateOptionsDialog(
                                                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = SoftNeutral),
                                                 modifier = Modifier.weight(1f)
                                             )
-                                            Text(
-                                                "✕",
-                                                color = Color(0xFFFF6E6E),
-                                                fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier
-                                                    .padding(start = 8.dp)
-                                                    .pointerInput("remove-occasion-$index") {
-                                                        detectTapGestures(onTap = { occasionList.removeAt(index) })
-                                                    }
-                                            )
+                                            PanelIconTap(onTap = { occasionList.removeAt(index) }) {
+                                                Text(
+                                                    "✕",
+                                                    color = Color(0xFFFF6E6E),
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(start = 8.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -661,27 +752,26 @@ private fun CalendarDateOptionsDialog(
                                         singleLine = true,
                                         modifier = Modifier.weight(1f)
                                     )
-                                    Text(
-                                        "+",
-                                        color = SoftNeutral,
-                                        fontSize = 24.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier
-                                            .padding(start = 8.dp)
-                                            .pointerInput("add-occasion") {
-                                                detectTapGestures(onTap = {
-                                                    if (newOccasionText.isNotBlank()) {
-                                                        occasionList.add(newOccasionText.trim())
-                                                        newOccasionText = ""
-                                                    }
-                                                })
-                                            }
-                                    )
+                                    PanelIconTap(onTap = {
+                                        if (newOccasionText.isNotBlank()) {
+                                            occasionList.add(newOccasionText.trim())
+                                            newOccasionText = ""
+                                        }
+                                    }) {
+                                        Text(
+                                            "+",
+                                            color = SoftNeutral,
+                                            fontSize = 24.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(start = 8.dp)
+                                        )
+                                    }
                                 }
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                    TextButton(onClick = { panelMode = "options" }) { Text("Cancel", color = Color.LightGray) }
-                                    TextButton(onClick = {
+                                    PremiumPanelButton("Cancel", color = Color.LightGray, onClick = { panelMode = "options" })
+                                    Spacer(Modifier.width(4.dp))
+                                    PremiumPanelButton("Done", color = SoftNeutral, bold = true, onClick = {
                                         val finalList = occasionList.toMutableList()
                                         if (newOccasionText.isNotBlank()) {
                                             finalList.add(newOccasionText.trim())
@@ -689,7 +779,7 @@ private fun CalendarDateOptionsDialog(
                                         }
                                         onSaveOccasions(finalList.filter { it.isNotBlank() })
                                         panelMode = "options"
-                                    }) { Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold) }
+                                    })
                                 }
                             }
                             "timer" -> {
@@ -741,13 +831,9 @@ private fun CalendarDateOptionsDialog(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(bottom = 4.dp)
                                     )
-                                    TextButton(onClick = { panelMode = "occasion" }, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Edit Occasion", color = SoftNeutral)
-                                    }
+                                    PremiumPanelButton("Edit Occasion", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
                                 } else {
-                                    TextButton(onClick = { panelMode = "occasion" }, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Add Occasion +", color = SoftNeutral)
-                                    }
+                                    PremiumPanelButton("Add Occasion +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
                                 }
                                 if (existing?.hasTimer == true) {
                                     Text(
@@ -758,27 +844,25 @@ private fun CalendarDateOptionsDialog(
                                         modifier = Modifier.padding(bottom = 2.dp)
                                     )
                                     Row(modifier = Modifier.fillMaxWidth()) {
-                                        TextButton(onClick = { panelMode = "timer" }, modifier = Modifier.weight(1f)) {
-                                            Text("Edit Timer", color = SoftNeutral)
-                                        }
+                                        PremiumPanelButton("Edit Timer", color = SoftNeutral, modifier = Modifier.weight(1f), onClick = { panelMode = "timer" })
                                         if (onRemoveTimer != null) {
-                                            TextButton(onClick = { onRemoveTimer(); panelMode = "options" }, modifier = Modifier.weight(1f)) {
-                                                Text("Remove Timer", color = Color(0xFFFF6E6E))
-                                            }
+                                            Spacer(Modifier.width(2.dp))
+                                            PremiumPanelButton("Remove Timer", color = Color(0xFFFF6E6E), modifier = Modifier.weight(1f), onClick = { onRemoveTimer(); panelMode = "options" })
                                         }
                                     }
                                     Spacer(Modifier.height(4.dp))
                                 } else {
-                                    TextButton(onClick = { panelMode = "timer" }, modifier = Modifier.fillMaxWidth()) {
-                                        Text("Add Timer +", color = SoftNeutral)
-                                    }
+                                    PremiumPanelButton("Add Timer +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })
                                 }
                                 Spacer(Modifier.height(4.dp))
-                                TextButton(onClick = onToggleComplete, modifier = Modifier.fillMaxWidth()) {
-                                    Text(if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete", color = SoftNeutral)
-                                }
+                                PremiumPanelButton(
+                                    if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete",
+                                    color = SoftNeutral,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = onToggleComplete
+                                )
                                 if (onDelete != null) {
-                                    TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete", color = Color(0xFFFF6E6E)) }
+                                    PremiumPanelButton("Delete", color = Color(0xFFFF6E6E), modifier = Modifier.fillMaxWidth(), onClick = onDelete)
                                 }
                             }
                         }
