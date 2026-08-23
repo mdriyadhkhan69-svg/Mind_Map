@@ -391,11 +391,13 @@ fun MindMapApp(
         QuickTimerPopupState.manuallyDismissed,
         StudyTimerState.subjects,
         StudyTimerPopupState.manuallyDismissedSubjectId,
+        StudyTimerPopupState.activeSubjectId,
         TimerForegroundState.activeScreen,
         com.example.mindmap.AppForegroundState.isForeground.value
     ) {
         val quickActive = QuickTimerState.hasStarted
-        val runningStudySubject = StudyTimerState.subjects.firstOrNull { it.isRunning }
+        val activeStudySubject = StudyTimerState.subjects.firstOrNull { it.id == StudyTimerPopupState.activeSubjectId }
+            ?: StudyTimerState.subjects.firstOrNull { it.isRunning }
         val isForeground = com.example.mindmap.AppForegroundState.isForeground.value
         val viewingQuickScreen = isForeground && TimerForegroundState.activeScreen == "quick"
         val viewingStudyScreen = isForeground && TimerForegroundState.activeScreen == "study"
@@ -407,12 +409,14 @@ fun MindMapApp(
                 !QuickTimerPopupState.manuallyDismissed
 
         // Study Timer popup: only when its own per-session toggle is on, and
-        // never reuses the normal popup's state/visibility.
+        // never reuses the normal popup's state/visibility. Keyed off the
+        // pinned active-popup subject (not "currently running"), so pausing
+        // from the popup never hides it.
         val shouldShowStudyPopup = FloatingPopupSettingsState.enabled &&
-                runningStudySubject != null &&
-                runningStudySubject.popupEnabled &&
+                activeStudySubject != null &&
+                activeStudySubject.popupEnabled &&
                 !viewingStudyScreen &&
-                StudyTimerPopupState.manuallyDismissedSubjectId != runningStudySubject.id
+                StudyTimerPopupState.manuallyDismissedSubjectId != activeStudySubject.id
 
         FloatingPopupVisibility.showQuick = shouldShowQuickPopup
         FloatingPopupVisibility.showStudy = shouldShowStudyPopup

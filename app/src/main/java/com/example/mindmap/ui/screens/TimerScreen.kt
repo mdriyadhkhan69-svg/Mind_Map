@@ -212,6 +212,9 @@ internal object QuickTimerPopupState {
 
 internal object StudyTimerPopupState {
     var manuallyDismissedSubjectId by mutableStateOf<String?>(null)
+    // The subject whose popup is currently "pinned" — independent of
+    // isRunning, so pausing never hides/loses the popup's identity.
+    var activeSubjectId by mutableStateOf<String?>(null)
 }
 
 // Computed by MindMapApp's LaunchedEffect and observed by FloatingTimerService's
@@ -2424,6 +2427,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         QuickTimerState.pause(context)
                                     } else {
                                         hasStarted = true
+                                        QuickTimerPopupState.manuallyDismissed = false
                                         QuickTimerState.resume()
                                     }
                                 }
@@ -2648,8 +2652,10 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
             }
         }
         if (!subject.isRunning) {
-            // Manually starting this subject makes its popup eligible again.
+            // Manually starting this subject makes its popup eligible again,
+            // and pins it as the popup's active subject through pause/resume.
             StudyTimerPopupState.manuallyDismissedSubjectId = null
+            StudyTimerPopupState.activeSubjectId = subject.id
         }
         persist(updated)
     }

@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -239,7 +240,9 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
         )
         params.gravity = Gravity.TOP or Gravity.START
         val center = removeTargetCenter()
-        val sizePx = (72 * resources.displayMetrics.density).roundToInt()
+        // Must match RemoveTargetOverlay's fixed outer box size — otherwise
+        // the enlarged circle gets clipped by this overlay window's bounds.
+        val sizePx = (96 * resources.displayMetrics.density).roundToInt()
         params.x = center.x - sizePx / 2
         params.y = center.y - sizePx / 2
         val view = ComposeView(this)
@@ -365,8 +368,8 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     }
                 },
                 onClose = {
-                    val runningId = StudyTimerState.subjects.firstOrNull { it.isRunning }?.id
-                    StudyTimerPopupState.manuallyDismissedSubjectId = runningId
+                    StudyTimerPopupState.manuallyDismissedSubjectId = StudyTimerPopupState.activeSubjectId
+                        ?: StudyTimerState.subjects.firstOrNull { it.isRunning }?.id
                 },
                 onOpenApp = { openApp("study") },
                 onEdgeNudge = { nudgeAwayFromEdgeIfNeeded(studyComposeView, studyLayoutParams) },
@@ -381,8 +384,9 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     StudyPopupDragState.isNearRemove = false
                     if (!QuickPopupDragState.isDragging) hideRemoveTarget()
                     if (shouldRemove) {
-                        val runningId = StudyTimerState.subjects.firstOrNull { it.isRunning }?.id
-                        StudyTimerPopupState.manuallyDismissedSubjectId = runningId
+                        val dismissedId = StudyTimerPopupState.activeSubjectId
+                            ?: StudyTimerState.subjects.firstOrNull { it.isRunning }?.id
+                        StudyTimerPopupState.manuallyDismissedSubjectId = dismissedId
                         PopupMergeState.isMerged = false
                     } else if (PopupMergeState.isMerged) {
                         // Dragging Study away while merged breaks the merge.
@@ -448,10 +452,15 @@ private object PopupMergeState {
 private fun RemoveTargetOverlay() {
     val isDragging = QuickPopupDragState.isDragging || StudyPopupDragState.isDragging
     val isNear = QuickPopupDragState.isNearRemove || StudyPopupDragState.isNearRemove
-    val scale by animateFloatAsState(
-        targetValue = if (isNear) 1.22f else 1f,
+    // Animate the actual layout size instead of a graphicsLayer scale — a
+    // scale transform doesn't grow this overlay window's own bounds, so the
+    // circle used to get clipped square by the window edge once it grew
+    // past 72dp. The outer box below is fixed at the max footprint and never
+    // resizes; only the inner circle's real size animates within it.
+    val circleSize by animateDpAsState(
+        targetValue = if (isNear) 88.dp else 72.dp,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-        label = "removeTargetScale"
+        label = "removeTargetSize"
     )
     val removeCoreColor = Color(0xFFE53E3E)
     val removeGlowColor = Color(0xFFFF6B5C)
@@ -461,35 +470,39 @@ private fun RemoveTargetOverlay() {
         exit = fadeOut(tween(160)) + scaleOut(tween(160), targetScale = 0.6f)
     ) {
         Box(
-            modifier = Modifier
-                .size(72.dp)
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .shadow(
-                    elevation = if (isNear) 22.dp else 10.dp,
-                    shape = CircleShape,
-                    ambientColor = removeGlowColor,
-                    spotColor = removeGlowColor,
-                    clip = false
-                )
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = if (isNear) {
-                            listOf(removeGlowColor, removeCoreColor)
-                        } else {
-                            listOf(removeCoreColor.copy(alpha = 0.85f), removeCoreColor.copy(alpha = 0.72f))
-                        }
-                    ),
-                    shape = CircleShape
-                ),
+            modifier = Modifier.size(96.dp),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Remove timer popup",
-                tint = Color.White,
-                modifier = Modifier.size(30.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(circleSize)
+                    .shadow(
+                        elevation = if (isNear) 22.dp else 10.dp,
+                        shape = CircleShape,
+                        ambientColor = removeGlowColor,
+                        spotColor = removeGlowColor,
+                        clip = false
+                    )
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = if (isNear) {
+                                listOf(removeGlowColor, removeCoreColor)
+                            } else {
+                                listOf(removeCoreColor.copy(alpha = 0.85f), removeCoreColor.copy(alpha = 0.72f))
+                            }
+                        ),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Remove timer popup",
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
         }
     }
 }
@@ -703,18 +716,22 @@ private fun StudyTimerPopupContent(
         }
     }
 
-    val runningSubject = StudyTimerState.subjects.firstOrNull { it.isRunning }
-    val currentRunningSubject by rememberUpdatedState(runningSubject)
+    // The pinned popup subject — NOT "currently running". This is what keeps
+    // the popup visible through pause/resume: the popup's identity no longer
+    // disappears just because isRunning flips to false.
+    val activeSubject = StudyTimerState.subjects.firstOrNull { it.id == StudyTimerPopupState.activeSubjectId }
+        ?: StudyTimerState.subjects.firstOrNull { it.isRunning }
+    val currentActiveSubject by rememberUpdatedState(activeSubject)
     val strikeActive = StudyTimerState.pendingCelebration != null
 
-    if (runningSubject == null) return
+    if (activeSubject == null) return
 
-    val elapsed = runningSubject.currentElapsedMillis(now)
+    val elapsed = activeSubject.currentElapsedMillis(now)
     val totalSeconds = elapsed / 1000
     val h = totalSeconds / 3600
     val m = (totalSeconds / 60) % 60
     val s = totalSeconds % 60
-    val label = runningSubject.name.take(14)
+    val label = activeSubject.name.take(14)
     val timeText = if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 
     var expanded by remember { mutableStateOf(false) }
@@ -810,8 +827,8 @@ private fun StudyTimerPopupContent(
                     label = "studyFloatingPopupPlayPauseRipple"
                 )
                 Icon(
-                    imageVector = Icons.Default.Pause,
-                    contentDescription = "pause",
+                    imageVector = if (currentActiveSubject?.isRunning == true) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = "toggle",
                     tint = Color(0xFFEDE6DA),
                     modifier = Modifier
                         .size(26.dp)
@@ -827,15 +844,24 @@ private fun StudyTimerPopupContent(
                                     playPausePressed = false
                                 },
                                 onTap = {
-                                    currentRunningSubject?.let { subject ->
+                                    currentActiveSubject?.let { subject ->
                                         val nowMillis = System.currentTimeMillis()
                                         val updated = StudyTimerState.subjects.map { s ->
-                                            if (s.id == subject.id) {
-                                                s.copy(
+                                            when {
+                                                s.id == subject.id && s.isRunning -> s.copy(
                                                     isRunning = false,
                                                     accumulatedMillis = s.currentElapsedMillis(nowMillis)
                                                 )
-                                            } else s
+                                                s.id == subject.id && !s.isRunning -> s.copy(
+                                                    isRunning = true,
+                                                    startedAtMillis = nowMillis
+                                                )
+                                                s.isRunning -> s.copy(
+                                                    isRunning = false,
+                                                    accumulatedMillis = s.currentElapsedMillis(nowMillis)
+                                                )
+                                                else -> s
+                                            }
                                         }
                                         StudyTimerState.persist(context, updated)
                                     }
