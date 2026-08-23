@@ -42,6 +42,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.GenericShape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -90,8 +91,7 @@ internal data class StudySubject(
     val name: String,
     val accumulatedMillis: Long = 0L,
     val isRunning: Boolean = false,
-    val startedAtMillis: Long = 0L,
-    val popupEnabled: Boolean = false
+    val startedAtMillis: Long = 0L
 )
 
 private fun loadIs24Hour(context: Context): Boolean =
@@ -127,7 +127,14 @@ private object StrikeSettingsState {
     }
 }
 
-private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE }
+private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE, SPLIT_FLAP }
+
+private val TopHalfShape = GenericShape { size, _ ->
+    addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height / 2f))
+}
+private val BottomHalfShape = GenericShape { size, _ ->
+    addRect(androidx.compose.ui.geometry.Rect(0f, size.height / 2f, size.width, size.height))
+}
 
 private fun loadDigitTransitionStyle(context: Context): DigitTransitionStyle {
     val name = context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE)
@@ -154,6 +161,181 @@ private object DigitStyleState {
     fun update(context: Context, style: DigitTransitionStyle) {
         current = style
         saveDigitTransitionStyle(context, style)
+    }
+}
+
+// Timer box (digit size/spacing) settings previously only reloaded from prefs
+// on orientation flip, so changing digit size in Settings didn't visibly
+// resize a currently-open timer/clock until the screen rotated. This holds
+// the live value so any open screen recomposes immediately on change.
+internal object TimerBoxLiveSettingsState {
+    private val portraitByScope = mutableStateMapOf<String, TimerBoxSettings>()
+    private val landscapeByScope = mutableStateMapOf<String, TimerBoxSettings>()
+
+    fun get(context: Context, scope: String, isLandscape: Boolean): TimerBoxSettings {
+        val map = if (isLandscape) landscapeByScope else portraitByScope
+        return map[scope] ?: loadTimerBoxSettings(context, isLandscape, scope).also { map[scope] = it }
+    }
+
+    fun update(scope: String, isLandscape: Boolean, settings: TimerBoxSettings) {
+        val map = if (isLandscape) landscapeByScope else portraitByScope
+        map[scope] = settings
+    }
+}
+
+internal enum class ClockFace {
+    CLASSIC, MINIMAL_PREMIUM, DARK_ELEGANT, GLASS_GLOSSY, NEON, DIGITAL_FUTURISTIC,
+    CLEAN_PRODUCTIVITY, SOFT_STUDY, RETRO_DIGITAL, MODERN_DASHBOARD, FLIP_BOARD_INSPIRED,
+    MONOCHROME, AMBIENT
+}
+
+private fun clockFaceLabel(face: ClockFace): String = when (face) {
+    ClockFace.CLASSIC -> "Classic"
+    ClockFace.MINIMAL_PREMIUM -> "Minimal Premium"
+    ClockFace.DARK_ELEGANT -> "Dark Elegant"
+    ClockFace.GLASS_GLOSSY -> "Glass"
+    ClockFace.NEON -> "Neon"
+    ClockFace.DIGITAL_FUTURISTIC -> "Futuristic"
+    ClockFace.CLEAN_PRODUCTIVITY -> "Productivity"
+    ClockFace.SOFT_STUDY -> "Soft Study"
+    ClockFace.RETRO_DIGITAL -> "Retro"
+    ClockFace.MODERN_DASHBOARD -> "Dashboard"
+    ClockFace.FLIP_BOARD_INSPIRED -> "Flip Board"
+    ClockFace.MONOCHROME -> "Mono B/W"
+    ClockFace.AMBIENT -> "Ambient"
+}
+
+private data class ClockFaceStyle(
+    val screenBackground: Brush,
+    val cardBackground: Color,
+    val digitColor: Color,
+    val cornerRadius: Dp,
+    val borderColor: Color,
+    val borderWidth: Dp,
+    val dividerColor: Color,
+    val labelColor: Color,
+    val glowColor: Color,
+    val glowAlpha: Float
+)
+
+private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
+    ClockFace.CLASSIC -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(TimerBg, TimerBg)),
+        cardBackground = TimerCardBg, digitColor = TimerDigit, cornerRadius = 34.dp,
+        borderColor = Color.Transparent, borderWidth = 0.dp,
+        dividerColor = Color.Black.copy(alpha = 0.75f), labelColor = Color.White.copy(alpha = 0.78f),
+        glowColor = Color.Transparent, glowAlpha = 0f
+    )
+    ClockFace.MINIMAL_PREMIUM -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF121214), Color(0xFF1A1A1D))),
+        cardBackground = Color(0xFF1C1C1F), digitColor = Color(0xFFF5F5F0), cornerRadius = 18.dp,
+        borderColor = Color.White.copy(alpha = 0.06f), borderWidth = 1.dp,
+        dividerColor = Color.White.copy(alpha = 0.10f), labelColor = Color.White.copy(alpha = 0.45f),
+        glowColor = Color.Transparent, glowAlpha = 0f
+    )
+    ClockFace.DARK_ELEGANT -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF0A0A12), Color(0xFF14101F))),
+        cardBackground = Color(0xFF17131F), digitColor = Color(0xFFE8D9B5), cornerRadius = 10.dp,
+        borderColor = Color(0xFFE8D9B5).copy(alpha = 0.25f), borderWidth = 1.dp,
+        dividerColor = Color(0xFFE8D9B5).copy(alpha = 0.18f), labelColor = Color(0xFFE8D9B5).copy(alpha = 0.55f),
+        glowColor = Color(0xFFE8D9B5), glowAlpha = 0.12f
+    )
+    ClockFace.GLASS_GLOSSY -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF1B2436), Color(0xFF0E141F))),
+        cardBackground = Color.White.copy(alpha = 0.08f), digitColor = Color.White, cornerRadius = 28.dp,
+        borderColor = Color.White.copy(alpha = 0.28f), borderWidth = 1.2.dp,
+        dividerColor = Color.White.copy(alpha = 0.22f), labelColor = Color.White.copy(alpha = 0.7f),
+        glowColor = Color.White, glowAlpha = 0.10f
+    )
+    ClockFace.NEON -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF07050F), Color(0xFF120A1F))),
+        cardBackground = Color(0xFF0D0716), digitColor = Color(0xFF64FFDA), cornerRadius = 14.dp,
+        borderColor = Color(0xFF64FFDA).copy(alpha = 0.7f), borderWidth = 1.4.dp,
+        dividerColor = Color(0xFFBB86FC).copy(alpha = 0.4f), labelColor = Color(0xFFBB86FC),
+        glowColor = Color(0xFF64FFDA), glowAlpha = 0.35f
+    )
+    ClockFace.DIGITAL_FUTURISTIC -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF03080C), Color(0xFF061620))),
+        cardBackground = Color(0xFF071319), digitColor = Color(0xFF00E5FF), cornerRadius = 4.dp,
+        borderColor = Color(0xFF00E5FF).copy(alpha = 0.45f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF00E5FF).copy(alpha = 0.3f), labelColor = Color(0xFF00E5FF).copy(alpha = 0.6f),
+        glowColor = Color(0xFF00E5FF), glowAlpha = 0.18f
+    )
+    ClockFace.CLEAN_PRODUCTIVITY -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFFF4F4F8), Color(0xFFE9E9F2))),
+        cardBackground = Color.White, digitColor = Color(0xFF1A1A1A), cornerRadius = 20.dp,
+        borderColor = Color.Black.copy(alpha = 0.08f), borderWidth = 1.dp,
+        dividerColor = Color.Black.copy(alpha = 0.07f), labelColor = Color(0xFF6B6B76),
+        glowColor = Color.Transparent, glowAlpha = 0f
+    )
+    ClockFace.SOFT_STUDY -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF15181C), Color(0xFF1B2420))),
+        cardBackground = Color(0xFF1E2621), digitColor = Color(0xFFBFE3D0), cornerRadius = 24.dp,
+        borderColor = Color(0xFFBFE3D0).copy(alpha = 0.14f), borderWidth = 1.dp,
+        dividerColor = Color(0xFFBFE3D0).copy(alpha = 0.12f), labelColor = Color(0xFFBFE3D0).copy(alpha = 0.55f),
+        glowColor = Color(0xFF6FCF97), glowAlpha = 0.08f
+    )
+    ClockFace.RETRO_DIGITAL -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF1A0F08), Color(0xFF2A150A))),
+        cardBackground = Color(0xFF241207), digitColor = Color(0xFFFF8C32), cornerRadius = 6.dp,
+        borderColor = Color(0xFFFF8C32).copy(alpha = 0.4f), borderWidth = 1.dp,
+        dividerColor = Color(0xFFFF8C32).copy(alpha = 0.3f), labelColor = Color(0xFFFF8C32).copy(alpha = 0.6f),
+        glowColor = Color(0xFFFF8C32), glowAlpha = 0.15f
+    )
+    ClockFace.MODERN_DASHBOARD -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF10131C), Color(0xFF171B27))),
+        cardBackground = Color(0xFF1D212E), digitColor = Color.White, cornerRadius = 16.dp,
+        borderColor = Color(0xFF3B82F6).copy(alpha = 0.35f), borderWidth = 1.2.dp,
+        dividerColor = Color(0xFF3B82F6).copy(alpha = 0.25f), labelColor = Color(0xFF3B82F6),
+        glowColor = Color(0xFF3B82F6), glowAlpha = 0.12f
+    )
+    ClockFace.FLIP_BOARD_INSPIRED -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF06060A), Color(0xFF0C0C12))),
+        cardBackground = Color(0xFF17171D), digitColor = Color(0xFFF2F2F2), cornerRadius = 8.dp,
+        borderColor = Color.Black, borderWidth = 2.dp,
+        dividerColor = Color.Black, labelColor = Color.White.copy(alpha = 0.5f),
+        glowColor = Color.Transparent, glowAlpha = 0f
+    )
+    ClockFace.MONOCHROME -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color.Black, Color(0xFF0A0A0A))),
+        cardBackground = Color(0xFF0F0F0F), digitColor = Color.White, cornerRadius = 0.dp,
+        borderColor = Color.White.copy(alpha = 0.9f), borderWidth = 1.5.dp,
+        dividerColor = Color.White.copy(alpha = 0.4f), labelColor = Color.White.copy(alpha = 0.6f),
+        glowColor = Color.Transparent, glowAlpha = 0f
+    )
+    ClockFace.AMBIENT -> ClockFaceStyle(
+        screenBackground = Brush.radialGradient(listOf(Color(0xFF1E2A3A), Color(0xFF090D14))),
+        cardBackground = Color(0xFF141B26).copy(alpha = 0.8f), digitColor = Color(0xFFCFE0F5), cornerRadius = 40.dp,
+        borderColor = Color(0xFFCFE0F5).copy(alpha = 0.1f), borderWidth = 1.dp,
+        dividerColor = Color(0xFFCFE0F5).copy(alpha = 0.1f), labelColor = Color(0xFFCFE0F5).copy(alpha = 0.5f),
+        glowColor = Color(0xFF6FA8DC), glowAlpha = 0.2f
+    )
+}
+
+private fun loadClockFace(context: Context): ClockFace {
+    val name = context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE)
+        .getString("clock_face", ClockFace.CLASSIC.name)
+    return ClockFace.entries.firstOrNull { it.name == name } ?: ClockFace.CLASSIC
+}
+
+private fun saveClockFace(context: Context, face: ClockFace) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).edit().putString("clock_face", face.name).apply()
+}
+
+internal object ClockFaceState {
+    var current by mutableStateOf(ClockFace.CLASSIC)
+    private var loaded = false
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            current = loadClockFace(context)
+            loaded = true
+        }
+    }
+
+    fun update(context: Context, face: ClockFace) {
+        current = face
+        saveClockFace(context, face)
     }
 }
 
@@ -204,25 +386,7 @@ internal object FloatingPopupLabelSettingsState {
         saveFloatingPopupLabelEnabled(context, value)
     }
 }
-// Separate popup-visibility state for the normal (Countdown/Stopwatch) popup vs the
-// Study Timer popup, so Study Timer never reuses the normal popup's state.
-internal object QuickTimerPopupState {
-    var manuallyDismissed by mutableStateOf(false)
-}
 
-internal object StudyTimerPopupState {
-    var manuallyDismissedSubjectId by mutableStateOf<String?>(null)
-    // The subject whose popup is currently "pinned" — independent of
-    // isRunning, so pausing never hides/loses the popup's identity.
-    var activeSubjectId by mutableStateOf<String?>(null)
-}
-
-// Computed by MindMapApp's LaunchedEffect and observed by FloatingTimerService's
-// two independent floating widgets.
-internal object FloatingPopupVisibility {
-    var showQuick by mutableStateOf(false)
-    var showStudy by mutableStateOf(false)
-}
 private fun loadStudySubjects(context: Context): List<StudySubject> = runCatching {
     val raw = context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).getString("subjects", "[]") ?: "[]"
     val array = org.json.JSONArray(raw)
@@ -235,8 +399,7 @@ private fun loadStudySubjects(context: Context): List<StudySubject> = runCatchin
                     name = o.optString("name"),
                     accumulatedMillis = o.optLong("accumulatedMillis", 0L),
                     isRunning = o.optBoolean("isRunning", false),
-                    startedAtMillis = o.optLong("startedAtMillis", 0L),
-                    popupEnabled = o.optBoolean("popupEnabled", false)
+                    startedAtMillis = o.optLong("startedAtMillis", 0L)
                 )
             )
         }
@@ -253,7 +416,6 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
                 .put("accumulatedMillis", s.accumulatedMillis)
                 .put("isRunning", s.isRunning)
                 .put("startedAtMillis", s.startedAtMillis)
-                .put("popupEnabled", s.popupEnabled)
         )
     }
     context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).edit().putString("subjects", array.toString()).apply()
@@ -1074,6 +1236,56 @@ private fun FlipDigitCell(
                 }
             )
         }
+
+        DigitTransitionStyle.SPLIT_FLAP -> {
+            var topChar by remember { mutableStateOf(char) }
+            var bottomChar by remember { mutableStateOf(char) }
+            val topFlip = remember { Animatable(0f) }
+            val bottomFlip = remember { Animatable(0f) }
+            LaunchedEffect(char) {
+                if (char != bottomChar) {
+                    topFlip.snapTo(0f)
+                    topFlip.animateTo(-90f, tween(130, easing = FastOutLinearInEasing))
+                    topChar = char
+                    topFlip.snapTo(0f)
+                    bottomFlip.snapTo(90f)
+                    bottomChar = char
+                    bottomFlip.animateTo(0f, tween(150, easing = LinearOutSlowInEasing))
+                }
+            }
+            Box(contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(topChar) }
+                Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(bottomChar) }
+                Box(
+                    modifier = Modifier
+                        .clip(TopHalfShape)
+                        .graphicsLayer {
+                            rotationX = topFlip.value
+                            cameraDistance = 24f * density
+                            transformOrigin = TransformOrigin(0.5f, 1f)
+                            alpha = if (topFlip.value <= -89f) 0f else 1f
+                        }
+                        .background(Color.Black.copy(alpha = (-topFlip.value / 90f) * 0.35f))
+                ) { DigitGlyph(topChar) }
+                Box(
+                    modifier = Modifier
+                        .clip(BottomHalfShape)
+                        .graphicsLayer {
+                            rotationX = bottomFlip.value
+                            cameraDistance = 24f * density
+                            transformOrigin = TransformOrigin(0.5f, 0f)
+                            alpha = if (bottomFlip.value >= 89f) 0f else 1f
+                        }
+                        .background(Color.Black.copy(alpha = (bottomFlip.value / 90f) * 0.35f))
+                ) { DigitGlyph(bottomChar) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.2.dp)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                )
+            }
+        }
     }
 }
 
@@ -1106,12 +1318,21 @@ private fun FlipDigitCard(
     dividerThickness: Dp = 2.dp,
     cornerRadius: Dp = 34.dp,
     extraBold: Boolean = true,
-    topInset: Dp = 0.dp
+    topInset: Dp = 0.dp,
+    cardColor: Color = TimerCardBg,
+    digitColor: Color = TimerDigit,
+    borderColor: Color = Color.Transparent,
+    borderWidth: Dp = 0.dp,
+    dividerColor: Color = Color.Black.copy(alpha = 0.75f)
 ) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(TimerCardBg)
+            .background(cardColor)
+            .then(
+                if (borderWidth > 0.dp) Modifier.border(borderWidth, borderColor, RoundedCornerShape(cornerRadius))
+                else Modifier
+            )
     ) {
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize().padding(top = topInset),
@@ -1129,13 +1350,13 @@ private fun FlipDigitCard(
             val widthCapPx = if (digitCount > 0) (boxWidthPx * 0.90f) / (digitCount * 0.62f) else requestedPx
             val safeFontSizePx = minOf(requestedPx, heightCapPx, widthCapPx).coerceAtLeast(1f)
             val safeFontSize = with(density) { safeFontSizePx.toSp() }
-            FlipText(text = mainText, fontSize = safeFontSize, extraBold = extraBold)
+            FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
         }
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(dividerThickness)
-                .background(Color.Black.copy(alpha = 0.75f))
+                .background(dividerColor)
                 .align(Alignment.Center)
         )
     }
@@ -1152,7 +1373,8 @@ private fun FlipBlock(
     cornerFontSize: TextUnit,
     cornerIsNumeric: Boolean,
     boxAspectRatio: Float,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    faceStyle: ClockFaceStyle? = null
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
         FlipDigitCard(
@@ -1161,12 +1383,17 @@ private fun FlipBlock(
             fontSize = fontSize,
             dividerThickness = dividerThickness,
             extraBold = true,
-            topInset = if (topLabel.isNotEmpty()) 1.dp else 0.dp
+            topInset = if (topLabel.isNotEmpty()) 1.dp else 0.dp,
+            cardColor = faceStyle?.cardBackground ?: TimerCardBg,
+            digitColor = faceStyle?.digitColor ?: TimerDigit,
+            borderColor = faceStyle?.borderColor ?: Color.Transparent,
+            borderWidth = faceStyle?.borderWidth ?: 0.dp,
+            dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f)
         )
         if (topLabel.isNotEmpty()) {
             Text(
                 topLabel,
-                color = Color.White.copy(alpha = 0.78f),
+                color = faceStyle?.labelColor ?: Color.White.copy(alpha = 0.78f),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
@@ -1175,7 +1402,7 @@ private fun FlipBlock(
         if (cornerLabel.isNotEmpty()) {
             Text(
                 text = cornerLabel,
-                color = TimerDigit,
+                color = faceStyle?.digitColor ?: TimerDigit,
                 fontSize = cornerFontSize,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
@@ -1235,7 +1462,7 @@ private fun SplitTimeDisplay(
 
 /* ---------------- live clock ---------------- */
 @Composable
-private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSettings: TimerBoxSettings) {
+private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSettings: TimerBoxSettings, clockFace: ClockFace = ClockFace.CLASSIC) {
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -1254,6 +1481,7 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSetting
     val minute = calendar.get(Calendar.MINUTE)
     val second = calendar.get(Calendar.SECOND)
     val amPm = if (hour24 < 12) "AM" else "PM"
+    val faceStyle = remember(clockFace) { clockFaceStyle(clockFace) }
 
     val mainFontSize = boxSettings.fontSizeSp.sp
     val dividerThickness = if (isLandscape) 8.dp else 3.dp
@@ -1276,7 +1504,8 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSetting
             cornerFontSize = cornerFontSize,
             cornerIsNumeric = false,
             boxAspectRatio = 1f,
-            modifier = Modifier.weight(1f).height(boxHeightDp)
+            modifier = Modifier.weight(1f).height(boxHeightDp),
+            faceStyle = faceStyle
         )
         FlipBlock(
             topLabel = dayLabel,
@@ -1288,7 +1517,8 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSetting
             cornerFontSize = cornerFontSize,
             cornerIsNumeric = true,
             boxAspectRatio = 1f,
-            modifier = Modifier.weight(1f).height(boxHeightDp)
+            modifier = Modifier.weight(1f).height(boxHeightDp),
+            faceStyle = faceStyle
         )
     }
 }
@@ -1659,13 +1889,17 @@ fun TimerHomeDialog(
     onNavigateToCalendar: () -> Unit
 ) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { QuickTimerState.ensureLoaded(context) }
+    LaunchedEffect(Unit) {
+        QuickTimerState.ensureLoaded(context)
+        ClockFaceState.ensureLoaded(context)
+    }
     var is24Hour by remember { mutableStateOf(loadIs24Hour(context)) }
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showStudy by rememberSaveable { mutableStateOf(false) }
     var showQuickTimer by rememberSaveable { mutableStateOf(false) }
+    var showClockFacePicker by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
@@ -1711,16 +1945,18 @@ fun TimerHomeDialog(
             }
         }
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
+            val activeFaceStyle = remember(ClockFaceState.current) { clockFaceStyle(ClockFaceState.current) }
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(activeFaceStyle.screenBackground)
                     .pointerInput("timer-home-tap") {
                         detectTapGestures(onTap = { controlsVisible = !controlsVisible })
                     }
             ) {
                 StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
-                val activeClockBoxSettings = remember(isLandscape) { loadTimerBoxSettings(context, isLandscape = isLandscape, scope = "clock") }
+                val activeClockBoxSettings = TimerBoxLiveSettingsState.get(context, "clock", isLandscape)
                 val iconSize = if (isLandscape) 32.dp else 44.dp
                 val panelReserve = iconSize + 26.dp
                 val targetEndPadding = if (isLandscape && controlsVisible) panelReserve else 0.dp
@@ -1742,7 +1978,7 @@ fun TimerHomeDialog(
                         .fillMaxWidth()
                         .padding(end = animatedEndPadding, bottom = animatedBottomPadding)
                 ) {
-                    LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape, boxSettings = activeClockBoxSettings)
+                    LiveClockDisplay(is24Hour = is24Hour, isLandscape = isLandscape, boxSettings = activeClockBoxSettings, clockFace = ClockFaceState.current)
                 }
 
                 // Central-only brightness gesture zone: bounded box so a drag
@@ -1786,6 +2022,7 @@ fun TimerHomeDialog(
                             }
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 DropdownMenuItem(text = { Text("Timer settings") }, onClick = { showMenu = false; showSettings = true })
+                                DropdownMenuItem(text = { Text("Clock face") }, onClick = { showMenu = false; showClockFacePicker = true })
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                                 DropdownMenuItem(text = { Text("Calendar") }, onClick = { showMenu = false; onNavigateToCalendar() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
@@ -1833,6 +2070,14 @@ fun TimerHomeDialog(
 
     if (showQuickTimer) {
         QuickTimerDialog(onDismiss = { showQuickTimer = false })
+    }
+
+    if (showClockFacePicker) {
+        ClockFacePickerDialog(
+            current = ClockFaceState.current,
+            onSelect = { face -> ClockFaceState.update(context, face) },
+            onDismiss = { showClockFacePicker = false }
+        )
     }
 }
 private data class BoxEditTarget(val scope: String, val isLandscape: Boolean, val label: String)
@@ -1924,7 +2169,8 @@ private fun TimerSettingsDialog(
                         DigitTransitionStyle.SLIDE to "Slide",
                         DigitTransitionStyle.FADE_SCALE to "Fade & Pop",
                         DigitTransitionStyle.BOUNCE to "Bounce",
-                        DigitTransitionStyle.WAVE to "Wave"
+                        DigitTransitionStyle.WAVE to "Wave",
+                        DigitTransitionStyle.SPLIT_FLAP to "Split-Flap"
                     ).forEach { (styleOption, label) ->
                         val selected = DigitStyleState.current == styleOption
                         Box(
@@ -2011,15 +2257,108 @@ private fun TimerSettingsDialog(
     }
 
     boxEditTarget?.let { target ->
-        val currentSettings = remember(target) { loadTimerBoxSettings(context, isLandscape = target.isLandscape, scope = target.scope) }
+        val currentSettings = remember(target) { TimerBoxLiveSettingsState.get(context, target.scope, target.isLandscape) }
         TimerBoxSettingsPanel(
             settings = currentSettings,
             isLandscape = target.isLandscape,
             scopeLabel = target.label,
-            onSettingsChange = { updated -> saveTimerBoxSettings(context, target.isLandscape, updated, scope = target.scope) },
+            onSettingsChange = { updated ->
+                saveTimerBoxSettings(context, target.isLandscape, updated, scope = target.scope)
+                TimerBoxLiveSettingsState.update(target.scope, target.isLandscape, updated)
+            },
             onDismiss = { boxEditTarget = null },
             onResetDefaults = { defaultTimerBoxSettings(target.scope, target.isLandscape) }
         )
+    }
+}
+
+@Composable
+private fun ClockFacePreviewMini(style: ClockFaceStyle) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(style.screenBackground)
+            .padding(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        listOf("12", "34").forEach { text ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape((style.cornerRadius / 3).coerceAtMost(10.dp)))
+                    .background(style.cardBackground)
+                    .then(
+                        if (style.borderWidth > 0.dp) Modifier.border(style.borderWidth, style.borderColor, RoundedCornerShape((style.cornerRadius / 3).coerceAtMost(10.dp)))
+                        else Modifier
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text, color = style.digitColor, fontSize = 15.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClockFacePickerDialog(
+    current: ClockFace,
+    onSelect: (ClockFace) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = TimerCardBg,
+            contentColor = Color.White
+        ) {
+            Column(modifier = Modifier.padding(20.dp).heightIn(max = 560.dp)) {
+                Text("Clock face", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("Tap a face to make it active", color = Color.LightGray, fontSize = 12.sp)
+                Spacer(Modifier.height(14.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(ClockFace.entries) { face ->
+                        val style = remember(face) { clockFaceStyle(face) }
+                        val selected = face == current
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (selected) TimerAccent.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.04f))
+                                .border(
+                                    width = if (selected) 1.6.dp else 1.dp,
+                                    color = if (selected) TimerAccent else Color.White.copy(alpha = 0.1f),
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .pointerInput(face) { detectTapGestures(onTap = { onSelect(face) }) }
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.width(96.dp)) { ClockFacePreviewMini(style) }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                clockFaceLabel(face),
+                                color = Color.White,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (selected) {
+                                Text("✓", color = TimerAccent, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 
@@ -2111,8 +2450,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var pickerHours by rememberSaveable { mutableStateOf(((countdownTotalMillis / 3_600_000L).toInt())) }
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
     var showCustomTimeDialog by remember { mutableStateOf(false) }
-    var portraitBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = false)) }
-    var landscapeBoxSettings by remember { mutableStateOf(loadTimerBoxSettings(context, isLandscape = true)) }
     var maxWidthLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
 
     fun applyPickerToCountdown() {
@@ -2185,11 +2522,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                 StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
-                LaunchedEffect(isLandscape) {
-                    if (isLandscape) landscapeBoxSettings = loadTimerBoxSettings(context, isLandscape = true)
-                    else portraitBoxSettings = loadTimerBoxSettings(context, isLandscape = false)
-                }
-                val activeBoxSettings = if (isLandscape) landscapeBoxSettings else portraitBoxSettings
+                val activeBoxSettings = TimerBoxLiveSettingsState.get(context, "quick", isLandscape)
                 val digitFontSize = activeBoxSettings.fontSizeSp.sp
                 val digitFontWeight = FontWeight(activeBoxSettings.fontWeightValue)
                 val dividerThickness = if (isLandscape) 7.dp else 3.dp
@@ -2375,7 +2708,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             QuickTimerState.pause(context)
                                         } else {
                                             hasStarted = true
-                                            QuickTimerPopupState.manuallyDismissed = false
                                             QuickTimerState.resume()
                                         }
                                     }
@@ -2427,7 +2759,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         QuickTimerState.pause(context)
                                     } else {
                                         hasStarted = true
-                                        QuickTimerPopupState.manuallyDismissed = false
                                         QuickTimerState.resume()
                                     }
                                 }
@@ -2651,12 +2982,6 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                 else -> s
             }
         }
-        if (!subject.isRunning) {
-            // Manually starting this subject makes its popup eligible again,
-            // and pins it as the popup's active subject through pause/resume.
-            StudyTimerPopupState.manuallyDismissedSubjectId = null
-            StudyTimerPopupState.activeSubjectId = subject.id
-        }
         persist(updated)
     }
 
@@ -2786,20 +3111,6 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                         customiseForSubject = subject
                         optionsForSubject = null
                     }) { Text("Customise time", color = SoftNeutral) }
-                    TextButton(onClick = {
-                        val newValue = !subject.popupEnabled
-                        val updated = subjects.map { s -> if (s.id == subject.id) s.copy(popupEnabled = newValue) else s }
-                        persist(updated)
-                        if (!newValue) {
-                            StudyTimerPopupState.manuallyDismissedSubjectId = null
-                        }
-                        optionsForSubject = subject.copy(popupEnabled = newValue)
-                    }) {
-                        Text(
-                            if (subject.popupEnabled) "Popup Box for Study Timer: On" else "Popup Box for Study Timer: Off",
-                            color = SoftNeutral
-                        )
-                    }
                     TextButton(onClick = {
                         persist(subjects.filterNot { it.id == subject.id })
                         optionsForSubject = null
