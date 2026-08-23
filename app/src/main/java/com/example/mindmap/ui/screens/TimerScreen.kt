@@ -490,6 +490,12 @@ private fun StudyTimerTicker() {
 
 private enum class CharacterReaction { DANCE, CLAP, JUMP, SURPRISED, WAVE }
 
+private fun strikeVideoCount(context: Context): Int {
+    var index = 1
+    while (context.resources.getIdentifier("strike_video_$index", "raw", context.packageName) != 0) index++
+    return index - 1
+}
+
 private fun reactionForStrike(strikeCount: Int): CharacterReaction {
     val reactions = CharacterReaction.entries
     return reactions[(strikeCount - 1).coerceAtLeast(0) % reactions.size]
@@ -572,103 +578,21 @@ private fun strikeCountForElapsed(elapsedMillis: Long): Int {
 private val StudyStrikeMessages = listOf(
     "অসাধারণ পরিশ্রম! গর্বিত তোর জন্য।⭐ ",
     "দারুণ! এভাবেই এগিয়ে যা। 💪",
-    "সাবাশ খানকির ছেলে তোকে দিয়েই হবে 🔥",
+    "সাবাশ খানকির ছেলে তোকে দিয়েই হবে 🔥",
     "থামিস না, তুই একদম ঠিক পথে আছিস! 🚀",
     "চমৎকার! আরেকটা স্ট্রাইক তোর ঝুলিতে। 🏆"
 )
 
-private val ShadowKingMessages = listOf(
-    "সিংহাসন থেকে দেখছি তোর পরিশ্রম... মন্দ না। 🖤",
-    "অন্ধকারেও এগিয়ে যাওয়াই আসল শক্তি। 🔥",
-    "থামলে চলবে না, রাজত্ব এমনি আসে না। 👑",
-    "তোর ফোকাস দেখে কাকগুলাও চুপ হয়ে গেছে। 🐦‍⬛",
-    "আরেকটা স্ট্রাইক... সিংহাসনের দিকে এক পা এগোলি। 🏰"
-)
-
-internal data class CharacterConfig(
-    val id: String,
-    val name: String,
-    val audioPrefix: String,
-    val backgroundColorArgb: Long,
-    val defaultMessages: List<String>
-)
-
-private fun loadCharacterMessages(context: Context, characterId: String, fallback: List<String>): List<String> {
-    val raw = context.getSharedPreferences("character_config", Context.MODE_PRIVATE).getString("${characterId}_messages", null)
-        ?: return fallback
-    val parsed = runCatching {
-        val arr = org.json.JSONArray(raw)
-        buildList { repeat(arr.length()) { i -> add(arr.getString(i)) } }
-    }.getOrDefault(emptyList())
-    return parsed.ifEmpty { fallback }
-}
-
-private fun saveCharacterMessages(context: Context, characterId: String, messages: List<String>) {
-    val arr = org.json.JSONArray()
-    messages.forEach { arr.put(it) }
-    context.getSharedPreferences("character_config", Context.MODE_PRIVATE).edit()
-        .putString("${characterId}_messages", arr.toString()).apply()
-}
-
-private fun loadCharacterName(context: Context, characterId: String, fallback: String): String =
-    context.getSharedPreferences("character_config", Context.MODE_PRIVATE).getString("${characterId}_name", fallback) ?: fallback
-
-private fun saveCharacterName(context: Context, characterId: String, name: String) {
-    context.getSharedPreferences("character_config", Context.MODE_PRIVATE).edit()
-        .putString("${characterId}_name", name).apply()
-}
-
-internal object CharacterStore {
-    private val baseCharacters = listOf(
-        CharacterConfig(
-            id = "char1",
-            name = "Chubby",
-            audioPrefix = "strike",
-            backgroundColorArgb = 0xFF0B3D91,
-            defaultMessages = StudyStrikeMessages
-        ),
-        CharacterConfig(
-            id = "char2",
-            name = "Shadow King",
-            audioPrefix = "strike_char2",
-            backgroundColorArgb = 0xFF1A0000,
-            defaultMessages = ShadowKingMessages
-        )
-    )
-
-    var characters by mutableStateOf(baseCharacters)
-        private set
-
-    fun ensureLoaded(context: Context) {
-        characters = baseCharacters.map { base ->
-            base.copy(name = loadCharacterName(context, base.id, base.name))
-        }
-    }
-
-    fun messagesFor(context: Context, character: CharacterConfig): List<String> =
-        loadCharacterMessages(context, character.id, character.defaultMessages)
-
-    fun updateName(context: Context, characterId: String, name: String) {
-        saveCharacterName(context, characterId, name)
-        ensureLoaded(context)
-    }
-
-    fun updateMessages(context: Context, characterId: String, messages: List<String>) {
-        saveCharacterMessages(context, characterId, messages)
-    }
-}
-
-private fun characterMp3Count(context: Context, audioPrefix: String): Int {
+private fun strikeMp3Count(context: Context): Int {
     var index = 1
-    while (context.resources.getIdentifier("${audioPrefix}_$index", "raw", context.packageName) != 0) index++
+    while (context.resources.getIdentifier("strike_$index", "raw", context.packageName) != 0) index++
     return index - 1
 }
 
-private fun characterStrikeSoundResName(context: Context, audioPrefix: String, strikeIndex: Int): String? {
-    val available = characterMp3Count(context, audioPrefix)
-    if (available <= 0) return null
+private fun studyStrikeSoundResName(context: Context, strikeIndex: Int): String {
+    val available = strikeMp3Count(context).coerceAtLeast(1)
     val cyclicIndex = ((strikeIndex - 1) % available) + 1
-    return "${audioPrefix}_$cyclicIndex"
+    return "strike_$cyclicIndex"
 }
 
 private object TimerSoundPlayer {
@@ -723,9 +647,9 @@ private object TimerSoundPlayer {
     }
 }
 
-private fun playCharacterStrikeSound(context: Context, audioPrefix: String, strikeIndex: Int, onComplete: (() -> Unit)? = null) {
-    val resName = characterStrikeSoundResName(context, audioPrefix, strikeIndex)
-    if (resName != null && context.resources.getIdentifier(resName, "raw", context.packageName) != 0) {
+private fun playStrikeSound(context: Context, strikeIndex: Int, onComplete: (() -> Unit)? = null) {
+    val resName = studyStrikeSoundResName(context, strikeIndex)
+    if (context.resources.getIdentifier(resName, "raw", context.packageName) != 0) {
         TimerSoundPlayer.play(context, resName, onComplete)
     } else {
         onComplete?.invoke()
@@ -1118,134 +1042,132 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
     }
 }
 @Composable
-private fun ShadowKingCelebrationCharacter(reaction: CharacterReaction) {
-    val infinite = rememberInfiniteTransition(label = "shadowKingCharacter")
-    val glow by infinite.animateFloat(
-        initialValue = 0.5f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "glow"
-    )
-    val sway by infinite.animateFloat(
-        initialValue = -1f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "sway"
-    )
-    val wingFlap by infinite.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "wingFlap"
-    )
-    val entrance = remember { Animatable(0f) }
-    LaunchedEffect(reaction) {
-        entrance.snapTo(0f)
-        entrance.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 160f))
-    }
-
-    Canvas(
-        modifier = Modifier
-            .size(240.dp)
-            .graphicsLayer {
-                translationX = sway * 5f
-                translationY = (1f - entrance.value) * 90f
-                scaleX = 0.5f + entrance.value * 0.5f
-                scaleY = 0.5f + entrance.value * 0.5f
-                alpha = entrance.value
-            }
-    ) {
-        val w = size.width
-        val h = size.height
-        val throneColor = Color(0xFF2A1414)
-        val throneEdge = Color(0xFF1A0A0A)
-        val robeColor = Color(0xFF14141C)
-        val robeShadow = Color(0xFF0A0A10)
-        val skinColor = Color(0xFFE9C4A0)
-        val eyeGlow = Color(0xFFFF2222)
-
-        for (i in 0..6) {
-            val spikeX = w * (0.18f + i * 0.095f)
-            drawPath(
-                path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(spikeX, h * 0.06f)
-                    lineTo(spikeX + w * 0.02f, h * 0.22f)
-                    lineTo(spikeX - w * 0.02f, h * 0.22f)
-                    close()
-                },
-                color = throneEdge
-            )
-        }
-        drawRoundRect(
-            color = throneColor,
-            topLeft = Offset(w * 0.14f, h * 0.18f),
-            size = Size(w * 0.72f, h * 0.66f),
-            cornerRadius = CornerRadius(w * 0.05f)
-        )
-
-        listOf(0f, 1f, 2f).forEach { idx ->
-            val angle = (wingFlap * 40f) + idx * 120f
-            val radians = Math.toRadians(angle.toDouble())
-            val cx = w * 0.5f + (kotlin.math.cos(radians).toFloat() * w * 0.46f)
-            val cy = h * 0.12f + (kotlin.math.sin(radians).toFloat() * h * 0.05f)
-            drawPath(
-                path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(cx - w * 0.03f, cy)
-                    lineTo(cx, cy - h * 0.015f)
-                    lineTo(cx + w * 0.03f, cy)
-                    lineTo(cx, cy + h * 0.01f)
-                    close()
-                },
-                color = Color.Black.copy(alpha = 0.75f)
-            )
-        }
-
-        drawRoundRect(
-            color = robeShadow,
-            topLeft = Offset(w * 0.30f, h * 0.34f),
-            size = Size(w * 0.42f, h * 0.46f),
-            cornerRadius = CornerRadius(w * 0.10f)
-        )
-        drawRoundRect(
-            color = robeColor,
-            topLeft = Offset(w * 0.31f, h * 0.33f),
-            size = Size(w * 0.40f, h * 0.44f),
-            cornerRadius = CornerRadius(w * 0.10f)
-        )
-
-        drawArc(
-            color = robeColor,
-            startAngle = 180f,
-            sweepAngle = 180f,
-            useCenter = true,
-            topLeft = Offset(w * 0.36f, h * 0.20f),
-            size = Size(w * 0.30f, h * 0.24f)
-        )
-
-        drawOval(color = skinColor, topLeft = Offset(w * 0.40f, h * 0.27f), size = Size(w * 0.22f, h * 0.20f))
-
-        drawCircle(color = eyeGlow.copy(alpha = glow), radius = w * 0.018f, center = Offset(w * 0.455f, h * 0.35f))
-        drawCircle(color = eyeGlow.copy(alpha = glow), radius = w * 0.018f, center = Offset(w * 0.545f, h * 0.35f))
-
-        drawRoundRect(
-            color = robeColor,
-            topLeft = Offset(w * 0.33f, h * 0.50f),
-            size = Size(w * 0.36f, h * 0.10f),
-            cornerRadius = CornerRadius(w * 0.05f)
-        )
-    }
-}
-
-@Composable
 private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { CharacterStore.ensureLoaded(context) }
-    val selectedCharacter = remember(strikeCount) { CharacterStore.characters.random() }
-    StrikeCharacterOverlay(strikeCount = strikeCount, character = selectedCharacter, onFinished = onFinished)
+    val videoCount = remember { strikeVideoCount(context) }
+    if (videoCount > 0) {
+        // প্রতি (videoCount + 1) স্ট্রাইকের একটা চক্র: videoCount-টা video (প্রতিটা একবার করে),
+        // তারপর একটা anime — এরপর চক্রটা আবার রিপিট করবে।
+        val cyclePosition = (strikeCount - 1).coerceAtLeast(0) % (videoCount + 1)
+        if (cyclePosition < videoCount) {
+            StrikeVideoOverlay(strikeCount = strikeCount, videoIndex = cyclePosition, onFinished = onFinished)
+        } else {
+            StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
+        }
+    } else {
+        StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
+    }
+}
+
+private fun strikeVideoResId(context: Context, videoIndex: Int): Int {
+    val available = mutableListOf<Int>()
+    var index = 1
+    while (true) {
+        val resId = context.resources.getIdentifier("strike_video_$index", "raw", context.packageName)
+        if (resId == 0) break
+        available += resId
+        index++
+    }
+    if (available.isEmpty()) {
+        val legacy = context.resources.getIdentifier("strike_video", "raw", context.packageName)
+        return legacy
+    }
+    return available[videoIndex.coerceIn(0, available.size - 1)]
 }
 
 @Composable
-private fun StrikeCharacterOverlay(strikeCount: Int, character: CharacterConfig, onFinished: () -> Unit) {
+private fun StrikeVideoOverlay(strikeCount: Int, videoIndex: Int, onFinished: () -> Unit) {
     val context = LocalContext.current
-    val messages = remember(character.id) { CharacterStore.messagesFor(context, character) }
-    val message = remember(strikeCount, character.id) { messages[(strikeCount - 1).coerceAtLeast(0) % messages.size] }
+    val alpha = remember { Animatable(0f) }
+    var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
+    var videoPrepared by remember(strikeCount) { mutableStateOf(false) }
+
+    fun finishOnce() {
+        if (!finishedOnce) {
+            finishedOnce = true
+            onFinished()
+        }
+    }
+
+    LaunchedEffect(strikeCount) {
+        // আগের কোনো celebration/MP3 এখনো বাজছে থাকলে বন্ধ করে দাও — দুইটা audio
+        // session একসাথে mix হলেই distortion/clipping শোনা যায়।
+        TimerSoundPlayer.stop()
+        alpha.snapTo(0f)
+        alpha.animateTo(1f, tween(220))
+        // Fallback ONLY for the case the video resource is missing/broken and
+        // never even starts playing. Once it starts, it always plays to its
+        // own full length via onCompletionListener below.
+        delay(6000)
+        if (!videoPrepared) finishOnce()
+    }
+
+    // No text, no character here — শুধু video, RED স্ট্রাইক ব্যাকগ্রাউন্ডের উপর।
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF7A0E0E))
+            .graphicsLayer { this.alpha = alpha.value }
+            .zIndex(500f)
+            .pointerInput("strike-video-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
+            val density = LocalDensity.current
+            val maxWidthPx = with(density) { maxWidth.toPx() }
+            val maxHeightPx = with(density) { maxHeight.toPx() }
+            AndroidView(
+                factory = { ctx ->
+                    android.widget.VideoView(ctx).apply {
+                        val resId = strikeVideoResId(ctx, videoIndex)
+                        if (resId != 0) {
+                            setVideoURI(Uri.parse("android.resource://${ctx.packageName}/$resId"))
+                            setOnCompletionListener { finishOnce() }
+                            setOnErrorListener { _, _, _ -> finishOnce(); true }
+                            setOnPreparedListener { player ->
+                                videoPrepared = true
+                                player.isLooping = false
+                                runCatching {
+                                    player.setAudioAttributes(
+                                        android.media.AudioAttributes.Builder()
+                                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                                            .build()
+                                    )
+                                    // ডিভাইসভেদে ডিফল্ট gain 1.0-এর বেশি ধরে distortion তৈরি করে;
+                                    // স্পষ্ট full (unclipped) volume সেট করে দেওয়া হচ্ছে।
+                                    player.setVolume(1f, 1f)
+                                }
+                                runCatching {
+                                    // কিছু device-এ OS নিজে থেকে auxiliary environmental/preset
+                                    // reverb effect attach করে দেয়, যেটা "খালি কলসিতে কথা বলার মতো"
+                                    // hollow/echo শোনায়। explicit ভাবে সেটা বন্ধ করে দেওয়া হচ্ছে।
+                                    player.setAuxEffectSendLevel(0f)
+                                }
+                                val videoW = player.videoWidth.toFloat().coerceAtLeast(1f)
+                                val videoH = player.videoHeight.toFloat().coerceAtLeast(1f)
+                                val scale = minOf(maxWidthPx / videoW, maxHeightPx / videoH)
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    (videoW * scale).toInt().coerceAtLeast(1),
+                                    (videoH * scale).toInt().coerceAtLeast(1)
+                                )
+                                start()
+                            }
+                        } else {
+                            finishOnce()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
+    val context = LocalContext.current
+    val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
     val reaction = remember(strikeCount) { reactionForStrike(strikeCount) }
     val scale = remember { Animatable(0.3f) }
     val alpha = remember { Animatable(0f) }
@@ -1262,14 +1184,16 @@ private fun StrikeCharacterOverlay(strikeCount: Int, character: CharacterConfig,
         }
     }
 
-    LaunchedEffect(strikeCount, character.id) {
+    LaunchedEffect(strikeCount) {
         scale.snapTo(0.3f)
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
         scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 260f))
 
+        // Character keeps reacting for exactly as long as the strike sound plays.
+        // If there's no sound resource, fall back to a minimum visible duration.
         val soundFinished = kotlinx.coroutines.CompletableDeferred<Unit>()
-        playCharacterStrikeSound(context, character.audioPrefix, strikeCount) { soundFinished.complete(Unit) }
+        playStrikeSound(context, strikeCount) { soundFinished.complete(Unit) }
         kotlinx.coroutines.withTimeoutOrNull(30000) { soundFinished.await() }
 
         finishOnce()
@@ -1277,7 +1201,7 @@ private fun StrikeCharacterOverlay(strikeCount: Int, character: CharacterConfig,
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(character.backgroundColorArgb))
+            .background(Color(0xFF0B3D91))
             .graphicsLayer { this.alpha = alpha.value }
             .zIndex(500f)
             .pointerInput("strike-celebration-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
@@ -1287,10 +1211,7 @@ private fun StrikeCharacterOverlay(strikeCount: Int, character: CharacterConfig,
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
         ) {
-            when (character.id) {
-                "char2" -> ShadowKingCelebrationCharacter(reaction = reaction)
-                else -> ChubbyCelebrationCharacter(reaction = reaction)
-            }
+            ChubbyCelebrationCharacter(reaction = reaction)
             Spacer(Modifier.height(14.dp))
             Text(
                 "$strikeCount Strike${if (strikeCount > 1) "s" else ""}!",
@@ -2350,7 +2271,6 @@ private fun TimerSettingsDialog(
     var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
     var floatingPopupLabelEnabled by remember { mutableStateOf(FloatingPopupLabelSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
-    var showCharacterSettings by remember { mutableStateOf(false) }
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
     val savedStrikeIntervalMinutes = StrikeSettingsState.intervalMinutes
