@@ -119,13 +119,59 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                 PopupMergeState.isMerged = true
             }
         } else {
-            // Separate back to a small clean offset near where they merged.
-            val targetX = quickParams.x
-            val targetY = quickParams.y + quickView.height + (14 * resources.displayMetrics.density).roundToInt()
-            animateLayoutParam(studyView, studyParams, targetX, targetY) {
+            // Separate back to a side-by-side position next to Quick, not stacked beneath it.
+            val gap = sideBySideGapPx()
+            val bounds = screenBounds()
+            val preferredRight = quickParams.x + quickView.width + gap
+            val fitsRight = preferredRight + studyView.width <= bounds.x
+            val targetX = if (fitsRight) preferredRight else (quickParams.x - studyView.width - gap).coerceAtLeast(0)
+            val targetY = quickParams.y
+            val clamped = clampToScreen(targetX, targetY, studyView.width, studyView.height)
+            animateLayoutParam(studyView, studyParams, clamped.x, clamped.y) {
                 PopupMergeState.isMerged = false
             }
         }
+    }
+
+    private fun sideBySideGapPx(): Int = (14 * resources.displayMetrics.density).roundToInt()
+
+    private fun reflowSideBySideIfNeeded() {
+        if (PopupMergeState.isMerged) return
+        val quickView = quickComposeView ?: return
+        val studyView = studyComposeView ?: return
+        val quickParams = quickLayoutParams ?: return
+        val studyParams = studyLayoutParams ?: return
+        if (!FloatingPopupVisibility.showQuick || !FloatingPopupVisibility.showStudy) return
+        if (quickView.width <= 0 || studyView.width <= 0) return
+
+        val gap = sideBySideGapPx()
+        val quickRect = android.graphics.Rect(quickParams.x, quickParams.y, quickParams.x + quickView.width, quickParams.y + quickView.height)
+        val studyRect = android.graphics.Rect(studyParams.x, studyParams.y, studyParams.x + studyView.width, studyParams.y + studyView.height)
+        if (!android.graphics.Rect.intersects(quickRect, studyRect)) return
+
+        val bounds = screenBounds()
+        val preferredRight = quickParams.x + quickView.width + gap
+        val fitsRight = preferredRight + studyView.width <= bounds.x
+        val targetX: Int
+        val targetY: Int
+        if (fitsRight) {
+            targetX = preferredRight
+            targetY = quickParams.y
+        } else {
+            val preferredLeft = quickParams.x - studyView.width - gap
+            if (preferredLeft >= 0) {
+                targetX = preferredLeft
+                targetY = quickParams.y
+            } else {
+                // Not enough horizontal room either side — nudge study slightly above quick
+                // instead of leaving them overlapping.
+                targetX = studyParams.x
+                targetY = (quickParams.y - studyView.height - gap).coerceAtLeast(0)
+            }
+        }
+        val clamped = clampToScreen(targetX, targetY, studyView.width, studyView.height)
+        if (clamped.x == studyParams.x && clamped.y == studyParams.y) return
+        animateLayoutParam(studyView, studyParams, clamped.x, clamped.y) {}
     }
 
     private fun animateLayoutParam(
@@ -246,6 +292,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
         params.x = center.x - sizePx / 2
         params.y = center.y - sizePx / 2
         val view = ComposeView(this)
+        view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         view.setViewTreeLifecycleOwner(this)
         view.setViewTreeViewModelStoreOwner(this)
         view.setViewTreeSavedStateRegistryOwner(this)
@@ -285,6 +332,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
         quickLayoutParams = quickParams
 
         val quickView = ComposeView(this)
+        quickView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         quickView.setViewTreeLifecycleOwner(this)
         quickView.setViewTreeViewModelStoreOwner(this)
         quickView.setViewTreeSavedStateRegistryOwner(this)
@@ -322,8 +370,12 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     QuickPopupDragState.isDragging = false
                     QuickPopupDragState.isNearRemove = false
                     if (!StudyPopupDragState.isDragging) hideRemoveTarget()
-                    if (shouldRemove) QuickTimerPopupState.manuallyDismissed = true
-                    else reflowMergedIfNeeded()
+                    if (shouldRemove) {
+                        QuickTimerPopupState.manuallyDismissed = true
+                    } else {
+                        reflowMergedIfNeeded()
+                        reflowSideBySideIfNeeded()
+                    }
                 },
                 onTripleTap = { toggleMerge() }
             )
@@ -340,11 +392,12 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
             PixelFormat.TRANSLUCENT
         )
         studyParams.gravity = Gravity.TOP or Gravity.START
-        studyParams.x = 40
-        studyParams.y = 340
+        studyParams.x = 220
+        studyParams.y = 200
         studyLayoutParams = studyParams
 
         val studyView = ComposeView(this)
+        studyView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         studyView.setViewTreeLifecycleOwner(this)
         studyView.setViewTreeViewModelStoreOwner(this)
         studyView.setViewTreeSavedStateRegistryOwner(this)
@@ -391,6 +444,8 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
                     } else if (PopupMergeState.isMerged) {
                         // Dragging Study away while merged breaks the merge.
                         PopupMergeState.isMerged = false
+                    } else {
+                        reflowSideBySideIfNeeded()
                     }
                 },
                 onTripleTap = { toggleMerge() }
@@ -398,6 +453,7 @@ class FloatingTimerService : Service(), LifecycleOwner, ViewModelStoreOwner, Sav
         }
         studyComposeView = studyView
         runCatching { wm.addView(studyView, studyParams) }
+        studyView.post { reflowSideBySideIfNeeded() }
     }
 
     private fun openApp(section: String) {
@@ -481,7 +537,7 @@ private fun RemoveTargetOverlay() {
                         shape = CircleShape,
                         ambientColor = removeGlowColor,
                         spotColor = removeGlowColor,
-                        clip = false
+                        clip = true
                     )
                     .clip(CircleShape)
                     .background(

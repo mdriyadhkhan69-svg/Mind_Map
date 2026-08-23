@@ -202,7 +202,7 @@ internal enum class ClockFace {
 }
 
 private fun clockFaceLabel(face: ClockFace): String = when (face) {
-    ClockFace.CLASSIC -> "Classic"
+    ClockFace.CLASSIC -> "Default"
     ClockFace.MINIMAL_PREMIUM -> "Minimal Premium"
     ClockFace.DARK_ELEGANT -> "Dark Elegant"
     ClockFace.GLASS_GLOSSY -> "Glass"
@@ -227,7 +227,8 @@ private data class ClockFaceStyle(
     val dividerColor: Color,
     val labelColor: Color,
     val glowColor: Color,
-    val glowAlpha: Float
+    val glowAlpha: Float,
+    val splitDigitGapDp: Dp = 0.dp
 )
 
 private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
@@ -305,8 +306,9 @@ private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
         screenBackground = Brush.linearGradient(listOf(Color(0xFF06060A), Color(0xFF0C0C12))),
         cardBackground = Color(0xFF17171D), digitColor = Color(0xFFF2F2F2), cornerRadius = 8.dp,
         borderColor = Color.Black, borderWidth = 2.dp,
-        dividerColor = Color.Black, labelColor = Color.White.copy(alpha = 0.5f),
-        glowColor = Color.Transparent, glowAlpha = 0f
+        dividerColor = Color(0xFF17171D), labelColor = Color.White.copy(alpha = 0.5f),
+        glowColor = Color.Transparent, glowAlpha = 0f,
+        splitDigitGapDp = 7.dp
     )
     ClockFace.MONOCHROME -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color.Black, Color(0xFF0A0A0A))),
@@ -1478,19 +1480,24 @@ private fun FlipDigitCell(
         }
 
         DigitTransitionStyle.SPLIT_FLAP -> {
+            // bottomChar shobshomoy real-time `char`-er sathe sরাসরি bnadha — kono
+            // animation/coroutine complete howar upor nirvor kore na, tai timer
+            // kokhono stale/delayed digit dekhabe na, char jokhon change hoy tokhoni.
+            val bottomChar = char
             var topChar by remember { mutableStateOf(char) }
-            var bottomChar by remember { mutableStateOf(char) }
+            var previousChar by remember { mutableStateOf(char) }
             val topFlip = remember { Animatable(0f) }
             val bottomFlip = remember { Animatable(0f) }
             LaunchedEffect(char) {
-                if (char != bottomChar) {
-                    topFlip.snapTo(0f)
-                    topFlip.animateTo(-90f, tween(130, easing = FastOutLinearInEasing))
-                    topChar = char
+                if (char != previousChar) {
+                    topChar = previousChar
+                    previousChar = char
                     topFlip.snapTo(0f)
                     bottomFlip.snapTo(90f)
-                    bottomChar = char
-                    bottomFlip.animateTo(0f, tween(150, easing = LinearOutSlowInEasing))
+                    // Top-flip purely decorative — nijer alada coroutine-e chole,
+                    // bottom-half-er correctness/accuracy-ke kokhono block/gate kore na.
+                    launch { runCatching { topFlip.animateTo(-90f, tween(130, easing = FastOutLinearInEasing)) } }
+                    runCatching { bottomFlip.animateTo(0f, tween(150, easing = LinearOutSlowInEasing)) }
                 }
             }
             Box(contentAlignment = Alignment.Center) {
@@ -1563,7 +1570,8 @@ private fun FlipDigitCard(
     digitColor: Color = TimerDigit,
     borderColor: Color = Color.Transparent,
     borderWidth: Dp = 0.dp,
-    dividerColor: Color = Color.Black.copy(alpha = 0.75f)
+    dividerColor: Color = Color.Black.copy(alpha = 0.75f),
+    splitGapDp: Dp = 0.dp
 ) {
     Box(
         modifier = modifier
@@ -1595,13 +1603,12 @@ private fun FlipDigitCard(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(dividerThickness)
+                .height(if (splitGapDp > dividerThickness) splitGapDp else dividerThickness)
                 .background(dividerColor)
                 .align(Alignment.Center)
         )
     }
 }
-
 @Composable
 private fun FlipBlock(
     topLabel: String,
@@ -1628,7 +1635,8 @@ private fun FlipBlock(
             digitColor = faceStyle?.digitColor ?: TimerDigit,
             borderColor = faceStyle?.borderColor ?: Color.Transparent,
             borderWidth = faceStyle?.borderWidth ?: 0.dp,
-            dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f)
+            dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f),
+            splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp
         )
         if (topLabel.isNotEmpty()) {
             Text(
@@ -1666,7 +1674,8 @@ private fun SplitTimeDisplay(
     boxHeight: Dp,
     spacing: Dp = 12.dp,
     fontWeight: FontWeight = FontWeight.Black,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    faceStyle: ClockFaceStyle? = null
 ) {
     val totalSeconds = totalMillis / 1000
     val h = totalSeconds / 3600
@@ -1686,11 +1695,17 @@ private fun SplitTimeDisplay(
                     fontSize = fontSize,
                     dividerThickness = dividerThickness,
                     extraBold = true,
-                    topInset = 1.dp
+                    topInset = 1.dp,
+                    cardColor = faceStyle?.cardBackground ?: TimerCardBg,
+                    digitColor = faceStyle?.digitColor ?: TimerDigit,
+                    borderColor = faceStyle?.borderColor ?: Color.Transparent,
+                    borderWidth = faceStyle?.borderWidth ?: 0.dp,
+                    dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f),
+                    splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp
                 )
                 Text(
                     label,
-                    color = Color.White.copy(alpha = 0.78f),
+                    color = faceStyle?.labelColor ?: Color.White.copy(alpha = 0.78f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
@@ -2310,7 +2325,6 @@ fun TimerHomeDialog(
                             }
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 DropdownMenuItem(text = { Text("Timer settings") }, onClick = { showMenu = false; showSettings = true })
-                                DropdownMenuItem(text = { Text("Clock face") }, onClick = { showMenu = false; showClockFacePicker = true })
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                                 DropdownMenuItem(text = { Text("Calendar") }, onClick = { showMenu = false; onNavigateToCalendar() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
@@ -2384,6 +2398,8 @@ private fun TimerSettingsDialog(
     var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
     var floatingPopupLabelEnabled by remember { mutableStateOf(FloatingPopupLabelSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
+    var showClockFacePickerInSettings by remember { mutableStateOf(false) }
+    ClockFaceState.ensureLoaded(context)
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
     val savedStrikeIntervalMinutes = StrikeSettingsState.intervalMinutes
@@ -2536,12 +2552,31 @@ private fun TimerSettingsDialog(
                         Text(target.label, color = SoftNeutral, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
                     }
                 }
+                Spacer(Modifier.height(20.dp))
+                Text("Clock face", color = Color.LightGray, fontSize = 14.sp)
+                Spacer(Modifier.height(6.dp))
+                TextButton(onClick = { showClockFacePickerInSettings = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        clockFaceLabel(ClockFaceState.current),
+                        color = SoftNeutral,
+                        modifier = Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
                     Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
                 }
             }
         }
+    }
+
+    if (showClockFacePickerInSettings) {
+        ClockFacePickerDialog(
+            current = ClockFaceState.current,
+            onSelect = { face -> ClockFaceState.update(context, face) },
+            onDismiss = { showClockFacePickerInSettings = false }
+        )
     }
 
     boxEditTarget?.let { target ->
@@ -2805,8 +2840,13 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
             }
         }
 
+        val activeFaceStyle = remember(ClockFaceState.current) { clockFaceStyle(ClockFaceState.current) }
         Surface(color = TimerBg, modifier = Modifier.fillMaxSize(), contentColor = Color.White) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(activeFaceStyle.screenBackground)
+            ) {
                 StudyTimerTicker()
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
@@ -2914,7 +2954,8 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             boxHeight = boxHeightDp,
                             spacing = boxSpacingDp,
                             fontWeight = digitFontWeight,
-                            modifier = Modifier.width(displayWidth)
+                            modifier = Modifier.width(displayWidth),
+                            faceStyle = activeFaceStyle
                         )
                     }
 
@@ -2996,6 +3037,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             QuickTimerState.pause(context)
                                         } else {
                                             hasStarted = true
+                                            QuickTimerPopupState.manuallyDismissed = false
                                             QuickTimerState.resume()
                                         }
                                     }
@@ -3047,6 +3089,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         QuickTimerState.pause(context)
                                     } else {
                                         hasStarted = true
+                                        QuickTimerPopupState.manuallyDismissed = false
                                         QuickTimerState.resume()
                                     }
                                 }
@@ -3252,6 +3295,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
 
     fun toggleRunning(subject: StudySubject) {
         val now = System.currentTimeMillis()
+        val isStarting = !subject.isRunning
         val updated = subjects.map { s ->
             when {
                 s.id == subject.id && s.isRunning -> s.copy(
@@ -3268,6 +3312,12 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                     accumulatedMillis = s.currentElapsedMillis(now)
                 )
                 else -> s
+            }
+        }
+        if (isStarting) {
+            StudyTimerPopupState.activeSubjectId = subject.id
+            if (StudyTimerPopupState.manuallyDismissedSubjectId == subject.id) {
+                StudyTimerPopupState.manuallyDismissedSubjectId = null
             }
         }
         persist(updated)
@@ -3399,6 +3449,21 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                         customiseForSubject = subject
                         optionsForSubject = null
                     }) { Text("Customise time", color = SoftNeutral) }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Text("Show Popup Box for Study Timer", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = subject.popupEnabled,
+                            onCheckedChange = { enabled ->
+                                val updated = subjects.map { s -> if (s.id == subject.id) s.copy(popupEnabled = enabled) else s }
+                                persist(updated)
+                                optionsForSubject = updated.firstOrNull { it.id == subject.id }
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                        )
+                    }
                     TextButton(onClick = {
                         persist(subjects.filterNot { it.id == subject.id })
                         optionsForSubject = null
