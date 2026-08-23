@@ -1069,7 +1069,8 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
 
         // twinkling sparkle stars around her
         drawSparkleStar(Offset(w * 0.14f, h * 0.18f), w * 0.05f, Color(0xFFFFF3C4), twinkle)
-        drawSparkleStar(Offset(w * 0.86f, h * 0.30f), w * 0.035f, Color(0xFFFFF3C4), twinkle2)        drawSparkleStar(Offset(w * 0.80f, h * 0.10f), w * 0.028f, Color.White, twinkle)
+        drawSparkleStar(Offset(w * 0.86f, h * 0.30f), w * 0.035f, Color(0xFFFFF3C4), twinkle2)
+        drawSparkleStar(Offset(w * 0.80f, h * 0.10f), w * 0.028f, Color.White, twinkle)
         drawSparkleStar(Offset(w * 0.20f, h * 0.72f), w * 0.022f, Color.White, twinkle2)
 
         // legs / socks / shoes
