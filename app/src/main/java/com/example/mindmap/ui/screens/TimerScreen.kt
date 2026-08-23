@@ -102,7 +102,8 @@ internal data class StudySubject(
     val name: String,
     val accumulatedMillis: Long = 0L,
     val isRunning: Boolean = false,
-    val startedAtMillis: Long = 0L
+    val startedAtMillis: Long = 0L,
+    val popupEnabled: Boolean = true
 )
 
 private fun loadIs24Hour(context: Context): Boolean =
@@ -410,7 +411,8 @@ private fun loadStudySubjects(context: Context): List<StudySubject> = runCatchin
                     name = o.optString("name"),
                     accumulatedMillis = o.optLong("accumulatedMillis", 0L),
                     isRunning = o.optBoolean("isRunning", false),
-                    startedAtMillis = o.optLong("startedAtMillis", 0L)
+                    startedAtMillis = o.optLong("startedAtMillis", 0L),
+                    popupEnabled = o.optBoolean("popupEnabled", true)
                 )
             )
         }
@@ -427,6 +429,7 @@ private fun saveStudySubjects(context: Context, subjects: List<StudySubject>) {
                 .put("accumulatedMillis", s.accumulatedMillis)
                 .put("isRunning", s.isRunning)
                 .put("startedAtMillis", s.startedAtMillis)
+                .put("popupEnabled", s.popupEnabled)
         )
     }
     context.getSharedPreferences("study_subjects", Context.MODE_PRIVATE).edit().putString("subjects", array.toString()).apply()
