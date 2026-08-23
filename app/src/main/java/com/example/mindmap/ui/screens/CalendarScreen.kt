@@ -687,6 +687,11 @@ private fun CalendarDateOptionsDialog(
     var timerIsPm by remember(dateKey) { mutableStateOf(existingHour24 >= 12) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val dialogWindow = (androidx.compose.ui.platform.LocalView.current.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+        DisposableEffect(dialogWindow) {
+            dialogWindow?.setDimAmount(0f)
+            onDispose {}
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()

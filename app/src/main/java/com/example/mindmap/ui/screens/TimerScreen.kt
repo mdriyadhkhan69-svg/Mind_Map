@@ -345,7 +345,8 @@ private data class ClockFaceStyle(
     val labelColor: Color,
     val glowColor: Color,
     val glowAlpha: Float,
-    val splitDigitGapDp: Dp = 0.dp
+    val splitDigitGapDp: Dp = 0.dp,
+    val hasCutMask: Boolean = false
 )
 
 private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
@@ -425,7 +426,8 @@ private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
         borderColor = Color.Black, borderWidth = 2.dp,
         dividerColor = Color(0xFF17171D), labelColor = Color.White.copy(alpha = 0.5f),
         glowColor = Color.Transparent, glowAlpha = 0f,
-        splitDigitGapDp = 7.dp
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.MONOCHROME -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color.Black, Color(0xFF0A0A0A))),
@@ -1032,6 +1034,24 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
         entrance.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 180f))
     }
 
+    // Secondary motion: hair/cloth lag a beat behind the body so movement
+    // reads as organic instead of every part moving in lockstep.
+    val hairLag by infinite.animateFloat(
+        initialValue = -1f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(520, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "hairLag"
+    )
+    // Squash-stretch tied to the same bounce cycle: stretch on the way up,
+    // squash on landing — this alone kills most of the "robotic" feel.
+    val stretch by infinite.animateFloat(
+        initialValue = 1f, targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            tween(if (reaction == CharacterReaction.JUMP) 260 else 420, easing = FastOutSlowInEasing),
+            RepeatMode.Reverse
+        ),
+        label = "stretch"
+    )
+
     val bounceAmount = when (reaction) {
         CharacterReaction.JUMP -> bounce * 34f
         CharacterReaction.CLAP -> bounce * 6f
@@ -1047,8 +1067,12 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
                 translationX = swayAmount
                 translationY = (-bounceAmount) + ((1f - entrance.value) * 80f)
                 rotationZ = tilt
-                scaleX = 0.5f + entrance.value * 0.5f
-                scaleY = 0.5f + entrance.value * 0.5f
+                // Rotate around the feet, not the geometric center — otherwise
+                // a "tilt" reads as the whole body sliding sideways.
+                transformOrigin = TransformOrigin(0.5f, 0.92f)
+                val squash = 1f + (bounceAmount / 40f) * (stretch - 1f)
+                scaleX = (0.5f + entrance.value * 0.5f) * (2f - squash)
+                scaleY = (0.5f + entrance.value * 0.5f) * squash
                 alpha = entrance.value
             }
     ) {
@@ -1138,12 +1162,13 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
         // long flowing hair behind head
         val headCenter = Offset(w * 0.5f, h * 0.32f)
         val headRadius = w * 0.235f
+        val hairSwing = hairLag * headRadius * 0.18f
         drawPath(
             path = Path().apply {
                 moveTo(headCenter.x - headRadius * 0.85f, headCenter.y - headRadius * 0.3f)
                 cubicTo(
-                    headCenter.x - headRadius * 1.35f, headCenter.y + headRadius * 0.6f,
-                    headCenter.x - headRadius * 1.15f, h * 0.78f,
+                    headCenter.x - headRadius * 1.35f + hairSwing, headCenter.y + headRadius * 0.6f,
+                    headCenter.x - headRadius * 1.15f + hairSwing, h * 0.78f,
                     headCenter.x - headRadius * 0.55f, h * 0.86f
                 )
                 cubicTo(
@@ -1159,8 +1184,8 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
             path = Path().apply {
                 moveTo(headCenter.x + headRadius * 0.85f, headCenter.y - headRadius * 0.3f)
                 cubicTo(
-                    headCenter.x + headRadius * 1.35f, headCenter.y + headRadius * 0.6f,
-                    headCenter.x + headRadius * 1.15f, h * 0.78f,
+                    headCenter.x + headRadius * 1.35f + hairSwing, headCenter.y + headRadius * 0.6f,
+                    headCenter.x + headRadius * 1.15f + hairSwing, h * 0.78f,
                     headCenter.x + headRadius * 0.55f, h * 0.86f
                 )
                 cubicTo(
@@ -1329,13 +1354,16 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
         drawRoundRect(color = Color(0xFF8A2020), topLeft = Offset(w * 0.775f, h * 0.68f), size = Size(w * 0.08f, h * 0.02f), cornerRadius = CornerRadius(w * 0.008f))
         drawRoundRect(color = Color(0xFF1A1010), topLeft = Offset(w * 0.798f, h * 0.70f), size = Size(w * 0.034f, h * 0.10f), cornerRadius = CornerRadius(w * 0.01f))
 
-        val swayShift = sway * w * 0.01f
+        // Cloak now lags the shoulders by a wider margin at the hem than at
+        // the collar — cloth billows instead of moving as one rigid slab.
+        val swayShift = sway * w * 0.012f
+        val hemLag = sway * w * 0.028f
         drawPath(
             path = Path().apply {
                 moveTo(w * 0.32f + swayShift, h * 0.42f)
-                cubicTo(w * 0.24f, h * 0.55f, w * 0.26f, h * 0.78f, w * 0.36f, h * 0.86f)
+                cubicTo(w * 0.24f + hemLag, h * 0.55f, w * 0.26f + hemLag, h * 0.78f, w * 0.36f, h * 0.86f)
                 lineTo(w * 0.64f, h * 0.86f)
-                cubicTo(w * 0.74f, h * 0.78f, w * 0.76f, h * 0.55f, w * 0.68f - swayShift, h * 0.42f)
+                cubicTo(w * 0.74f - hemLag, h * 0.78f, w * 0.76f - hemLag, h * 0.55f, w * 0.68f - swayShift, h * 0.42f)
                 close()
             },
             color = cloakColor
@@ -1700,29 +1728,28 @@ private fun FlipDigitCell(
         }
 
         DigitTransitionStyle.SPLIT_FLAP -> {
-            // bottomChar shobshomoy real-time `char`-er sathe sরাসরি bnadha — kono
-            // animation/coroutine complete howar upor nirvor kore na, tai timer
-            // kokhono stale/delayed digit dekhabe na, char jokhon change hoy tokhoni.
-            val bottomChar = char
-            var topChar by remember { mutableStateOf(char) }
-            var previousChar by remember { mutableStateOf(char) }
+            // Base (static) layer is ALWAYS bound to the live `char` on BOTH
+            // halves — top and bottom can never mismatch, and the clock can
+            // never get stuck showing a stale digit, regardless of animation
+            // timing. Only the overlay flap (decorative) shows the outgoing
+            // digit while it rotates away.
+            var lastChar by remember { mutableStateOf(char) }
+            var flipChar by remember { mutableStateOf(char) }
             val topFlip = remember { Animatable(0f) }
             val bottomFlip = remember { Animatable(0f) }
             LaunchedEffect(char) {
-                if (char != previousChar) {
-                    topChar = previousChar
-                    previousChar = char
+                if (char != lastChar) {
+                    flipChar = lastChar
+                    lastChar = char
                     topFlip.snapTo(0f)
                     bottomFlip.snapTo(90f)
-                    // Top-flip purely decorative — nijer alada coroutine-e chole,
-                    // bottom-half-er correctness/accuracy-ke kokhono block/gate kore na.
                     launch { runCatching { topFlip.animateTo(-90f, tween(130, easing = FastOutLinearInEasing)) } }
                     runCatching { bottomFlip.animateTo(0f, tween(150, easing = LinearOutSlowInEasing)) }
                 }
             }
             Box(contentAlignment = Alignment.Center) {
-                Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(topChar) }
-                Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(bottomChar) }
+                Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(char) }
+                Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(char) }
                 Box(
                     modifier = Modifier
                         .clip(TopHalfShape)
@@ -1733,7 +1760,7 @@ private fun FlipDigitCell(
                             alpha = if (topFlip.value <= -89f) 0f else 1f
                         }
                         .background(Color.Black.copy(alpha = (-topFlip.value / 90f) * 0.35f))
-                ) { DigitGlyph(topChar) }
+                ) { DigitGlyph(flipChar) }
                 Box(
                     modifier = Modifier
                         .clip(BottomHalfShape)
@@ -1744,7 +1771,7 @@ private fun FlipDigitCell(
                             alpha = if (bottomFlip.value >= 89f) 0f else 1f
                         }
                         .background(Color.Black.copy(alpha = (bottomFlip.value / 90f) * 0.35f))
-                ) { DigitGlyph(bottomChar) }
+                ) { DigitGlyph(flipChar) }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1791,7 +1818,8 @@ private fun FlipDigitCard(
     borderColor: Color = Color.Transparent,
     borderWidth: Dp = 0.dp,
     dividerColor: Color = Color.Black.copy(alpha = 0.75f),
-    splitGapDp: Dp = 0.dp
+    splitGapDp: Dp = 0.dp,
+    cutMaskEnabled: Boolean = false
 ) {
     Box(
         modifier = modifier
@@ -1818,7 +1846,18 @@ private fun FlipDigitCard(
             val widthCapPx = if (digitCount > 0) (boxWidthPx * 0.90f) / (digitCount * 0.62f) else requestedPx
             val safeFontSizePx = minOf(requestedPx, heightCapPx, widthCapPx).coerceAtLeast(1f)
             val safeFontSize = with(density) { safeFontSizePx.toSp() }
-            FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+            if (cutMaskEnabled) {
+                Box(contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.clip(TopHalfShape)) {
+                        FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+                    }
+                    Box(modifier = Modifier.clip(BottomHalfShape)) {
+                        FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+                    }
+                }
+            } else {
+                FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+            }
         }
         Box(
             Modifier
@@ -1856,7 +1895,8 @@ private fun FlipBlock(
             borderColor = faceStyle?.borderColor ?: Color.Transparent,
             borderWidth = faceStyle?.borderWidth ?: 0.dp,
             dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f),
-            splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp
+            splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp,
+            cutMaskEnabled = faceStyle?.hasCutMask ?: false
         )
         if (topLabel.isNotEmpty()) {
             Text(
@@ -1921,7 +1961,8 @@ private fun SplitTimeDisplay(
                     borderColor = faceStyle?.borderColor ?: Color.Transparent,
                     borderWidth = faceStyle?.borderWidth ?: 0.dp,
                     dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f),
-                    splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp
+                    splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp,
+                    cutMaskEnabled = faceStyle?.hasCutMask ?: false
                 )
                 Text(
                     label,
@@ -3191,6 +3232,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         countdownTotalMillis = newMillis
         remainingMillis = newMillis
     }
+    LaunchedEffect(pickerHours, pickerMinutes, isRunning) {
+        if (!isRunning) {
+            delay(80)
+            applyPickerToCountdown()
+        }
+    }
     LaunchedEffect(isRunning, mode) {
         if (isRunning) {
             while (isRunning) {
@@ -3469,8 +3516,8 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         CountdownTimeSetPanel(
                                             hours = pickerHours,
                                             minutes = pickerMinutes,
-                                            onHoursChange = { pickerHours = it; applyPickerToCountdown() },
-                                            onMinutesChange = { pickerMinutes = it; applyPickerToCountdown() },
+                                            onHoursChange = { pickerHours = it },
+                                            onMinutesChange = { pickerMinutes = it },
                                             onCustomTap = { showCustomTimeDialog = true },
                                             columnWidth = 34.dp,
                                             panelMaxWidth = 78.dp,
