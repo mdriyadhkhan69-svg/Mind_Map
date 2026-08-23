@@ -61,6 +61,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -545,12 +546,10 @@ private fun CompactWheelColumn(
             snapshotFlow { listState.firstVisibleItemScrollOffset },
             snapshotFlow { listState.isScrollInProgress }
         ) { index, offset, scrolling -> Triple(index, offset, scrolling) }
-            .collect { (index, offset, scrolling) ->
-                if (!scrolling) {
-                    val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
-                    val value = values[centeredIndex]
-                    if (value != selected) onSelectedChange(value)
-                }
+            .collect { (index, offset, _) ->
+                val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
+                val value = values[centeredIndex]
+                if (value != selected) onSelectedChange(value)
             }
     }
 
@@ -713,7 +712,7 @@ private fun CalendarDateOptionsDialog(
                         .widthIn(min = 220.dp, max = 260.dp)
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
+                    Column(modifier = Modifier.padding(14.dp).animateContentSize(tween(200))) {
                         Text(dateKey, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SoftNeutral)
                         Spacer(Modifier.height(8.dp))
                         when (panelMode) {
@@ -893,7 +892,7 @@ private fun CalendarTimerDialog(
                 Spacer(Modifier.height(12.dp))
                 if (needsExactAlarmPermission) {
                     Text("Exact reminder-এর জন্য permission দরকার", color = Color(0xFFFFD166), fontSize = 12.sp)
-                    TextButton(onClick = onRequestExactAlarmPermission) { Text("Allow", color = Color(0xFF64FFDA)) }
+                    TextButton(onClick = onRequestExactAlarmPermission) { Text("Allow", color = SoftNeutral) }
                     Spacer(Modifier.height(6.dp))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -923,7 +922,7 @@ private fun CalendarTimerDialog(
                         val h = (hourText.toIntOrNull() ?: 9).coerceIn(0, 23)
                         val m = (minuteText.toIntOrNull() ?: 0).coerceIn(0, 59)
                         onSave(h, m)
-                    }) { Text("Save", color = Color(0xFF64FFDA), fontWeight = FontWeight.Bold) }
+                    }) { Text("Save", color = SoftNeutral, fontWeight = FontWeight.Bold) }
                 }
             }
         }

@@ -138,7 +138,124 @@ private object StrikeSettingsState {
         saveStrikeIntervalMinutes(context, clamped)
     }
 }
+/* ---------------- strike animation settings (master + character + quote toggles) ---------------- */
 
+private fun loadStrikeAnimationEnabled(context: Context): Boolean =
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).getBoolean("strike_animation_enabled", true)
+
+private fun saveStrikeAnimationEnabled(context: Context, value: Boolean) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).edit().putBoolean("strike_animation_enabled", value).apply()
+}
+
+private fun loadCharacterEnabled(context: Context, characterId: StrikeCharacterId): Boolean =
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).getBoolean("strike_${characterId.name}_enabled", true)
+
+private fun saveCharacterEnabled(context: Context, characterId: StrikeCharacterId, value: Boolean) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).edit().putBoolean("strike_${characterId.name}_enabled", value).apply()
+}
+
+private fun loadQuoteEnabled(context: Context): Boolean =
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).getBoolean("strike_quote_enabled", false)
+
+private fun saveQuoteEnabled(context: Context, value: Boolean) {
+    context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE).edit().putBoolean("strike_quote_enabled", value).apply()
+}
+
+internal object StrikeAnimationSettingsState {
+    var animationEnabled by mutableStateOf(true)
+    var character1Enabled by mutableStateOf(true)
+    var character2Enabled by mutableStateOf(true)
+    var quoteEnabled by mutableStateOf(false)
+    private var loaded = false
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            animationEnabled = loadStrikeAnimationEnabled(context)
+            character1Enabled = loadCharacterEnabled(context, StrikeCharacterId.CHARACTER_1)
+            character2Enabled = loadCharacterEnabled(context, StrikeCharacterId.CHARACTER_2)
+            quoteEnabled = loadQuoteEnabled(context)
+            loaded = true
+        }
+    }
+
+    fun setAnimationEnabled(context: Context, value: Boolean) {
+        animationEnabled = value
+        saveStrikeAnimationEnabled(context, value)
+    }
+
+    fun setCharacterEnabled(context: Context, characterId: StrikeCharacterId, value: Boolean) {
+        when (characterId) {
+            StrikeCharacterId.CHARACTER_1 -> character1Enabled = value
+            StrikeCharacterId.CHARACTER_2 -> character2Enabled = value
+        }
+        saveCharacterEnabled(context, characterId, value)
+    }
+
+    fun setQuoteEnabled(context: Context, value: Boolean) {
+        quoteEnabled = value
+        saveQuoteEnabled(context, value)
+    }
+
+    fun isCharacterEnabled(characterId: StrikeCharacterId): Boolean = when (characterId) {
+        StrikeCharacterId.CHARACTER_1 -> character1Enabled
+        StrikeCharacterId.CHARACTER_2 -> character2Enabled
+    }
+}
+
+/* ---------------- strike quotes (multiple, each with optional mp3) ---------------- */
+
+internal data class StrikeQuote(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String,
+    val mp3ResourceName: String = ""
+)
+
+private fun loadStrikeQuotes(context: Context): List<StrikeQuote> = runCatching {
+    val raw = context.getSharedPreferences("strike_quotes", Context.MODE_PRIVATE).getString("quotes", "[]") ?: "[]"
+    val array = org.json.JSONArray(raw)
+    buildList {
+        repeat(array.length()) { i ->
+            val o = array.getJSONObject(i)
+            add(
+                StrikeQuote(
+                    id = o.optString("id", UUID.randomUUID().toString()),
+                    text = o.optString("text"),
+                    mp3ResourceName = o.optString("mp3ResourceName", "")
+                )
+            )
+        }
+    }
+}.getOrDefault(emptyList())
+
+private fun saveStrikeQuotes(context: Context, quotes: List<StrikeQuote>) {
+    val array = org.json.JSONArray()
+    quotes.forEach { q ->
+        array.put(
+            org.json.JSONObject()
+                .put("id", q.id)
+                .put("text", q.text)
+                .put("mp3ResourceName", q.mp3ResourceName)
+        )
+    }
+    context.getSharedPreferences("strike_quotes", Context.MODE_PRIVATE).edit().putString("quotes", array.toString()).apply()
+}
+
+internal object StrikeQuoteState {
+    var quotes by mutableStateOf<List<StrikeQuote>>(emptyList())
+    private var loaded = false
+
+    fun ensureLoaded(context: Context) {
+        if (!loaded) {
+            quotes = loadStrikeQuotes(context)
+            loaded = true
+        }
+    }
+
+    fun persist(context: Context, updated: List<StrikeQuote>) {
+        quotes = updated
+        saveStrikeQuotes(context, updated)
+    }
+}
 private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE, SPLIT_FLAP }
 
 private val TopHalfShape = GenericShape { size, _ ->
@@ -444,6 +561,7 @@ internal object StudyTimerState {
     var subjects by mutableStateOf<List<StudySubject>>(emptyList())
     var pendingCelebration by mutableStateOf<Pair<String, Int>?>(null)
     var pendingCelebrationCharacterId by mutableStateOf<StrikeCharacterId?>(null)
+    var pendingCelebrationQuoteId by mutableStateOf<String?>(null)
     private var loaded = false
     private val previousStrikeCounts = mutableStateMapOf<String, Int>()
 
@@ -468,13 +586,39 @@ internal object StudyTimerState {
         if (updated != subjects) persist(context, updated)
     }
 
+    // Strike counting/detection is untouched below — only the resulting
+    // presentation (which character/quote, or nothing) is decided here.
     fun checkStrikes(context: Context, nowMillis: Long) {
+        StrikeAnimationSettingsState.ensureLoaded(context)
+        StrikeQuoteState.ensureLoaded(context)
         subjects.forEach { s ->
             val currentCount = strikeCountForElapsed(s.currentElapsedMillis(nowMillis))
             val priorCount = previousStrikeCounts[s.id] ?: currentCount
             if (currentCount > priorCount && pendingCelebration == null) {
-                pendingCelebration = s.id to currentCount
-                pendingCelebrationCharacterId = StrikeCharacters.random().id
+                if (StrikeAnimationSettingsState.animationEnabled) {
+                    val enabledCharacterIds = StrikeCharacters
+                        .filter { StrikeAnimationSettingsState.isCharacterEnabled(it.id) }
+                        .map { it.id }
+                    val quoteAvailable = StrikeAnimationSettingsState.quoteEnabled && StrikeQuoteState.quotes.isNotEmpty()
+
+                    val pool = buildList<Any> {
+                        addAll(enabledCharacterIds)
+                        if (quoteAvailable) add("QUOTE")
+                    }
+                    if (pool.isNotEmpty()) {
+                        pendingCelebration = s.id to currentCount
+                        when (val picked = pool.random()) {
+                            "QUOTE" -> {
+                                pendingCelebrationQuoteId = StrikeQuoteState.quotes.random().id
+                                pendingCelebrationCharacterId = null
+                            }
+                            is StrikeCharacterId -> {
+                                pendingCelebrationCharacterId = picked
+                                pendingCelebrationQuoteId = null
+                            }
+                        }
+                    }
+                }
             }
             previousStrikeCounts[s.id] = currentCount
         }
@@ -506,10 +650,24 @@ private fun reactionForStrike(strikeCount: Int): CharacterReaction {
 @Composable
 private fun StudyCelebrationHost() {
     StudyTimerState.pendingCelebration?.let { (_, count) ->
-        val characterId = StudyTimerState.pendingCelebrationCharacterId ?: StrikeCharacters.first().id
-        StudyStrikeCelebrationOverlay(strikeCount = count, characterId = characterId) {
-            StudyTimerState.pendingCelebration = null
-            StudyTimerState.pendingCelebrationCharacterId = null
+        val quoteId = StudyTimerState.pendingCelebrationQuoteId
+        if (quoteId != null) {
+            val quote = StrikeQuoteState.quotes.firstOrNull { it.id == quoteId }
+            if (quote != null) {
+                StrikeQuoteOverlay(quote = quote) {
+                    StudyTimerState.pendingCelebration = null
+                    StudyTimerState.pendingCelebrationQuoteId = null
+                }
+            } else {
+                StudyTimerState.pendingCelebration = null
+                StudyTimerState.pendingCelebrationQuoteId = null
+            }
+        } else {
+            val characterId = StudyTimerState.pendingCelebrationCharacterId ?: StrikeCharacters.first().id
+            StudyStrikeCelebrationOverlay(strikeCount = count, characterId = characterId) {
+                StudyTimerState.pendingCelebration = null
+                StudyTimerState.pendingCelebrationCharacterId = null
+            }
         }
     }
 }
@@ -911,8 +1069,8 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
 
         // twinkling sparkle stars around her
         drawSparkleStar(Offset(w * 0.14f, h * 0.18f), w * 0.05f, Color(0xFFFFF3C4), twinkle)
-        drawSparkleStar(Offset(w * 0.86f, h * 0.30f), w * 0.035f, Color(0xFFFFF3C4), twinkle2)
-        drawSparkleStar(Offset(w * 0.80f, h * 0.10f), w * 0.028f, Color.White, twinkle)
+        drawSparkleStar(Offset(w * 0.86f, h * 0.30f), w * 0.035f, Color(0xFFFFF3C4), twinkle2)        drawSparkleStar(Offset(w * 0.80f, h * 0.10f), w * 0.028f, Color.White, twinkle)
+        drawSparkleStar(Offset(w * 0.20f, h * 0.72f), w * 0.022f, Color.White, twinkle2)
 
         // legs / socks / shoes
         drawRoundRect(
@@ -1166,6 +1324,9 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
 
         drawRoundRect(color = Color(0xFFCFCFCF), topLeft = Offset(w * 0.40f, h * 0.82f), size = Size(w * 0.08f, h * 0.08f), cornerRadius = CornerRadius(w * 0.02f))
         drawRoundRect(color = Color(0xFFCFCFCF), topLeft = Offset(w * 0.52f, h * 0.82f), size = Size(w * 0.08f, h * 0.08f), cornerRadius = CornerRadius(w * 0.02f))
+        drawRoundRect(color = Color(0xFFB8C4CC), topLeft = Offset(w * 0.80f, h * 0.28f), size = Size(w * 0.025f, h * 0.42f), cornerRadius = CornerRadius(w * 0.01f))
+        drawRoundRect(color = Color(0xFF8A2020), topLeft = Offset(w * 0.775f, h * 0.68f), size = Size(w * 0.08f, h * 0.02f), cornerRadius = CornerRadius(w * 0.008f))
+        drawRoundRect(color = Color(0xFF1A1010), topLeft = Offset(w * 0.798f, h * 0.70f), size = Size(w * 0.034f, h * 0.10f), cornerRadius = CornerRadius(w * 0.01f))
 
         val swayShift = sway * w * 0.01f
         drawPath(
@@ -1346,7 +1507,65 @@ private fun StrikeCharacterOverlay(strikeCount: Int, characterId: StrikeCharacte
         }
     }
 }
+@Composable
+private fun StrikeQuoteOverlay(quote: StrikeQuote, onFinished: () -> Unit) {
+    val context = LocalContext.current
+    val alpha = remember { Animatable(0f) }
+    val textScale = remember { Animatable(0.85f) }
+    var finishedOnce by remember(quote.id) { mutableStateOf(false) }
+    val overlayScope = rememberCoroutineScope()
+
+    fun finishOnce() {
+        if (finishedOnce) return
+        finishedOnce = true
+        overlayScope.launch {
+            alpha.animateTo(0f, tween(260))
+            TimerSoundPlayer.stop()
+            onFinished()
+        }
+    }
+
+    LaunchedEffect(quote.id) {
+        alpha.snapTo(0f)
+        textScale.snapTo(0.85f)
+        alpha.animateTo(1f, tween(320))
+        textScale.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 220f))
+
+        if (quote.mp3ResourceName.isNotBlank()) {
+            TimerSoundPlayer.play(context, quote.mp3ResourceName)
+        }
+
+        val readMillis = (quote.text.length * 55L).coerceIn(2600L, 9000L)
+        delay(readMillis)
+        finishOnce()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .graphicsLayer { this.alpha = alpha.value }
+            .zIndex(500f)
+            .pointerInput("strike-quote-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = quote.text,
+            color = Color.White,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 32.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth(0.86f)
+                .heightIn(max = 480.dp)
+                .verticalScroll(rememberScrollState())
+                .graphicsLayer { scaleX = textScale.value; scaleY = textScale.value }
+        )
+    }
+}
 /* ---------------- flip-digit building blocks ---------------- */
+
 @Composable
 private fun FlipDigitCell(
     char: Char,
@@ -1921,12 +2140,10 @@ private fun NumberWheelColumn(
 
     LaunchedEffect(listState) {
         snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress) }
-            .collect { (index, offset, scrolling) ->
-                if (!scrolling) {
-                    val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
-                    val value = values[centeredIndex]
-                    if (value != selected) onSelectedChange(value)
-                }
+            .collect { (index, offset, _) ->
+                val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
+                val value = values[centeredIndex]
+                if (value != selected) onSelectedChange(value)
             }
     }
 
@@ -2395,10 +2612,13 @@ private fun TimerSettingsDialog(
     DigitStyleState.ensureLoaded(context)
     FloatingPopupSettingsState.ensureLoaded(context)
     FloatingPopupLabelSettingsState.ensureLoaded(context)
+    StrikeAnimationSettingsState.ensureLoaded(context)
+    StrikeQuoteState.ensureLoaded(context)
     var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
     var floatingPopupLabelEnabled by remember { mutableStateOf(FloatingPopupLabelSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var showClockFacePickerInSettings by remember { mutableStateOf(false) }
+    var showQuoteManager by remember { mutableStateOf(false) }
     ClockFaceState.ensureLoaded(context)
     var strikeHoursText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes / 60).toString()) }
     var strikeMinutesText by remember { mutableStateOf((StrikeSettingsState.intervalMinutes % 60).toString()) }
@@ -2492,6 +2712,50 @@ private fun TimerSettingsDialog(
                 }
 
                 Spacer(Modifier.height(20.dp))
+                Text("Strike Animation", color = Color.LightGray, fontSize = 14.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Strike Animation", fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = StrikeAnimationSettingsState.animationEnabled,
+                        onCheckedChange = { StrikeAnimationSettingsState.setAnimationEnabled(context, it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                    )
+                }
+                if (StrikeAnimationSettingsState.animationEnabled) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("Character 1", fontSize = 14.sp, color = Color.LightGray, modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = StrikeAnimationSettingsState.character1Enabled,
+                            onCheckedChange = { StrikeAnimationSettingsState.setCharacterEnabled(context, StrikeCharacterId.CHARACTER_1, it) },
+                            colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("Character 2", fontSize = 14.sp, color = Color.LightGray, modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = StrikeAnimationSettingsState.character2Enabled,
+                            onCheckedChange = { StrikeAnimationSettingsState.setCharacterEnabled(context, StrikeCharacterId.CHARACTER_2, it) },
+                            colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("Quote", fontSize = 14.sp, color = Color.LightGray, modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = StrikeAnimationSettingsState.quoteEnabled,
+                            onCheckedChange = { StrikeAnimationSettingsState.setQuoteEnabled(context, it) },
+                            colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                        )
+                    }
+                    if (StrikeAnimationSettingsState.quoteEnabled) {
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = { showQuoteManager = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Manage Quotes (${StrikeQuoteState.quotes.size})", color = SoftNeutral, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
                 Text("Strike timer", color = Color.LightGray, fontSize = 14.sp)
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2593,8 +2857,154 @@ private fun TimerSettingsDialog(
             onResetDefaults = { defaultTimerBoxSettings(target.scope, target.isLandscape) }
         )
     }
+
+    if (showQuoteManager) {
+        QuoteManagerDialog(
+            quotes = StrikeQuoteState.quotes,
+            onDismiss = { showQuoteManager = false },
+            onQuotesChange = { updated -> StrikeQuoteState.persist(context, updated) }
+        )
+    }
+}
+@Composable
+private fun QuoteManagerDialog(
+    quotes: List<StrikeQuote>,
+    onDismiss: () -> Unit,
+    onQuotesChange: (List<StrikeQuote>) -> Unit
+) {
+    var localQuotes by remember { mutableStateOf(quotes) }
+    var editingQuote by remember { mutableStateOf<StrikeQuote?>(null) }
+    var isAddingNew by remember { mutableStateOf(false) }
+
+    fun commit(updated: List<StrikeQuote>) {
+        localQuotes = updated
+        onQuotesChange(updated)
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = TimerCardBg,
+            contentColor = Color.White
+        ) {
+            Column(modifier = Modifier.padding(20.dp).heightIn(max = 520.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Quotes", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { isAddingNew = true }) { Text("+ Add", color = SoftNeutral, fontWeight = FontWeight.Bold) }
+                }
+                Spacer(Modifier.height(10.dp))
+                if (localQuotes.isEmpty()) {
+                    Text("কোনো Quote নেই। + Add দিয়ে যোগ করো।", color = Color.LightGray, fontSize = 13.sp)
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
+                        items(localQuotes, key = { it.id }) { quote ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.05f))
+                                    .pointerInput(quote.id) { detectTapGestures(onTap = { editingQuote = quote }) }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(quote.text, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
+                                    if (quote.mp3ResourceName.isNotBlank()) {
+                                        Text(quote.mp3ResourceName, color = Color.LightGray, fontSize = 11.sp)
+                                    }
+                                }
+                                TextButton(onClick = { commit(localQuotes.filterNot { it.id == quote.id }) }) {
+                                    Text("Remove", color = Color(0xFFFF7A7A), fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    if (isAddingNew) {
+        QuoteEditDialog(
+            initial = null,
+            onDismiss = { isAddingNew = false },
+            onSave = { newQuote ->
+                commit(localQuotes + newQuote)
+                isAddingNew = false
+            }
+        )
+    }
+
+    editingQuote?.let { quote ->
+        QuoteEditDialog(
+            initial = quote,
+            onDismiss = { editingQuote = null },
+            onSave = { updated ->
+                commit(localQuotes.map { if (it.id == quote.id) updated else it })
+                editingQuote = null
+            }
+        )
+    }
 }
 
+@Composable
+private fun QuoteEditDialog(
+    initial: StrikeQuote?,
+    onDismiss: () -> Unit,
+    onSave: (StrikeQuote) -> Unit
+) {
+    var text by remember { mutableStateOf(initial?.text.orEmpty()) }
+    var mp3Name by remember { mutableStateOf(initial?.mp3ResourceName.orEmpty()) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = TimerCardBg,
+            contentColor = Color.White
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text(if (initial == null) "Add Quote" else "Edit Quote", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Quote text") },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = mp3Name,
+                    onValueChange = { mp3Name = it.trim() },
+                    label = { Text("MP3 resource name (optional, res/raw)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = Color.LightGray) }
+                    TextButton(
+                        enabled = text.isNotBlank(),
+                        onClick = {
+                            onSave(
+                                (initial ?: StrikeQuote(text = text)).copy(
+                                    text = text,
+                                    mp3ResourceName = mp3Name
+                                )
+                            )
+                        }
+                    ) { Text("Save", color = SoftNeutral, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun ClockFacePreviewMini(style: ClockFaceStyle) {
     Row(
