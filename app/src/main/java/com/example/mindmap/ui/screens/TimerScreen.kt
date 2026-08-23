@@ -44,6 +44,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -437,6 +438,7 @@ internal fun StudySubject.currentElapsedMillis(nowMillis: Long): Long =
 internal object StudyTimerState {
     var subjects by mutableStateOf<List<StudySubject>>(emptyList())
     var pendingCelebration by mutableStateOf<Pair<String, Int>?>(null)
+    var pendingCelebrationCharacterId by mutableStateOf<StrikeCharacterId?>(null)
     private var loaded = false
     private val previousStrikeCounts = mutableStateMapOf<String, Int>()
 
@@ -467,6 +469,7 @@ internal object StudyTimerState {
             val priorCount = previousStrikeCounts[s.id] ?: currentCount
             if (currentCount > priorCount && pendingCelebration == null) {
                 pendingCelebration = s.id to currentCount
+                pendingCelebrationCharacterId = StrikeCharacters.random().id
             }
             previousStrikeCounts[s.id] = currentCount
         }
@@ -490,12 +493,6 @@ private fun StudyTimerTicker() {
 
 private enum class CharacterReaction { DANCE, CLAP, JUMP, SURPRISED, WAVE }
 
-private fun strikeVideoCount(context: Context): Int {
-    var index = 1
-    while (context.resources.getIdentifier("strike_video_$index", "raw", context.packageName) != 0) index++
-    return index - 1
-}
-
 private fun reactionForStrike(strikeCount: Int): CharacterReaction {
     val reactions = CharacterReaction.entries
     return reactions[(strikeCount - 1).coerceAtLeast(0) % reactions.size]
@@ -504,8 +501,10 @@ private fun reactionForStrike(strikeCount: Int): CharacterReaction {
 @Composable
 private fun StudyCelebrationHost() {
     StudyTimerState.pendingCelebration?.let { (_, count) ->
-        StudyStrikeCelebrationOverlay(strikeCount = count) {
+        val characterId = StudyTimerState.pendingCelebrationCharacterId ?: StrikeCharacters.first().id
+        StudyStrikeCelebrationOverlay(strikeCount = count, characterId = characterId) {
             StudyTimerState.pendingCelebration = null
+            StudyTimerState.pendingCelebrationCharacterId = null
         }
     }
 }
@@ -575,25 +574,61 @@ private fun strikeCountForElapsed(elapsedMillis: Long): Int {
     return (elapsedMinutes / intervalMinutes).toInt()
 }
 
-private val StudyStrikeMessages = listOf(
-    "অসাধারণ পরিশ্রম! গর্বিত তোর জন্য।⭐ ",
+internal enum class StrikeCharacterId { CHARACTER_1, CHARACTER_2 }
+
+internal data class StrikeCharacterConfig(
+    val id: StrikeCharacterId,
+    val name: String,
+    val mp3ResourcePrefix: String,
+    val messages: List<String>
+)
+
+private val StrikeCharacter1Messages = listOf(
+    "স্বপ্নের চেয়ে তোমার চেষ্টার জোর যেন সবসময় বেশি হয়। ⭐",
     "দারুণ! এভাবেই এগিয়ে যা। 💪",
-    "সাবাশ খানকির ছেলে তোকে দিয়েই হবে 🔥",
+    "অসাধারণ পরিশ্রম! গর্বিত তোর জন্য।",
     "থামিস না, তুই একদম ঠিক পথে আছিস! 🚀",
     "চমৎকার! আরেকটা স্ট্রাইক তোর ঝুলিতে। 🏆"
 )
 
-private fun strikeMp3Count(context: Context): Int {
+private val StrikeCharacter2Messages = listOf(
+    "নিঃশব্দে পথ চলো, ফলাফলই কথা বলবে। 🖤",
+    "ক্লান্তি সাময়িক, শক্তি চিরস্থায়ী। 🔥",
+    "একজন প্রকৃত যোদ্ধা থামে না। 🐦",
+    "আরেকটা স্ট্রাইক—সিংহাসনের আরও কাছে। 👑",
+    "নিয়ম নিজে তৈরি করো। 💀"
+)
+
+// Character 2-এর mp3 ফাইল res/raw ফোল্ডারে "strike_c2_1", "strike_c2_2"... নামে যোগ করলেই এখানে auto-detect হবে।
+// ভবিষ্যতে নতুন character যোগ করতে হলে শুধু এই লিস্টে নতুন StrikeCharacterConfig entry যোগ করলেই হবে।
+internal val StrikeCharacters = listOf(
+    StrikeCharacterConfig(
+        id = StrikeCharacterId.CHARACTER_1,
+        name = "Character 1",
+        mp3ResourcePrefix = "strike_",
+        messages = StrikeCharacter1Messages
+    ),
+    StrikeCharacterConfig(
+        id = StrikeCharacterId.CHARACTER_2,
+        name = "Character 2",
+        mp3ResourcePrefix = "strike_c2_",
+        messages = StrikeCharacter2Messages
+    )
+)
+
+private fun strikeMp3Count(context: Context, prefix: String): Int {
     var index = 1
-    while (context.resources.getIdentifier("strike_$index", "raw", context.packageName) != 0) index++
+    while (context.resources.getIdentifier("$prefix$index", "raw", context.packageName) != 0) index++
     return index - 1
 }
 
-private fun studyStrikeSoundResName(context: Context, strikeIndex: Int): String {
-    val available = strikeMp3Count(context).coerceAtLeast(1)
+private fun studyStrikeSoundResName(context: Context, prefix: String, strikeIndex: Int): String? {
+    val available = strikeMp3Count(context, prefix)
+    if (available <= 0) return null
     val cyclicIndex = ((strikeIndex - 1) % available) + 1
-    return "strike_$cyclicIndex"
+    return "$prefix$cyclicIndex"
 }
+
 
 private object TimerSoundPlayer {
     private var player: android.media.MediaPlayer? = null
@@ -647,14 +682,15 @@ private object TimerSoundPlayer {
     }
 }
 
-private fun playStrikeSound(context: Context, strikeIndex: Int, onComplete: (() -> Unit)? = null) {
-    val resName = studyStrikeSoundResName(context, strikeIndex)
-    if (context.resources.getIdentifier(resName, "raw", context.packageName) != 0) {
+private fun playStrikeSound(context: Context, prefix: String, strikeIndex: Int, onComplete: (() -> Unit)? = null) {
+    val resName = studyStrikeSoundResName(context, prefix, strikeIndex)
+    if (resName != null) {
         TimerSoundPlayer.play(context, resName, onComplete)
     } else {
         onComplete?.invoke()
     }
 }
+
 
 /* ---------------- countdown time-up ---------------- */
 
@@ -1042,137 +1078,208 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
     }
 }
 @Composable
-private fun StudyStrikeCelebrationOverlay(strikeCount: Int, onFinished: () -> Unit) {
-    val context = LocalContext.current
-    val videoCount = remember { strikeVideoCount(context) }
-    if (videoCount > 0) {
-        // প্রতি (videoCount + 1) স্ট্রাইকের একটা চক্র: videoCount-টা video (প্রতিটা একবার করে),
-        // তারপর একটা anime — এরপর চক্রটা আবার রিপিট করবে।
-        val cyclePosition = (strikeCount - 1).coerceAtLeast(0) % (videoCount + 1)
-        if (cyclePosition < videoCount) {
-            StrikeVideoOverlay(strikeCount = strikeCount, videoIndex = cyclePosition, onFinished = onFinished)
-        } else {
-            StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
-        }
-    } else {
-        StrikeCharacterOverlay(strikeCount = strikeCount, onFinished = onFinished)
-    }
-}
-
-private fun strikeVideoResId(context: Context, videoIndex: Int): Int {
-    val available = mutableListOf<Int>()
-    var index = 1
-    while (true) {
-        val resId = context.resources.getIdentifier("strike_video_$index", "raw", context.packageName)
-        if (resId == 0) break
-        available += resId
-        index++
-    }
-    if (available.isEmpty()) {
-        val legacy = context.resources.getIdentifier("strike_video", "raw", context.packageName)
-        return legacy
-    }
-    return available[videoIndex.coerceIn(0, available.size - 1)]
-}
-
-@Composable
-private fun StrikeVideoOverlay(strikeCount: Int, videoIndex: Int, onFinished: () -> Unit) {
-    val context = LocalContext.current
-    val alpha = remember { Animatable(0f) }
-    var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
-    var videoPrepared by remember(strikeCount) { mutableStateOf(false) }
-
-    fun finishOnce() {
-        if (!finishedOnce) {
-            finishedOnce = true
-            onFinished()
-        }
+private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
+    val infinite = rememberInfiniteTransition(label = "throneDarkCharacter")
+    val glow by infinite.animateFloat(
+        initialValue = 0.35f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "eyeGlow"
+    )
+    val crowFlap by infinite.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(320, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "crowFlap"
+    )
+    val sway by infinite.animateFloat(
+        initialValue = -1f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "cloakSway"
+    )
+    val entrance = remember { Animatable(0f) }
+    LaunchedEffect(reaction) {
+        entrance.snapTo(0f)
+        entrance.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 160f))
     }
 
-    LaunchedEffect(strikeCount) {
-        // আগের কোনো celebration/MP3 এখনো বাজছে থাকলে বন্ধ করে দাও — দুইটা audio
-        // session একসাথে mix হলেই distortion/clipping শোনা যায়।
-        TimerSoundPlayer.stop()
-        alpha.snapTo(0f)
-        alpha.animateTo(1f, tween(220))
-        // Fallback ONLY for the case the video resource is missing/broken and
-        // never even starts playing. Once it starts, it always plays to its
-        // own full length via onCompletionListener below.
-        delay(6000)
-        if (!videoPrepared) finishOnce()
-    }
-
-    // No text, no character here — শুধু video, RED স্ট্রাইক ব্যাকগ্রাউন্ডের উপর।
-    Box(
+    Canvas(
         modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF7A0E0E))
-            .graphicsLayer { this.alpha = alpha.value }
-            .zIndex(500f)
-            .pointerInput("strike-video-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
-        contentAlignment = Alignment.Center
+            .size(240.dp)
+            .graphicsLayer {
+                translationY = (1f - entrance.value) * 80f
+                scaleX = 0.5f + entrance.value * 0.5f
+                scaleY = 0.5f + entrance.value * 0.5f
+                alpha = entrance.value
+            }
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
-            val density = LocalDensity.current
-            val maxWidthPx = with(density) { maxWidth.toPx() }
-            val maxHeightPx = with(density) { maxHeight.toPx() }
-            AndroidView(
-                factory = { ctx ->
-                    android.widget.VideoView(ctx).apply {
-                        val resId = strikeVideoResId(ctx, videoIndex)
-                        if (resId != 0) {
-                            setVideoURI(Uri.parse("android.resource://${ctx.packageName}/$resId"))
-                            setOnCompletionListener { finishOnce() }
-                            setOnErrorListener { _, _, _ -> finishOnce(); true }
-                            setOnPreparedListener { player ->
-                                videoPrepared = true
-                                player.isLooping = false
-                                runCatching {
-                                    player.setAudioAttributes(
-                                        android.media.AudioAttributes.Builder()
-                                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                                            .build()
-                                    )
-                                    // ডিভাইসভেদে ডিফল্ট gain 1.0-এর বেশি ধরে distortion তৈরি করে;
-                                    // স্পষ্ট full (unclipped) volume সেট করে দেওয়া হচ্ছে।
-                                    player.setVolume(1f, 1f)
-                                }
-                                runCatching {
-                                    // কিছু device-এ OS নিজে থেকে auxiliary environmental/preset
-                                    // reverb effect attach করে দেয়, যেটা "খালি কলসিতে কথা বলার মতো"
-                                    // hollow/echo শোনায়। explicit ভাবে সেটা বন্ধ করে দেওয়া হচ্ছে।
-                                    player.setAuxEffectSendLevel(0f)
-                                }
-                                val videoW = player.videoWidth.toFloat().coerceAtLeast(1f)
-                                val videoH = player.videoHeight.toFloat().coerceAtLeast(1f)
-                                val scale = minOf(maxWidthPx / videoW, maxHeightPx / videoH)
-                                layoutParams = android.widget.FrameLayout.LayoutParams(
-                                    (videoW * scale).toInt().coerceAtLeast(1),
-                                    (videoH * scale).toInt().coerceAtLeast(1)
-                                )
-                                start()
-                            }
-                        } else {
-                            finishOnce()
-                        }
-                    }
+        val w = size.width
+        val h = size.height
+        val throneColor = Color(0xFF1C1418)
+        val throneShadow = Color(0xFF0B0708)
+        val cloakColor = Color(0xFF15111A)
+        val cloakTrim = Color(0xFF7A0E0E)
+        val skinColor = Color(0xFFE9C4A8)
+        val hairColor = Color(0xFF0E0B10)
+        val eyeGlowColor = Color(0xFFE23B3B)
+        val crowColor = Color(0xFF0A0A0C)
+
+        drawRoundRect(
+            color = throneShadow,
+            topLeft = Offset(w * 0.14f, h * 0.18f),
+            size = Size(w * 0.72f, h * 0.78f),
+            cornerRadius = CornerRadius(w * 0.06f)
+        )
+        drawRoundRect(
+            color = throneColor,
+            topLeft = Offset(w * 0.17f, h * 0.20f),
+            size = Size(w * 0.66f, h * 0.72f),
+            cornerRadius = CornerRadius(w * 0.06f)
+        )
+        listOf(0.20f, 0.34f, 0.50f, 0.66f, 0.80f).forEach { xf ->
+            drawPath(
+                path = Path().apply {
+                    moveTo(w * xf - w * 0.035f, h * 0.20f)
+                    lineTo(w * xf, h * 0.06f)
+                    lineTo(w * xf + w * 0.035f, h * 0.20f)
+                    close()
                 },
-                modifier = Modifier.fillMaxSize()
+                color = throneColor
             )
         }
+
+        val crowLift = crowFlap * h * 0.03f
+        listOf(Offset(w * 0.12f, h * 0.10f - crowLift), Offset(w * 0.86f, h * 0.16f + crowLift), Offset(w * 0.72f, h * 0.04f - crowLift)).forEach { c ->
+            drawPath(
+                path = Path().apply {
+                    moveTo(c.x - w * 0.05f, c.y)
+                    quadraticTo(c.x, c.y - h * 0.03f * (1f + crowFlap), c.x + w * 0.05f, c.y)
+                    quadraticTo(c.x, c.y + h * 0.008f, c.x - w * 0.05f, c.y)
+                    close()
+                },
+                color = crowColor
+            )
+        }
+
+        drawRoundRect(color = Color(0xFFCFCFCF), topLeft = Offset(w * 0.40f, h * 0.82f), size = Size(w * 0.08f, h * 0.08f), cornerRadius = CornerRadius(w * 0.02f))
+        drawRoundRect(color = Color(0xFFCFCFCF), topLeft = Offset(w * 0.52f, h * 0.82f), size = Size(w * 0.08f, h * 0.08f), cornerRadius = CornerRadius(w * 0.02f))
+
+        val swayShift = sway * w * 0.01f
+        drawPath(
+            path = Path().apply {
+                moveTo(w * 0.32f + swayShift, h * 0.42f)
+                cubicTo(w * 0.24f, h * 0.55f, w * 0.26f, h * 0.78f, w * 0.36f, h * 0.86f)
+                lineTo(w * 0.64f, h * 0.86f)
+                cubicTo(w * 0.74f, h * 0.78f, w * 0.76f, h * 0.55f, w * 0.68f - swayShift, h * 0.42f)
+                close()
+            },
+            color = cloakColor
+        )
+        drawArc(
+            color = cloakTrim,
+            startAngle = 0f,
+            sweepAngle = 180f,
+            useCenter = true,
+            topLeft = Offset(w * 0.30f, h * 0.36f),
+            size = Size(w * 0.40f, h * 0.14f)
+        )
+
+        drawRoundRect(color = cloakColor, topLeft = Offset(w * 0.30f, h * 0.50f), size = Size(w * 0.16f, h * 0.20f), cornerRadius = CornerRadius(w * 0.05f))
+        drawRoundRect(color = cloakColor, topLeft = Offset(w * 0.54f, h * 0.50f), size = Size(w * 0.16f, h * 0.20f), cornerRadius = CornerRadius(w * 0.05f))
+        drawCircle(color = skinColor, radius = w * 0.035f, center = Offset(w * 0.40f, h * 0.66f))
+        drawCircle(color = skinColor, radius = w * 0.035f, center = Offset(w * 0.60f, h * 0.66f))
+
+        val headCenter = Offset(w * 0.5f, h * 0.32f)
+        val headRadius = w * 0.17f
+        drawCircle(color = skinColor, radius = headRadius, center = headCenter)
+
+        drawPath(
+            path = Path().apply {
+                moveTo(headCenter.x - headRadius * 0.95f, headCenter.y - headRadius * 0.5f)
+                cubicTo(
+                    headCenter.x - headRadius * 1.3f, headCenter.y + headRadius * 0.8f,
+                    headCenter.x - headRadius * 1.1f, h * 0.60f,
+                    headCenter.x - headRadius * 0.6f, h * 0.62f
+                )
+                cubicTo(
+                    headCenter.x - headRadius * 0.85f, h * 0.30f,
+                    headCenter.x - headRadius * 0.95f, headCenter.y,
+                    headCenter.x - headRadius * 0.6f, headCenter.y - headRadius * 0.7f
+                )
+                close()
+            },
+            color = hairColor
+        )
+        drawPath(
+            path = Path().apply {
+                moveTo(headCenter.x + headRadius * 0.95f, headCenter.y - headRadius * 0.5f)
+                cubicTo(
+                    headCenter.x + headRadius * 1.3f, headCenter.y + headRadius * 0.8f,
+                    headCenter.x + headRadius * 1.1f, h * 0.60f,
+                    headCenter.x + headRadius * 0.6f, h * 0.62f
+                )
+                cubicTo(
+                    headCenter.x + headRadius * 0.85f, h * 0.30f,
+                    headCenter.x + headRadius * 0.95f, headCenter.y,
+                    headCenter.x + headRadius * 0.6f, headCenter.y - headRadius * 0.7f
+                )
+                close()
+            },
+            color = hairColor
+        )
+        drawArc(
+            color = hairColor,
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = true,
+            topLeft = Offset(headCenter.x - headRadius, headCenter.y - headRadius * 1.05f),
+            size = Size(headRadius * 2f, headRadius * 1.4f)
+        )
+
+        val eyeWidth = headRadius * 0.34f
+        val eyeHeight = headRadius * 0.14f
+        val leftEye = Offset(headCenter.x - headRadius * 0.38f, headCenter.y + headRadius * 0.05f)
+        val rightEye = Offset(headCenter.x + headRadius * 0.38f, headCenter.y + headRadius * 0.05f)
+        listOf(leftEye, rightEye).forEach { eyeCenter ->
+            drawOval(
+                color = eyeGlowColor.copy(alpha = glow),
+                topLeft = Offset(eyeCenter.x - eyeWidth / 2f, eyeCenter.y - eyeHeight / 2f),
+                size = Size(eyeWidth, eyeHeight)
+            )
+            drawCircle(color = Color.Black, radius = eyeHeight * 0.3f, center = eyeCenter)
+        }
+
+        drawLine(
+            color = Color(0xFF4A3830),
+            start = Offset(headCenter.x - headRadius * 0.14f, headCenter.y + headRadius * 0.42f),
+            end = Offset(headCenter.x + headRadius * 0.14f, headCenter.y + headRadius * 0.42f),
+            strokeWidth = w * 0.010f,
+            cap = StrokeCap.Round
+        )
+
+        drawRoundRect(
+            color = Color(0xFF9AA0A6),
+            topLeft = Offset(headCenter.x - headRadius * 0.9f, headCenter.y - headRadius * 0.55f),
+            size = Size(headRadius * 1.8f, headRadius * 0.28f),
+            cornerRadius = CornerRadius(headRadius * 0.06f)
+        )
     }
 }
 
 @Composable
-private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
+private fun StudyStrikeCelebrationOverlay(strikeCount: Int, characterId: StrikeCharacterId, onFinished: () -> Unit) {
+    StrikeCharacterOverlay(strikeCount = strikeCount, characterId = characterId, onFinished = onFinished)
+}
+
+@Composable
+private fun StrikeCharacterOverlay(strikeCount: Int, characterId: StrikeCharacterId, onFinished: () -> Unit) {
     val context = LocalContext.current
-    val message = remember(strikeCount) { StudyStrikeMessages[(strikeCount - 1).coerceAtLeast(0) % StudyStrikeMessages.size] }
+    val config = remember(characterId) { StrikeCharacters.first { it.id == characterId } }
+    val message = remember(strikeCount, characterId) { config.messages[(strikeCount - 1).coerceAtLeast(0) % config.messages.size] }
     val reaction = remember(strikeCount) { reactionForStrike(strikeCount) }
     val scale = remember { Animatable(0.3f) }
     val alpha = remember { Animatable(0f) }
     var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
     val overlayScope = rememberCoroutineScope()
+    val backgroundColor = if (characterId == StrikeCharacterId.CHARACTER_2) Color(0xFF120404) else Color(0xFF0B3D91)
 
     fun finishOnce() {
         if (finishedOnce) return
@@ -1184,7 +1291,7 @@ private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
         }
     }
 
-    LaunchedEffect(strikeCount) {
+    LaunchedEffect(strikeCount, characterId) {
         scale.snapTo(0.3f)
         alpha.snapTo(0f)
         alpha.animateTo(1f, tween(220))
@@ -1193,7 +1300,7 @@ private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
         // Character keeps reacting for exactly as long as the strike sound plays.
         // If there's no sound resource, fall back to a minimum visible duration.
         val soundFinished = kotlinx.coroutines.CompletableDeferred<Unit>()
-        playStrikeSound(context, strikeCount) { soundFinished.complete(Unit) }
+        playStrikeSound(context, config.mp3ResourcePrefix, strikeCount) { soundFinished.complete(Unit) }
         kotlinx.coroutines.withTimeoutOrNull(30000) { soundFinished.await() }
 
         finishOnce()
@@ -1201,7 +1308,7 @@ private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B3D91))
+            .background(backgroundColor)
             .graphicsLayer { this.alpha = alpha.value }
             .zIndex(500f)
             .pointerInput("strike-celebration-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
@@ -1211,7 +1318,10 @@ private fun StrikeCharacterOverlay(strikeCount: Int, onFinished: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
         ) {
-            ChubbyCelebrationCharacter(reaction = reaction)
+            when (characterId) {
+                StrikeCharacterId.CHARACTER_1 -> ChubbyCelebrationCharacter(reaction = reaction)
+                StrikeCharacterId.CHARACTER_2 -> ThroneDarkCelebrationCharacter(reaction = reaction)
+            }
             Spacer(Modifier.height(14.dp))
             Text(
                 "$strikeCount Strike${if (strikeCount > 1) "s" else ""}!",
