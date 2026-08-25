@@ -1998,7 +1998,7 @@ private fun FlipDigitCard(
             val widthCapPx = if (digitCount > 0) (boxWidthPx * 0.90f) / (digitCount * 0.62f) else requestedPx
             val safeFontSizePx = minOf(requestedPx, heightCapPx, widthCapPx).coerceAtLeast(1f)
             val safeFontSize = with(density) { safeFontSizePx.toSp() }
-            if (cutMaskEnabled) {
+            if (cutMaskEnabled && DigitStyleState.current != DigitTransitionStyle.SPLIT_FLAP) {
                 Box(contentAlignment = Alignment.Center) {
                     Box(modifier = Modifier.clip(TopHalfShape)) {
                         FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
@@ -2381,10 +2381,11 @@ private fun NumberWheelColumn(
                             scaleY = scale
                             alpha = itemAlpha
                         }
-                        .pointerInput(value) {
+                        .pointerInput(value, isSelected) {
                             detectTapGestures(
-                                onTap = { onSelectedChange(value) },
-                                onDoubleTap = { if (isSelected) isEditing = true }
+                                onTap = {
+                                    if (isSelected) isEditing = true else onSelectedChange(value)
+                                }
                             )
                         },
                     contentAlignment = Alignment.Center
@@ -2610,17 +2611,26 @@ private fun CountdownTimeSetPanel(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("HR", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(columnWidth)) {
+            Text(
+                "HR", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, softWrap = false,
+                modifier = Modifier.width(columnWidth), textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
             Spacer(Modifier.height(4.dp))
             NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
         }
         Text(
             ":", color = Color.White, fontSize = colonFontSize, fontWeight = FontWeight.Black,
+            maxLines = 1, softWrap = false,
             modifier = Modifier.padding(bottom = (wheelItemHeight - 8.dp) / 2)
         )
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("MIN", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(columnWidth)) {
+            Text(
+                "MIN", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, softWrap = false,
+                modifier = Modifier.width(columnWidth), textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
             Spacer(Modifier.height(4.dp))
             NumberWheelColumn(range = 0..99, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
         }
