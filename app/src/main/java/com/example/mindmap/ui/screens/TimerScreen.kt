@@ -1702,7 +1702,13 @@ private fun FlipDigitCell(
     @Composable
     fun DigitGlyph(value: Char, modifier: Modifier = Modifier) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            if (extraBold) {
+            // Split-Flap নিজেই প্রতি digit-কে top-half + bottom-half + flap overlay মিলিয়ে
+            // একাধিকবার কম্পোজ করে; তার উপর extraBold-এর ৩টা extra offset Text যোগ হলে
+            // একটা digit-এই প্রায় ১৬টা Text draw হয়ে যায় — এটাই কম শক্তিশালী device-এ
+            // real-time/countdown কয়েক সেকেন্ডের জন্য "আটকে" থাকার (main-thread জ্যাম) আসল কারণ।
+            // তাই Split-Flap-এ থাকলে এই extra faux-bold copy বাদ দেওয়া হলো — flap-এর নিজের
+            // divider/shadow দিয়েই যথেষ্ট bold/premium ফিল আসে।
+            if (extraBold && DigitStyleState.current != DigitTransitionStyle.SPLIT_FLAP) {
                 Text(
                     value.toString(),
                     color = color,
@@ -2337,13 +2343,26 @@ private fun NumberWheelColumn(
 
     LaunchedEffect(listState) {
         snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress) }
-            .collect { (index, offset, _) ->
+            .collect { (index, offset, inProgress) ->
                 val idx = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
                 centeredIndex = idx
                 val value = values[idx]
                 if (value != selected) {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onSelectedChange(value)
+                }
+                // scroll পুরোপুরি থামার (settle) মুহূর্তে fresh listState পড়ে আবার জোর করে
+                // final commit করা হচ্ছে — এটাই guarantee দেয় যে wheel visually যা দেখাচ্ছে,
+                // ঠিক সেই value-ই সবসময় আসল selected state-এ যাবে, কোনো frame miss হলেও।
+                if (!inProgress) {
+                    val settledIndex = (listState.firstVisibleItemIndex +
+                            if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2) 1 else 0
+                            ).coerceIn(values.indices)
+                    val settledValue = values[settledIndex]
+                    centeredIndex = settledIndex
+                    if (settledValue != selected) {
+                        onSelectedChange(settledValue)
+                    }
                 }
             }
     }
@@ -2408,14 +2427,14 @@ private fun NumberWheelColumn(
                 .height(itemHeight)
                 .clip(RoundedCornerShape(10.dp))
                 .background(
-                    Brush.horizontalGradient(
+                    Brush.verticalGradient(
                         listOf(
-                            TimerAccent.copy(alpha = if (isEditing) 0.22f else 0.12f),
-                            TimerAccent.copy(alpha = if (isEditing) 0.14f else 0.07f)
+                            Color(0xFF232326).copy(alpha = if (isEditing) 0.95f else 0.88f),
+                            Color(0xFF141416).copy(alpha = if (isEditing) 0.95f else 0.88f)
                         )
                     )
                 )
-                .border(1.dp, TimerAccent.copy(alpha = if (isEditing) 0.55f else 0.22f), RoundedCornerShape(10.dp))
+                .border(1.dp, if (isEditing) TimerAccent.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
         ) {
             if (isEditing) {
                 BasicTextField(
