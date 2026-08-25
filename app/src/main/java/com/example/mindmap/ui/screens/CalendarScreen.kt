@@ -725,7 +725,7 @@ private fun CalendarDateOptionsDialog(
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                     modifier = Modifier
                         .wrapContentWidth()
-                        .widthIn(min = 170.dp, max = 300.dp)
+                        .widthIn(min = 170.dp, max = if (panelMode == "timer") 200.dp else 250.dp)
                         .animateContentSize(tween(220))
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
                 ) {
@@ -745,7 +745,7 @@ private fun CalendarDateOptionsDialog(
                                                 onValueChange = { occasionList[index] = it },
                                                 singleLine = true,
                                                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = SoftNeutral),
-                                                modifier = Modifier.weight(1f)
+                                                modifier = Modifier.widthIn(max = 150.dp)
                                             )
                                             PanelIconTap(onTap = { occasionList.removeAt(index) }) {
                                                 Text(
@@ -766,7 +766,7 @@ private fun CalendarDateOptionsDialog(
                                         onValueChange = { newOccasionText = it },
                                         label = { Text("New occasion") },
                                         singleLine = true,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.widthIn(max = 150.dp)
                                     )
                                     PanelIconTap(onTap = {
                                         if (newOccasionText.isNotBlank()) {

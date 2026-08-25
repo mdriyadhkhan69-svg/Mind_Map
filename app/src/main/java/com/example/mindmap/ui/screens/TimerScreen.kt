@@ -3448,7 +3448,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         remainingMillis = newMillis
     }
     LaunchedEffect(pickerHours, pickerMinutes, isRunning) {
-        if (!isRunning) {
+        if (!isRunning && !hasStarted) {
             delay(80)
             applyPickerToCountdown()
         }
@@ -4129,7 +4129,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     ) {
-                        Text("Show Popup Box for Study Timer", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        Text("Show Popup Box", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
                         Switch(
                             checked = subject.popupEnabled,
                             onCheckedChange = { enabled ->
