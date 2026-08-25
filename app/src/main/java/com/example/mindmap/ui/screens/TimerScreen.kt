@@ -87,7 +87,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
-
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 
 
 private val TimerBg = Color(0xFF0B0B0F)
@@ -1728,50 +1730,110 @@ private fun FlipDigitCell(
         }
 
         DigitTransitionStyle.SPLIT_FLAP -> {
-            // Base (static) layer is ALWAYS bound to the live `char` on BOTH
-            // halves — top and bottom can never mismatch, and the clock can
-            // never get stuck showing a stale digit, regardless of animation
-            // timing. Only the overlay flap (decorative) shows the outgoing
-            // digit while it rotates away.
+            // Static halves are ALWAYS bound to the live `char`, so the
+            // digit can never get stuck on a stale value. The two flap
+            // overlays are ALWAYS composed (never conditionally skipped) —
+            // their Animatable values are read ONLY inside graphicsLayer{}
+            // blocks (draw/layout phase), never in the composable body.
+            // Reading Animatable.value directly in composable body would
+            // subscribe the whole subtree to recomposition on every single
+            // animation frame; with 6-8 digits animating together (a full
+            // minute/hour rollover) that was heavy enough to jank the main
+            // thread and stall the timer's own tick loop — the "stuck at
+            // 5:00 then jumps" symptom. graphicsLayer reads avoid that
+            // entirely since they only trigger a re-draw, not recomposition.
             var lastChar by remember { mutableStateOf(char) }
             var flipChar by remember { mutableStateOf(char) }
-            val topFlip = remember { Animatable(0f) }
-            val bottomFlip = remember { Animatable(0f) }
+            val topFlip = remember { Animatable(1f) }      // 0 = flat/covering, 1 = fully folded away
+            val bottomFlip = remember { Animatable(1f) }   // 0 = flat/covering, 1 = fully folded away
+            val settleBounce = remember { Animatable(1f) }
+
             LaunchedEffect(char) {
                 if (char != lastChar) {
                     flipChar = lastChar
                     lastChar = char
                     topFlip.snapTo(0f)
-                    bottomFlip.snapTo(90f)
-                    launch { runCatching { topFlip.animateTo(-90f, tween(130, easing = FastOutLinearInEasing)) } }
-                    runCatching { bottomFlip.animateTo(0f, tween(150, easing = LinearOutSlowInEasing)) }
+                    bottomFlip.snapTo(0f)
+                    settleBounce.snapTo(0f)
+                    launch { runCatching { topFlip.animateTo(1f, tween(150, easing = FastOutLinearInEasing)) } }
+                    launch { runCatching { bottomFlip.animateTo(1f, tween(170, easing = LinearOutSlowInEasing)) } }
+                    launch { runCatching { settleBounce.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 420f)) } }
                 }
             }
-            Box(contentAlignment = Alignment.Center) {
+
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.graphicsLayer {
+                    val landingSquash = (1f - settleBounce.value).let { it * it } * 0.05f
+                    scaleY = 1f - landingSquash
+                    scaleX = 1f + landingSquash * 0.4f
+                }
+            ) {
+                // Static halves — always show the current (new) digit.
                 Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(char) }
                 Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(char) }
+
+                // Top flap: outgoing digit's top half, hinged at the
+                // centerline, folding down and away — reveals the static
+                // top underneath. Plays first. Always composed; fully
+                // invisible (alpha 0) once its animation finishes so it
+                // never blocks the static layer beneath it.
                 Box(
                     modifier = Modifier
                         .clip(TopHalfShape)
                         .graphicsLayer {
-                            rotationX = topFlip.value
-                            cameraDistance = 24f * density
+                            val v = topFlip.value
+                            rotationX = -90f * v
+                            cameraDistance = 28f * density
                             transformOrigin = TransformOrigin(0.5f, 1f)
-                            alpha = if (topFlip.value <= -89f) 0f else 1f
+                            alpha = 1f - v
                         }
-                        .background(Color.Black.copy(alpha = (-topFlip.value / 90f) * 0.35f))
-                ) { DigitGlyph(flipChar) }
+                ) {
+                    DigitGlyph(flipChar)
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer { alpha = topFlip.value * 0.45f }
+                            .background(Color.Black)
+                    )
+                }
+
+                // Bottom flap: outgoing digit's bottom half, hinged at the
+                // centerline, folding up and away right after the top flap
+                // lands — the classic two-beat "clack-clack".
                 Box(
                     modifier = Modifier
                         .clip(BottomHalfShape)
                         .graphicsLayer {
-                            rotationX = bottomFlip.value
-                            cameraDistance = 24f * density
+                            val v = bottomFlip.value
+                            rotationX = 90f * v
+                            cameraDistance = 28f * density
                             transformOrigin = TransformOrigin(0.5f, 0f)
-                            alpha = if (bottomFlip.value >= 89f) 0f else 1f
+                            alpha = 1f - v
                         }
-                        .background(Color.Black.copy(alpha = (bottomFlip.value / 90f) * 0.35f))
-                ) { DigitGlyph(flipChar) }
+                ) {
+                    DigitGlyph(flipChar)
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer { alpha = bottomFlip.value * 0.45f }
+                            .background(Color.Black)
+                    )
+                }
+
+                // Soft glossy highlight along the crease for a premium
+                // molded-card feel — static, no animation cost.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .align(Alignment.Center)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)
+                            )
+                        )
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2165,6 +2227,7 @@ private fun NumberWheelColumn(
     columnWidth: Dp = 64.dp
 ) {
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
     val itemHeightPx = with(density) { itemHeight.toPx() }
     val values = remember(range) { range.toList() }
     val listState = rememberLazyListState()
@@ -2172,20 +2235,26 @@ private fun NumberWheelColumn(
     var isEditing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     val editFocusRequester = remember { FocusRequester() }
+    var centeredIndex by remember { mutableStateOf(values.indexOf(selected).coerceAtLeast(0)) }
 
     LaunchedEffect(selected, values) {
         val targetIndex = values.indexOf(selected).coerceAtLeast(0)
         if (!listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIndex) {
             listState.scrollToItem(targetIndex)
         }
+        centeredIndex = targetIndex
     }
 
     LaunchedEffect(listState) {
         snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress) }
             .collect { (index, offset, _) ->
-                val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
-                val value = values[centeredIndex]
-                if (value != selected) onSelectedChange(value)
+                val idx = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
+                centeredIndex = idx
+                val value = values[idx]
+                if (value != selected) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onSelectedChange(value)
+                }
             }
     }
 
@@ -2208,38 +2277,54 @@ private fun NumberWheelColumn(
             contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
             modifier = Modifier.fillMaxHeight().width(columnWidth)
         ) {
-            items(values) { value ->
+            itemsIndexed(values) { index, value ->
+                val isSelected = value == selected
+                val distance = kotlin.math.abs(index - centeredIndex).coerceAtMost(2)
+                val scale = 1f - distance * 0.18f
+                val itemAlpha = (1f - distance * 0.32f).coerceIn(0.28f, 1f)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(itemHeight)
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            alpha = itemAlpha
+                        }
                         .pointerInput(value) {
-                            detectTapGestures(onTap = { onSelectedChange(value) })
+                            detectTapGestures(
+                                onTap = { onSelectedChange(value) },
+                                onDoubleTap = { if (isSelected) isEditing = true }
+                            )
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    val isSelected = value == selected
                     if (!(isSelected && isEditing)) {
                         Text(
                             "%02d".format(value),
-                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.35f),
-                            fontSize = if (isSelected) 22.sp else 17.sp,
+                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.55f),
+                            fontSize = if (isSelected) 23.sp else 17.sp,
                             fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal
                         )
                     }
                 }
             }
         }
+        // শুধু visual highlight — কোনো pointerInput নেই, তাই drag সবসময় LazyColumn পর্যন্ত পৌঁছায়
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(itemHeight)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color.White.copy(alpha = if (isEditing) 0.18f else 0.10f))
-                .pointerInput(selected) {
-                    detectTapGestures(onTap = { isEditing = true })
-                },
-            contentAlignment = Alignment.Center
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            TimerAccent.copy(alpha = if (isEditing) 0.22f else 0.12f),
+                            TimerAccent.copy(alpha = if (isEditing) 0.14f else 0.07f)
+                        )
+                    )
+                )
+                .border(1.dp, TimerAccent.copy(alpha = if (isEditing) 0.55f else 0.22f), RoundedCornerShape(10.dp))
         ) {
             if (isEditing) {
                 BasicTextField(
@@ -2256,7 +2341,7 @@ private fun NumberWheelColumn(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { commitEdit() }),
                     modifier = Modifier
-                        .width(columnWidth)
+                        .fillMaxSize()
                         .focusRequester(editFocusRequester)
                         .onFocusChanged { focusState -> if (!focusState.isFocused && isEditing) commitEdit() }
                 )
@@ -2426,18 +2511,29 @@ private fun CountdownTimeSetPanel(
     onCustomTap: () -> Unit,
     modifier: Modifier = Modifier,
     columnWidth: Dp = 64.dp,
-    panelMaxWidth: Dp = 84.dp,
+    panelMaxWidth: Dp = 176.dp,
     wheelItemHeight: Dp = 34.dp,
     colonFontSize: androidx.compose.ui.unit.TextUnit = 20.sp
 ) {
     Row(
         modifier = modifier.widthIn(max = panelMaxWidth),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
-        Text(":", color = Color.White, fontSize = colonFontSize, fontWeight = FontWeight.Black)
-        NumberWheelColumn(range = 0..99, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("HR", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
+        }
+        Text(
+            ":", color = Color.White, fontSize = colonFontSize, fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(bottom = (wheelItemHeight - 8.dp) / 2)
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("MIN", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            NumberWheelColumn(range = 0..99, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
+        }
     }
 }
 
@@ -3520,7 +3616,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             onMinutesChange = { pickerMinutes = it },
                                             onCustomTap = { showCustomTimeDialog = true },
                                             columnWidth = 34.dp,
-                                            panelMaxWidth = 78.dp,
+                                            panelMaxWidth = 96.dp,
                                             wheelItemHeight = 28.dp,
                                             colonFontSize = 15.sp
                                         )
