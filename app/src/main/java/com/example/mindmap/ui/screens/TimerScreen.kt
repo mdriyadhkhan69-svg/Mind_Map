@@ -2317,6 +2317,7 @@ private fun NumberWheelColumn(
         // শুধু visual highlight — কোনো pointerInput নেই, তাই drag সবসময় LazyColumn পর্যন্ত পৌঁছায়
         Box(
             Modifier
+                .zIndex(-1f)
                 .fillMaxWidth()
                 .height(itemHeight)
                 .shadow(
