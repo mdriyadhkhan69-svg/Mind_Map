@@ -532,6 +532,7 @@ private fun CompactWheelColumn(
     val values = remember(range) { range.toList() }
     val listState = rememberLazyListState()
     val flingBehavior = rememberSnapFlingBehavior(listState)
+    val currentSelected by rememberUpdatedState(selected)
 
     LaunchedEffect(selected, values) {
         val targetIndex = values.indexOf(selected).coerceAtLeast(0)
@@ -546,10 +547,17 @@ private fun CompactWheelColumn(
             snapshotFlow { listState.firstVisibleItemScrollOffset },
             snapshotFlow { listState.isScrollInProgress }
         ) { index, offset, scrolling -> Triple(index, offset, scrolling) }
-            .collect { (index, offset, _) ->
+            .collect { (index, offset, inProgress) ->
                 val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
                 val value = values[centeredIndex]
-                if (value != selected) onSelectedChange(value)
+                if (value != currentSelected) onSelectedChange(value)
+                if (!inProgress) {
+                    val settledIndex = (listState.firstVisibleItemIndex +
+                            if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2) 1 else 0
+                            ).coerceIn(values.indices)
+                    val settledValue = values[settledIndex]
+                    if (settledValue != currentSelected) onSelectedChange(settledValue)
+                }
             }
     }
 
@@ -638,7 +646,9 @@ private fun PremiumPanelButton(
         label = "panelBtnBg"
     )
     Box(
+        contentAlignment = Alignment.Center,
         modifier = modifier
+            .widthIn(min = 128.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(11.dp))
             .background(color.copy(alpha = bgAlpha))
@@ -715,7 +725,7 @@ private fun CalendarDateOptionsDialog(
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                     modifier = Modifier
                         .wrapContentWidth()
-                        .widthIn(max = 280.dp)
+                        .widthIn(min = 170.dp, max = 300.dp)
                         .animateContentSize(tween(220))
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
                 ) {
@@ -837,45 +847,31 @@ private fun CalendarDateOptionsDialog(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(bottom = 4.dp)
                                     )
-                                    PremiumPanelButton("Edit Occasion", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
+                                    PremiumPanelButton("Edit Occasion", color = SoftNeutral, onClick = { panelMode = "occasion" })
                                 } else {
-                                    PremiumPanelButton("Add Occasion +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
+                                    PremiumPanelButton("Add Occasion +", color = SoftNeutral, onClick = { panelMode = "occasion" })
                                 }
                                 if (existing?.hasTimer == true) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
-                                        Text(
-                                            "%02d:%02d".format(existing.timerHour, existing.timerMinute),
-                                            color = SoftNeutral,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        if (onRemoveTimer != null) {
-                                            Spacer(Modifier.width(10.dp))
-                                            Text(
-                                                "Remove",
-                                                color = Color(0xFFFF6E6E),
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                modifier = Modifier.pointerInput("remove-timer-inline") {
-                                                    detectTapGestures(onTap = { onRemoveTimer() })
-                                                }
-                                            )
-                                        }
-                                    }
-                                    PremiumPanelButton("Edit Timer", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })
+                                    Text(
+                                        "%02d:%02d".format(existing.timerHour, existing.timerMinute),
+                                        color = SoftNeutral,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
+                                    )
+                                    PremiumPanelButton("Edit Timer", color = SoftNeutral, onClick = { panelMode = "timer" })
                                     Spacer(Modifier.height(4.dp))
                                 } else {
-                                    PremiumPanelButton("Add Timer +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })
+                                    PremiumPanelButton("Add Timer +", color = SoftNeutral, onClick = { panelMode = "timer" })
                                 }
                                 Spacer(Modifier.height(4.dp))
                                 PremiumPanelButton(
                                     if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete",
                                     color = SoftNeutral,
-                                    modifier = Modifier.fillMaxWidth(),
                                     onClick = onToggleComplete
                                 )
                                 if (onDelete != null) {
-                                    PremiumPanelButton("Delete", color = Color(0xFFFF6E6E), modifier = Modifier.fillMaxWidth(), onClick = onDelete)
+                                    PremiumPanelButton("Delete", color = Color(0xFFFF6E6E), onClick = onDelete)
                                 }
                             }
                         }

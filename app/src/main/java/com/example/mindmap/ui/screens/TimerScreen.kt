@@ -2530,6 +2530,7 @@ private fun PremiumWheelColumn(
     val values = remember(range) { range.toList() }
     val listState = rememberLazyListState()
     val flingBehavior = rememberSnapFlingBehavior(listState)
+    val currentSelected by rememberUpdatedState(selected)
 
     LaunchedEffect(selected, values) {
         val targetIndex = values.indexOf(selected).coerceAtLeast(0)
@@ -2543,7 +2544,7 @@ private fun PremiumWheelColumn(
             .collect { (index, offset, inProgress) ->
                 val idx = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
                 val value = values[idx]
-                if (value != selected) {
+                if (value != currentSelected) {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onSelectedChange(value)
                 }
@@ -2552,7 +2553,7 @@ private fun PremiumWheelColumn(
                             if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2) 1 else 0
                             ).coerceIn(values.indices)
                     val settledValue = values[settledIndex]
-                    if (settledValue != selected) {
+                    if (settledValue != currentSelected) {
                         onSelectedChange(settledValue)
                     }
                 }
