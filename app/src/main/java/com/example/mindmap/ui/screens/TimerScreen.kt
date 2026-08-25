@@ -317,7 +317,7 @@ internal object TimerBoxLiveSettingsState {
 internal enum class ClockFace {
     CLASSIC, MINIMAL_PREMIUM, DARK_ELEGANT, GLASS_GLOSSY, NEON, DIGITAL_FUTURISTIC,
     CLEAN_PRODUCTIVITY, SOFT_STUDY, RETRO_DIGITAL, MODERN_DASHBOARD, FLIP_BOARD_INSPIRED,
-    MONOCHROME, AMBIENT
+    MONOCHROME, AMBIENT, STARLIGHT_PREMIUM
 }
 
 private fun clockFaceLabel(face: ClockFace): String = when (face) {
@@ -334,6 +334,7 @@ private fun clockFaceLabel(face: ClockFace): String = when (face) {
     ClockFace.FLIP_BOARD_INSPIRED -> "Flip Board"
     ClockFace.MONOCHROME -> "Mono B/W"
     ClockFace.AMBIENT -> "Ambient"
+    ClockFace.STARLIGHT_PREMIUM -> "Starlight Premium"
 }
 
 private data class ClockFaceStyle(
@@ -363,64 +364,91 @@ private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
         screenBackground = Brush.linearGradient(listOf(Color(0xFF121214), Color(0xFF1A1A1D))),
         cardBackground = Color(0xFF1C1C1F), digitColor = Color(0xFFF5F5F0), cornerRadius = 18.dp,
         borderColor = Color.White.copy(alpha = 0.06f), borderWidth = 1.dp,
-        dividerColor = Color.White.copy(alpha = 0.10f), labelColor = Color.White.copy(alpha = 0.45f),
-        glowColor = Color.Transparent, glowAlpha = 0f
+        dividerColor = Color.Black.copy(alpha = 0.55f), labelColor = Color.White.copy(alpha = 0.45f),
+        glowColor = Color.Transparent, glowAlpha = 0f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.DARK_ELEGANT -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF0A0A12), Color(0xFF14101F))),
         cardBackground = Color(0xFF17131F), digitColor = Color(0xFFE8D9B5), cornerRadius = 10.dp,
         borderColor = Color(0xFFE8D9B5).copy(alpha = 0.25f), borderWidth = 1.dp,
-        dividerColor = Color(0xFFE8D9B5).copy(alpha = 0.18f), labelColor = Color(0xFFE8D9B5).copy(alpha = 0.55f),
-        glowColor = Color(0xFFE8D9B5), glowAlpha = 0.12f
+        dividerColor = Color.Black.copy(alpha = 0.55f), labelColor = Color(0xFFE8D9B5).copy(alpha = 0.55f),
+        glowColor = Color(0xFFE8D9B5), glowAlpha = 0.12f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.GLASS_GLOSSY -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF1B2436), Color(0xFF0E141F))),
         cardBackground = Color.White.copy(alpha = 0.08f), digitColor = Color.White, cornerRadius = 28.dp,
         borderColor = Color.White.copy(alpha = 0.28f), borderWidth = 1.2.dp,
-        dividerColor = Color.White.copy(alpha = 0.22f), labelColor = Color.White.copy(alpha = 0.7f),
-        glowColor = Color.White, glowAlpha = 0.10f
+        dividerColor = Color(0xFF11161F), labelColor = Color.White.copy(alpha = 0.7f),
+        glowColor = Color.White, glowAlpha = 0.10f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.NEON -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF07050F), Color(0xFF120A1F))),
         cardBackground = Color(0xFF0D0716), digitColor = Color(0xFF64FFDA), cornerRadius = 14.dp,
         borderColor = Color(0xFF64FFDA).copy(alpha = 0.7f), borderWidth = 1.4.dp,
-        dividerColor = Color(0xFFBB86FC).copy(alpha = 0.4f), labelColor = Color(0xFFBB86FC),
-        glowColor = Color(0xFF64FFDA), glowAlpha = 0.35f
+        dividerColor = Color(0xFF0D0716), labelColor = Color(0xFFBB86FC),
+        glowColor = Color(0xFF64FFDA), glowAlpha = 0.35f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.DIGITAL_FUTURISTIC -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF03080C), Color(0xFF061620))),
         cardBackground = Color(0xFF071319), digitColor = Color(0xFF00E5FF), cornerRadius = 4.dp,
         borderColor = Color(0xFF00E5FF).copy(alpha = 0.45f), borderWidth = 1.dp,
-        dividerColor = Color(0xFF00E5FF).copy(alpha = 0.3f), labelColor = Color(0xFF00E5FF).copy(alpha = 0.6f),
-        glowColor = Color(0xFF00E5FF), glowAlpha = 0.18f
+        dividerColor = Color(0xFF071319), labelColor = Color(0xFF00E5FF).copy(alpha = 0.6f),
+        glowColor = Color(0xFF00E5FF), glowAlpha = 0.18f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.CLEAN_PRODUCTIVITY -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFFF4F4F8), Color(0xFFE9E9F2))),
         cardBackground = Color.White, digitColor = Color(0xFF1A1A1A), cornerRadius = 20.dp,
         borderColor = Color.Black.copy(alpha = 0.08f), borderWidth = 1.dp,
-        dividerColor = Color.Black.copy(alpha = 0.07f), labelColor = Color(0xFF6B6B76),
-        glowColor = Color.Transparent, glowAlpha = 0f
+        dividerColor = Color.White, labelColor = Color(0xFF6B6B76),
+        glowColor = Color.Transparent, glowAlpha = 0f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
+    )
+    ClockFace.CLEAN_PRODUCTIVITY -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(Color(0xFFF4F4F8), Color(0xFFE9E9F2))),
+        cardBackground = Color.White, digitColor = Color(0xFF1A1A1A), cornerRadius = 20.dp,
+        borderColor = Color.Black.copy(alpha = 0.08f), borderWidth = 1.dp,
+        dividerColor = Color.White, labelColor = Color(0xFF6B6B76),
+        glowColor = Color.Transparent, glowAlpha = 0f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.SOFT_STUDY -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF15181C), Color(0xFF1B2420))),
         cardBackground = Color(0xFF1E2621), digitColor = Color(0xFFBFE3D0), cornerRadius = 24.dp,
         borderColor = Color(0xFFBFE3D0).copy(alpha = 0.14f), borderWidth = 1.dp,
-        dividerColor = Color(0xFFBFE3D0).copy(alpha = 0.12f), labelColor = Color(0xFFBFE3D0).copy(alpha = 0.55f),
-        glowColor = Color(0xFF6FCF97), glowAlpha = 0.08f
+        dividerColor = Color(0xFF1E2621), labelColor = Color(0xFFBFE3D0).copy(alpha = 0.55f),
+        glowColor = Color(0xFF6FCF97), glowAlpha = 0.08f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.RETRO_DIGITAL -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF1A0F08), Color(0xFF2A150A))),
         cardBackground = Color(0xFF241207), digitColor = Color(0xFFFF8C32), cornerRadius = 6.dp,
         borderColor = Color(0xFFFF8C32).copy(alpha = 0.4f), borderWidth = 1.dp,
-        dividerColor = Color(0xFFFF8C32).copy(alpha = 0.3f), labelColor = Color(0xFFFF8C32).copy(alpha = 0.6f),
-        glowColor = Color(0xFFFF8C32), glowAlpha = 0.15f
+        dividerColor = Color(0xFF241207), labelColor = Color(0xFFFF8C32).copy(alpha = 0.6f),
+        glowColor = Color(0xFFFF8C32), glowAlpha = 0.15f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.MODERN_DASHBOARD -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF10131C), Color(0xFF171B27))),
         cardBackground = Color(0xFF1D212E), digitColor = Color.White, cornerRadius = 16.dp,
         borderColor = Color(0xFF3B82F6).copy(alpha = 0.35f), borderWidth = 1.2.dp,
-        dividerColor = Color(0xFF3B82F6).copy(alpha = 0.25f), labelColor = Color(0xFF3B82F6),
-        glowColor = Color(0xFF3B82F6), glowAlpha = 0.12f
+        dividerColor = Color(0xFF1D212E), labelColor = Color(0xFF3B82F6),
+        glowColor = Color(0xFF3B82F6), glowAlpha = 0.12f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.FLIP_BOARD_INSPIRED -> ClockFaceStyle(
         screenBackground = Brush.linearGradient(listOf(Color(0xFF06060A), Color(0xFF0C0C12))),
@@ -435,16 +463,78 @@ private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
         screenBackground = Brush.linearGradient(listOf(Color.Black, Color(0xFF0A0A0A))),
         cardBackground = Color(0xFF0F0F0F), digitColor = Color.White, cornerRadius = 0.dp,
         borderColor = Color.White.copy(alpha = 0.9f), borderWidth = 1.5.dp,
-        dividerColor = Color.White.copy(alpha = 0.4f), labelColor = Color.White.copy(alpha = 0.6f),
-        glowColor = Color.Transparent, glowAlpha = 0f
+        dividerColor = Color(0xFF0F0F0F), labelColor = Color.White.copy(alpha = 0.6f),
+        glowColor = Color.Transparent, glowAlpha = 0f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
     ClockFace.AMBIENT -> ClockFaceStyle(
         screenBackground = Brush.radialGradient(listOf(Color(0xFF1E2A3A), Color(0xFF090D14))),
         cardBackground = Color(0xFF141B26).copy(alpha = 0.8f), digitColor = Color(0xFFCFE0F5), cornerRadius = 40.dp,
         borderColor = Color(0xFFCFE0F5).copy(alpha = 0.1f), borderWidth = 1.dp,
-        dividerColor = Color(0xFFCFE0F5).copy(alpha = 0.1f), labelColor = Color(0xFFCFE0F5).copy(alpha = 0.5f),
-        glowColor = Color(0xFF6FA8DC), glowAlpha = 0.2f
+        dividerColor = Color(0xFF101722), labelColor = Color(0xFFCFE0F5).copy(alpha = 0.5f),
+        glowColor = Color(0xFF6FA8DC), glowAlpha = 0.2f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
     )
+    ClockFace.STARLIGHT_PREMIUM -> ClockFaceStyle(
+        screenBackground = Brush.radialGradient(listOf(Color(0xFF141B33), Color(0xFF05070F))),
+        cardBackground = Color(0xFF10142A).copy(alpha = 0.85f), digitColor = Color(0xFFF4E9D8), cornerRadius = 26.dp,
+        borderColor = Color(0xFFFFD98A).copy(alpha = 0.24f), borderWidth = 1.2.dp,
+        dividerColor = Color(0xFF0B0E20), labelColor = Color(0xFFFFD98A).copy(alpha = 0.7f),
+        glowColor = Color(0xFFFFD98A), glowAlpha = 0.2f,
+        splitDigitGapDp = 7.dp,
+        hasCutMask = true
+    )
+}
+
+private data class PremiumStarSpec(
+    val xFrac: Float,
+    val yFrac: Float,
+    val radius: Float,
+    val driftX: Float,
+    val driftY: Float,
+    val phase: Float
+)
+
+@Composable
+private fun PremiumStarfieldBackground(modifier: Modifier = Modifier) {
+    val stars = remember {
+        val random = kotlin.random.Random(7)
+        List(80) {
+            PremiumStarSpec(
+                xFrac = random.nextFloat(),
+                yFrac = random.nextFloat(),
+                radius = 1f + random.nextFloat() * 2.4f,
+                driftX = (random.nextFloat() - 0.5f) * 0.5f,
+                driftY = (random.nextFloat() - 0.5f) * 0.5f,
+                phase = random.nextFloat() * 6.283f
+            )
+        }
+    }
+    val infinite = rememberInfiniteTransition(label = "premiumStarfield")
+    val time by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(26000, easing = LinearEasing), RepeatMode.Restart),
+        label = "premiumStarfieldTime"
+    )
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        if (w <= 0f || h <= 0f) return@Canvas
+        stars.forEach { star ->
+            val x = (((star.xFrac + star.driftX * time) % 1f + 1f) % 1f) * w
+            val y = (((star.yFrac + star.driftY * time) % 1f + 1f) % 1f) * h
+            val twinkle = 0.3f + 0.7f * ((kotlin.math.sin(time * 6.283f * 3f + star.phase) + 1f) / 2f)
+            drawCircle(color = Color.White.copy(alpha = twinkle), radius = star.radius, center = Offset(x, y))
+            drawCircle(
+                color = Color(0xFFFFD98A).copy(alpha = twinkle * 0.35f),
+                radius = star.radius * 2.4f,
+                center = Offset(x, y)
+            )
+        }
+    }
 }
 
 private fun loadClockFace(context: Context): ClockFace {
@@ -2613,6 +2703,9 @@ fun TimerHomeDialog(
                     }
             ) {
                 StudyTimerTicker()
+                if (ClockFaceState.current == ClockFace.STARLIGHT_PREMIUM) {
+                    PremiumStarfieldBackground(modifier = Modifier.fillMaxSize())
+                }
                 val isLandscape = maxWidth > maxHeight
                 val activeClockBoxSettings = TimerBoxLiveSettingsState.get(context, "clock", isLandscape)
                 val iconSize = if (isLandscape) 32.dp else 44.dp
@@ -2773,6 +2866,17 @@ private fun TimerSettingsDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp).heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
                 Text("Timer settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                Text("Clock face", color = Color.LightGray, fontSize = 14.sp)
+                Spacer(Modifier.height(6.dp))
+                TextButton(onClick = { showClockFacePickerInSettings = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        clockFaceLabel(ClockFaceState.current),
+                        color = SoftNeutral,
+                        modifier = Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -2953,17 +3057,6 @@ private fun TimerSettingsDialog(
                     TextButton(onClick = { boxEditTarget = target }, modifier = Modifier.fillMaxWidth()) {
                         Text(target.label, color = SoftNeutral, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
                     }
-                }
-                Spacer(Modifier.height(20.dp))
-                Text("Clock face", color = Color.LightGray, fontSize = 14.sp)
-                Spacer(Modifier.height(6.dp))
-                TextButton(onClick = { showClockFacePickerInSettings = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        clockFaceLabel(ClockFaceState.current),
-                        color = SoftNeutral,
-                        modifier = Modifier.weight(1f),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Start
-                    )
                 }
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
@@ -3402,6 +3495,9 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                     .background(activeFaceStyle.screenBackground)
             ) {
                 StudyTimerTicker()
+                if (ClockFaceState.current == ClockFace.STARLIGHT_PREMIUM) {
+                    PremiumStarfieldBackground(modifier = Modifier.fillMaxSize())
+                }
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
                 val activeBoxSettings = TimerBoxLiveSettingsState.get(context, "quick", isLandscape)
