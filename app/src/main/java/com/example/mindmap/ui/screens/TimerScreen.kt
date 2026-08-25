@@ -258,7 +258,7 @@ internal object StrikeQuoteState {
         saveStrikeQuotes(context, updated)
     }
 }
-private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE, SPLIT_FLAP }
+private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE }
 
 private val TopHalfShape = GenericShape { size, _ ->
     addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height / 2f))
@@ -1708,7 +1708,7 @@ private fun FlipDigitCell(
             // real-time/countdown কয়েক সেকেন্ডের জন্য "আটকে" থাকার (main-thread জ্যাম) আসল কারণ।
             // তাই Split-Flap-এ থাকলে এই extra faux-bold copy বাদ দেওয়া হলো — flap-এর নিজের
             // divider/shadow দিয়েই যথেষ্ট bold/premium ফিল আসে।
-            if (extraBold && DigitStyleState.current != DigitTransitionStyle.SPLIT_FLAP) {
+            if (extraBold) {
                 Text(
                     value.toString(),
                     color = color,
@@ -1825,119 +1825,6 @@ private fun FlipDigitCell(
             )
         }
 
-        DigitTransitionStyle.SPLIT_FLAP -> {
-            // Static halves are ALWAYS bound to the live `char`, so the
-            // digit can never get stuck on a stale value. The two flap
-            // overlays are ALWAYS composed (never conditionally skipped) —
-            // their Animatable values are read ONLY inside graphicsLayer{}
-            // blocks (draw/layout phase), never in the composable body.
-            // Reading Animatable.value directly in composable body would
-            // subscribe the whole subtree to recomposition on every single
-            // animation frame; with 6-8 digits animating together (a full
-            // minute/hour rollover) that was heavy enough to jank the main
-            // thread and stall the timer's own tick loop — the "stuck at
-            // 5:00 then jumps" symptom. graphicsLayer reads avoid that
-            // entirely since they only trigger a re-draw, not recomposition.
-            var lastChar by remember { mutableStateOf(char) }
-            var flipChar by remember { mutableStateOf(char) }
-            val topFlip = remember { Animatable(1f) }      // 0 = flat/covering, 1 = fully folded away
-            val bottomFlip = remember { Animatable(1f) }   // 0 = flat/covering, 1 = fully folded away
-            val settleBounce = remember { Animatable(1f) }
-
-            LaunchedEffect(char) {
-                if (char != lastChar) {
-                    flipChar = lastChar
-                    lastChar = char
-                    topFlip.snapTo(0f)
-                    bottomFlip.snapTo(0f)
-                    settleBounce.snapTo(0f)
-                    launch { runCatching { topFlip.animateTo(1f, tween(150, easing = FastOutLinearInEasing)) } }
-                    launch { runCatching { bottomFlip.animateTo(1f, tween(170, easing = LinearOutSlowInEasing)) } }
-                    launch { runCatching { settleBounce.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 420f)) } }
-                }
-            }
-
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.graphicsLayer {
-                    val landingSquash = (1f - settleBounce.value).let { it * it } * 0.05f
-                    scaleY = 1f - landingSquash
-                    scaleX = 1f + landingSquash * 0.4f
-                }
-            ) {
-                // Static halves — always show the current (new) digit.
-                Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(char) }
-                Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(char) }
-
-                // Top flap: outgoing digit's top half, hinged at the
-                // centerline, folding down and away — reveals the static
-                // top underneath. Plays first. Always composed; fully
-                // invisible (alpha 0) once its animation finishes so it
-                // never blocks the static layer beneath it.
-                Box(
-                    modifier = Modifier
-                        .clip(TopHalfShape)
-                        .graphicsLayer {
-                            val v = topFlip.value
-                            rotationX = -90f * v
-                            cameraDistance = 28f * density
-                            transformOrigin = TransformOrigin(0.5f, 1f)
-                            alpha = 1f - v
-                        }
-                ) {
-                    DigitGlyph(flipChar)
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .graphicsLayer { alpha = topFlip.value * 0.45f }
-                            .background(Color.Black)
-                    )
-                }
-
-                // Bottom flap: outgoing digit's bottom half, hinged at the
-                // centerline, folding up and away right after the top flap
-                // lands — the classic two-beat "clack-clack".
-                Box(
-                    modifier = Modifier
-                        .clip(BottomHalfShape)
-                        .graphicsLayer {
-                            val v = bottomFlip.value
-                            rotationX = 90f * v
-                            cameraDistance = 28f * density
-                            transformOrigin = TransformOrigin(0.5f, 0f)
-                            alpha = 1f - v
-                        }
-                ) {
-                    DigitGlyph(flipChar)
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .graphicsLayer { alpha = bottomFlip.value * 0.45f }
-                            .background(Color.Black)
-                    )
-                }
-
-                // Soft glossy highlight along the crease for a premium
-                // molded-card feel — static, no animation cost.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(5.dp)
-                        .align(Alignment.Center)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)
-                            )
-                        )
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.2.dp)
-                        .background(Color.Black.copy(alpha = 0.55f))
-                )
-            }
-        }
     }
 }
 
@@ -2004,7 +1891,7 @@ private fun FlipDigitCard(
             val widthCapPx = if (digitCount > 0) (boxWidthPx * 0.90f) / (digitCount * 0.62f) else requestedPx
             val safeFontSizePx = minOf(requestedPx, heightCapPx, widthCapPx).coerceAtLeast(1f)
             val safeFontSize = with(density) { safeFontSizePx.toSp() }
-            if (cutMaskEnabled && DigitStyleState.current != DigitTransitionStyle.SPLIT_FLAP) {
+            if (cutMaskEnabled) {
                 Box(contentAlignment = Alignment.Center) {
                     Box(modifier = Modifier.clip(TopHalfShape)) {
                         FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
@@ -2387,7 +2274,7 @@ private fun NumberWheelColumn(
             modifier = Modifier.fillMaxHeight().width(columnWidth)
         ) {
             itemsIndexed(values) { index, value ->
-                val isSelected = value == selected
+                val isCentered = index == centeredIndex
                 val distance = kotlin.math.abs(index - centeredIndex).coerceAtMost(2)
                 val scale = 1f - distance * 0.18f
                 val itemAlpha = (1f - distance * 0.32f).coerceIn(0.28f, 1f)
@@ -2400,21 +2287,28 @@ private fun NumberWheelColumn(
                             scaleY = scale
                             alpha = itemAlpha
                         }
-                        .pointerInput(value, isSelected) {
+                        .pointerInput(value, isCentered) {
                             detectTapGestures(
                                 onTap = {
-                                    if (isSelected) isEditing = true else onSelectedChange(value)
+                                    if (isCentered) isEditing = true else onSelectedChange(value)
                                 }
                             )
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (!(isSelected && isEditing)) {
+                    if (!(isCentered && isEditing)) {
                         Text(
                             "%02d".format(value),
-                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.55f),
-                            fontSize = if (isSelected) 23.sp else 17.sp,
-                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Normal
+                            color = if (isCentered) Color.White else Color.White.copy(alpha = 0.42f),
+                            fontSize = if (isCentered) 23.sp else 17.sp,
+                            fontWeight = if (isCentered) FontWeight.Black else FontWeight.Normal,
+                            style = androidx.compose.ui.text.TextStyle(
+                                shadow = if (isCentered) androidx.compose.ui.graphics.Shadow(
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    offset = Offset.Zero,
+                                    blurRadius = 18f
+                                ) else null
+                            )
                         )
                     }
                 }
@@ -2425,16 +2319,22 @@ private fun NumberWheelColumn(
             Modifier
                 .fillMaxWidth()
                 .height(itemHeight)
+                .shadow(
+                    elevation = if (isEditing) 10.dp else 6.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    ambientColor = Color.White.copy(alpha = 0.35f),
+                    spotColor = Color.White.copy(alpha = 0.35f)
+                )
                 .clip(RoundedCornerShape(10.dp))
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            Color(0xFF232326).copy(alpha = if (isEditing) 0.95f else 0.88f),
-                            Color(0xFF141416).copy(alpha = if (isEditing) 0.95f else 0.88f)
+                            Color(0xFF1C1C1E),
+                            Color(0xFF000000)
                         )
                     )
                 )
-                .border(1.dp, if (isEditing) TimerAccent.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                .border(1.dp, if (isEditing) TimerAccent.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
         ) {
             if (isEditing) {
                 BasicTextField(
@@ -2965,7 +2865,6 @@ private fun TimerSettingsDialog(
                         DigitTransitionStyle.FADE_SCALE to "Fade & Pop",
                         DigitTransitionStyle.BOUNCE to "Bounce",
                         DigitTransitionStyle.WAVE to "Wave",
-                        DigitTransitionStyle.SPLIT_FLAP to "Split-Flap"
                     ).forEach { (styleOption, label) ->
                         val selected = DigitStyleState.current == styleOption
                         Box(
