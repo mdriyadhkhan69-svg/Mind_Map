@@ -2218,6 +2218,7 @@ private fun NumberWheelColumn(
     var isEditing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     val editFocusRequester = remember { FocusRequester() }
+    val currentSelected by rememberUpdatedState(selected)
     var centeredIndex by remember { mutableStateOf(values.indexOf(selected).coerceAtLeast(0)) }
 
     LaunchedEffect(selected, values) {
@@ -2234,7 +2235,7 @@ private fun NumberWheelColumn(
                 val idx = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
                 centeredIndex = idx
                 val value = values[idx]
-                if (value != selected) {
+                if (value != currentSelected) {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onSelectedChange(value)
                 }
@@ -2247,7 +2248,7 @@ private fun NumberWheelColumn(
                             ).coerceIn(values.indices)
                     val settledValue = values[settledIndex]
                     centeredIndex = settledIndex
-                    if (settledValue != selected) {
+                    if (settledValue != currentSelected) {
                         onSelectedChange(settledValue)
                     }
                 }
