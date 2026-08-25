@@ -773,7 +773,10 @@ internal data class TimerBoxSettings(
     val boxHeightDp: Float = 130f,
     val fontSizeSp: Float = 78f,
     val fontWeightValue: Int = 900,
-    val spacingDp: Float = 12f
+    val spacingDp: Float = 12f,
+    val boxBackgroundOpacity: Float = 1f,
+    val boxBorderOpacity: Float = 1f,
+    val dividerEnabled: Boolean = true
 )
 
 private fun timerBoxPrefsKey(scope: String, isLandscape: Boolean) = "${scope}_${if (isLandscape) "landscape" else "portrait"}"
@@ -794,7 +797,10 @@ private fun loadTimerBoxSettings(context: Context, isLandscape: Boolean, scope: 
         boxHeightDp = prefs.getFloat("${key}_box_height", defaults.boxHeightDp),
         fontSizeSp = prefs.getFloat("${key}_font_size", defaults.fontSizeSp),
         fontWeightValue = prefs.getInt("${key}_font_weight", defaults.fontWeightValue),
-        spacingDp = prefs.getFloat("${key}_spacing", defaults.spacingDp)
+        spacingDp = prefs.getFloat("${key}_spacing", defaults.spacingDp),
+        boxBackgroundOpacity = prefs.getFloat("${key}_bg_opacity", defaults.boxBackgroundOpacity),
+        boxBorderOpacity = prefs.getFloat("${key}_border_opacity", defaults.boxBorderOpacity),
+        dividerEnabled = prefs.getBoolean("${key}_divider_enabled", defaults.dividerEnabled)
     )
 }
 
@@ -806,6 +812,9 @@ private fun saveTimerBoxSettings(context: Context, isLandscape: Boolean, setting
         .putFloat("${key}_font_size", settings.fontSizeSp)
         .putInt("${key}_font_weight", settings.fontWeightValue)
         .putFloat("${key}_spacing", settings.spacingDp)
+        .putFloat("${key}_bg_opacity", settings.boxBackgroundOpacity)
+        .putFloat("${key}_border_opacity", settings.boxBorderOpacity)
+        .putBoolean("${key}_divider_enabled", settings.dividerEnabled)
         .apply()
 }
 
@@ -1864,16 +1873,27 @@ private fun FlipDigitCard(
     borderWidth: Dp = 0.dp,
     dividerColor: Color = Color.Black.copy(alpha = 0.75f),
     splitGapDp: Dp = 0.dp,
-    cutMaskEnabled: Boolean = false
+    cutMaskEnabled: Boolean = false,
+    boxBackgroundOpacity: Float = 1f,
+    boxBorderOpacity: Float = 1f,
+    dividerEnabled: Boolean = true
 ) {
+    val effectiveCardColor = cardColor.copy(alpha = (cardColor.alpha * boxBackgroundOpacity).coerceIn(0f, 1f))
+    val effectiveBorderWidth = if (borderWidth > 0.dp) borderWidth else 1.5.dp
+    val effectiveBorderColor = (if (borderColor != Color.Transparent) borderColor else digitColor)
+        .copy(alpha = boxBorderOpacity.coerceIn(0f, 1f))
+    // Divider visibility follows box background visibility (fades out together
+    // with the background), but only when the divider toggle itself is on.
+    val effectiveDividerColor = if (dividerEnabled) {
+        dividerColor.copy(alpha = (dividerColor.alpha * boxBackgroundOpacity).coerceIn(0f, 1f))
+    } else {
+        Color.Transparent
+    }
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(cardColor)
-            .then(
-                if (borderWidth > 0.dp) Modifier.border(borderWidth, borderColor, RoundedCornerShape(cornerRadius))
-                else Modifier
-            )
+            .background(effectiveCardColor)
+            .border(effectiveBorderWidth, effectiveBorderColor, RoundedCornerShape(cornerRadius))
     ) {
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize().padding(top = topInset),
@@ -1908,7 +1928,7 @@ private fun FlipDigitCard(
             Modifier
                 .fillMaxWidth()
                 .height(if (splitGapDp > dividerThickness) splitGapDp else dividerThickness)
-                .background(dividerColor)
+                .background(effectiveDividerColor)
                 .align(Alignment.Center)
         )
     }
@@ -1925,7 +1945,10 @@ private fun FlipBlock(
     cornerIsNumeric: Boolean,
     boxAspectRatio: Float,
     modifier: Modifier = Modifier,
-    faceStyle: ClockFaceStyle? = null
+    faceStyle: ClockFaceStyle? = null,
+    boxBackgroundOpacity: Float = 1f,
+    boxBorderOpacity: Float = 1f,
+    dividerEnabled: Boolean = true
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
         FlipDigitCard(
@@ -1941,7 +1964,10 @@ private fun FlipBlock(
             borderWidth = faceStyle?.borderWidth ?: 0.dp,
             dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f),
             splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp,
-            cutMaskEnabled = faceStyle?.hasCutMask ?: false
+            cutMaskEnabled = faceStyle?.hasCutMask ?: false,
+            boxBackgroundOpacity = boxBackgroundOpacity,
+            boxBorderOpacity = boxBorderOpacity,
+            dividerEnabled = dividerEnabled
         )
         if (topLabel.isNotEmpty()) {
             Text(
@@ -1980,7 +2006,10 @@ private fun SplitTimeDisplay(
     spacing: Dp = 12.dp,
     fontWeight: FontWeight = FontWeight.Black,
     modifier: Modifier = Modifier,
-    faceStyle: ClockFaceStyle? = null
+    faceStyle: ClockFaceStyle? = null,
+    boxBackgroundOpacity: Float = 1f,
+    boxBorderOpacity: Float = 1f,
+    dividerEnabled: Boolean = true
 ) {
     val totalSeconds = totalMillis / 1000
     val h = totalSeconds / 3600
@@ -2007,7 +2036,10 @@ private fun SplitTimeDisplay(
                     borderWidth = faceStyle?.borderWidth ?: 0.dp,
                     dividerColor = faceStyle?.dividerColor ?: Color.Black.copy(alpha = 0.75f),
                     splitGapDp = faceStyle?.splitDigitGapDp ?: 0.dp,
-                    cutMaskEnabled = faceStyle?.hasCutMask ?: false
+                    cutMaskEnabled = faceStyle?.hasCutMask ?: false,
+                    boxBackgroundOpacity = boxBackgroundOpacity,
+                    boxBorderOpacity = boxBorderOpacity,
+                    dividerEnabled = dividerEnabled
                 )
                 Text(
                     label,
@@ -2066,7 +2098,10 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSetting
             cornerIsNumeric = false,
             boxAspectRatio = 1f,
             modifier = Modifier.weight(1f).height(boxHeightDp),
-            faceStyle = faceStyle
+            faceStyle = faceStyle,
+            boxBackgroundOpacity = boxSettings.boxBackgroundOpacity,
+            boxBorderOpacity = boxSettings.boxBorderOpacity,
+            dividerEnabled = boxSettings.dividerEnabled
         )
         FlipBlock(
             topLabel = dayLabel,
@@ -2079,7 +2114,10 @@ private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSetting
             cornerIsNumeric = true,
             boxAspectRatio = 1f,
             modifier = Modifier.weight(1f).height(boxHeightDp),
-            faceStyle = faceStyle
+            faceStyle = faceStyle,
+            boxBackgroundOpacity = boxSettings.boxBackgroundOpacity,
+            boxBorderOpacity = boxSettings.boxBorderOpacity,
+            dividerEnabled = boxSettings.dividerEnabled
         )
     }
 }
@@ -2437,9 +2475,17 @@ private fun TimerBoxSettingsPanel(
     var fontSize by remember(settings) { mutableStateOf(settings.fontSizeSp) }
     var fontWeightValue by remember(settings) { mutableStateOf(settings.fontWeightValue) }
     var spacing by remember(settings) { mutableStateOf(settings.spacingDp) }
+    var boxBackgroundOpacity by remember(settings) { mutableStateOf(settings.boxBackgroundOpacity) }
+    var boxBorderOpacity by remember(settings) { mutableStateOf(settings.boxBorderOpacity) }
+    var dividerEnabled by remember(settings) { mutableStateOf(settings.dividerEnabled) }
 
     fun push() {
-        onSettingsChange(TimerBoxSettings(widthPercent, boxHeight, fontSize, fontWeightValue, spacing))
+        onSettingsChange(
+            TimerBoxSettings(
+                widthPercent, boxHeight, fontSize, fontWeightValue, spacing,
+                boxBackgroundOpacity, boxBorderOpacity, dividerEnabled
+            )
+        )
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -2492,6 +2538,21 @@ private fun TimerBoxSettingsPanel(
                     onValueChange = { spacing = it; push() }
                 )
 
+                Spacer(Modifier.height(10.dp))
+                Text("Box background visibility  ${(boxBackgroundOpacity * 100).toInt()}%", color = Color.LightGray, fontSize = 13.sp)
+                StyledTimerSlider(
+                    value = boxBackgroundOpacity,
+                    valueRange = 0f..1f,
+                    onValueChange = { boxBackgroundOpacity = it; push() }
+                )
+
+                Text("Box border visibility  ${(boxBorderOpacity * 100).toInt()}%", color = Color.LightGray, fontSize = 13.sp)
+                StyledTimerSlider(
+                    value = boxBorderOpacity,
+                    valueRange = 0f..1f,
+                    onValueChange = { boxBorderOpacity = it; push() }
+                )
+
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = {
@@ -2505,6 +2566,8 @@ private fun TimerBoxSettingsPanel(
                         fontSize = reset.fontSizeSp
                         fontWeightValue = reset.fontWeightValue
                         spacing = reset.spacingDp
+                        boxBackgroundOpacity = reset.boxBackgroundOpacity
+                        boxBorderOpacity = reset.boxBorderOpacity
                         onSettingsChange(reset)
                     }) { Text("Default", color = Color.LightGray) }
                     TextButton(onClick = onDismiss) { Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold) }
@@ -3631,7 +3694,10 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             spacing = boxSpacingDp,
                             fontWeight = digitFontWeight,
                             modifier = Modifier.width(displayWidth),
-                            faceStyle = activeFaceStyle
+                            faceStyle = activeFaceStyle,
+                            boxBackgroundOpacity = activeBoxSettings.boxBackgroundOpacity,
+                            boxBorderOpacity = activeBoxSettings.boxBorderOpacity,
+                            dividerEnabled = activeBoxSettings.dividerEnabled
                         )
                     }
 
