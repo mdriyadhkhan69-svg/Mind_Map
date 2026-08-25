@@ -714,10 +714,12 @@ private fun CalendarDateOptionsDialog(
                     shadowElevation = 16.dp,
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                     modifier = Modifier
-                        .widthIn(min = 220.dp, max = 260.dp)
+                        .wrapContentWidth()
+                        .widthIn(max = 280.dp)
+                        .animateContentSize(tween(220))
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
                 ) {
-                    Column(modifier = Modifier.padding(14.dp).animateContentSize(tween(200))) {
+                    Column(modifier = Modifier.padding(14.dp).wrapContentWidth()) {
                         Text(dateKey, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SoftNeutral)
                         Spacer(Modifier.height(8.dp))
                         when (panelMode) {
@@ -840,20 +842,27 @@ private fun CalendarDateOptionsDialog(
                                     PremiumPanelButton("Add Occasion +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
                                 }
                                 if (existing?.hasTimer == true) {
-                                    Text(
-                                        "%02d:%02d".format(existing.timerHour, existing.timerMinute),
-                                        color = SoftNeutral,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 2.dp)
-                                    )
-                                    Row(modifier = Modifier.fillMaxWidth()) {
-                                        PremiumPanelButton("Edit Timer", color = SoftNeutral, modifier = Modifier.weight(1f), onClick = { panelMode = "timer" })
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                                        Text(
+                                            "%02d:%02d".format(existing.timerHour, existing.timerMinute),
+                                            color = SoftNeutral,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                         if (onRemoveTimer != null) {
-                                            Spacer(Modifier.width(2.dp))
-                                            PremiumPanelButton("Remove Timer", color = Color(0xFFFF6E6E), modifier = Modifier.weight(1f), onClick = { onRemoveTimer(); panelMode = "options" })
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                "Remove",
+                                                color = Color(0xFFFF6E6E),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.pointerInput("remove-timer-inline") {
+                                                    detectTapGestures(onTap = { onRemoveTimer() })
+                                                }
+                                            )
                                         }
                                     }
+                                    PremiumPanelButton("Edit Timer", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })
                                     Spacer(Modifier.height(4.dp))
                                 } else {
                                     PremiumPanelButton("Add Timer +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })

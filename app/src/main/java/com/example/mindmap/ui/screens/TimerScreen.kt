@@ -2513,7 +2513,88 @@ private fun TimerBoxSettingsPanel(
         }
     }
 }
+// Calendar-er CompactWheelColumn er moto simple, smooth-snap, premium touch-feel wheel —
+// scale/alpha/glow effect nai bole onek beshi buttery lage. শুধু Countdown "Add Timer"-e ব্যবহার হবে।
+@Composable
+private fun PremiumWheelColumn(
+    range: IntRange,
+    selected: Int,
+    onSelectedChange: (Int) -> Unit,
+    itemHeight: Dp,
+    visibleCount: Int = 3,
+    columnWidth: Dp
+) {
+    val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
+    val itemHeightPx = with(density) { itemHeight.toPx() }
+    val values = remember(range) { range.toList() }
+    val listState = rememberLazyListState()
+    val flingBehavior = rememberSnapFlingBehavior(listState)
 
+    LaunchedEffect(selected, values) {
+        val targetIndex = values.indexOf(selected).coerceAtLeast(0)
+        if (!listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIndex) {
+            listState.scrollToItem(targetIndex)
+        }
+    }
+
+    LaunchedEffect(listState) {
+        snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress) }
+            .collect { (index, offset, inProgress) ->
+                val idx = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
+                val value = values[idx]
+                if (value != selected) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onSelectedChange(value)
+                }
+                if (!inProgress) {
+                    val settledIndex = (listState.firstVisibleItemIndex +
+                            if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2) 1 else 0
+                            ).coerceIn(values.indices)
+                    val settledValue = values[settledIndex]
+                    if (settledValue != selected) {
+                        onSelectedChange(settledValue)
+                    }
+                }
+            }
+    }
+
+    Box(modifier = Modifier.height(itemHeight * visibleCount), contentAlignment = Alignment.Center) {
+        LazyColumn(
+            state = listState,
+            flingBehavior = flingBehavior,
+            contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
+            modifier = Modifier.fillMaxHeight().width(columnWidth)
+        ) {
+            items(values) { value ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(itemHeight)
+                        .pointerInput(value) {
+                            detectTapGestures(onTap = { onSelectedChange(value) })
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    val isSelected = value == selected
+                    Text(
+                        "%02d".format(value),
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.35f),
+                        fontSize = if (isSelected) 16.sp else 13.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+        Box(
+            Modifier
+                .width(columnWidth)
+                .height(itemHeight)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+        )
+    }
+}
 @Composable
 private fun CountdownTimeSetPanel(
     hours: Int,
@@ -2529,7 +2610,7 @@ private fun CountdownTimeSetPanel(
 ) {
     Row(
         modifier = modifier.widthIn(max = panelMaxWidth),
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(columnWidth)) {
@@ -2539,13 +2620,27 @@ private fun CountdownTimeSetPanel(
                 modifier = Modifier.width(columnWidth), textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(Modifier.height(4.dp))
-            NumberWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
+            PremiumWheelColumn(range = 0..99, selected = hours, onSelectedChange = onHoursChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
         }
-        Text(
-            ":", color = Color.White, fontSize = colonFontSize, fontWeight = FontWeight.Black,
-            maxLines = 1, softWrap = false,
-            modifier = Modifier.padding(bottom = (wheelItemHeight - 8.dp) / 2)
-        )
+        // Colon-er column-e HR/MIN label-er shomoporimaan (invisible) spacer rakha হয়েছে,
+        // jate niche-r Box ta thik wheel-er Box-er shomoy Y-te শুরু hoy — tahole colon
+        // hubohu wheel-er center-e boshbe, age-r moto উপরে-নিচে সরে থাকবে না।
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "HR", color = Color.Transparent, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, softWrap = false
+            )
+            Spacer(Modifier.height(4.dp))
+            Box(
+                modifier = Modifier.height(wheelItemHeight * 3),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    ":", color = Color.White, fontSize = colonFontSize, fontWeight = FontWeight.Black,
+                    maxLines = 1, softWrap = false
+                )
+            }
+        }
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(columnWidth)) {
             Text(
                 "MIN", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold,
@@ -2553,7 +2648,7 @@ private fun CountdownTimeSetPanel(
                 modifier = Modifier.width(columnWidth), textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(Modifier.height(4.dp))
-            NumberWheelColumn(range = 0..99, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
+            PremiumWheelColumn(range = 0..99, selected = minutes, onSelectedChange = onMinutesChange, itemHeight = wheelItemHeight, visibleCount = 3, columnWidth = columnWidth)
         }
     }
 }
