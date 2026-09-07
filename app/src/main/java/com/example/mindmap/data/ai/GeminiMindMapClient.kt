@@ -43,7 +43,7 @@ Rules:
         return try {
             withTimeout(30_000L) {
                 val model = GenerativeModel(
-                    modelName = "gemini-2.0-flash",
+                    modelName = "gemini-3.6-flash",
                     apiKey = apiKey,
                     generationConfig = generationConfig {
                         temperature = 0.6f
