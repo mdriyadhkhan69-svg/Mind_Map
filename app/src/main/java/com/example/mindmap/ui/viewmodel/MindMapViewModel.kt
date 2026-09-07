@@ -62,6 +62,47 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
         }
     }
 
+    // ---- AI (Gemini) generated node creation — mirrors addRootDateNode /
+    // addChildNode positioning, but returns the freshly inserted entity (with
+    // its real DB id) via callback so a generated tree can be walked and
+    // inserted level-by-level as Gemini's structured response is processed.
+    // Reuses the same repository/table as manual creation — no parallel model. ----
+    fun addAiRootNode(sectionId: Long, label: String, x: Float, y: Float, onCreated: (NodeEntity) -> Unit) {
+        viewModelScope.launch {
+            val roots = allNodes.value.filter { it.parentId == null && it.sectionId == sectionId }
+            val nextIndex = (roots.maxOfOrNull { it.orderIndex } ?: -1) + 1
+            val node = NodeEntity(
+                sectionId = sectionId,
+                parentId = null,
+                label = label,
+                orderIndex = nextIndex,
+                x = x,
+                y = y,
+                isExpanded = true
+            )
+            val id = repository.insert(node)
+            onCreated(node.copy(id = id))
+        }
+    }
+
+    fun addAiChildNode(parent: NodeEntity, label: String, x: Float, y: Float, onCreated: (NodeEntity) -> Unit) {
+        viewModelScope.launch {
+            val siblingCount = allNodes.value.count { it.parentId == parent.id }
+            val node = NodeEntity(
+                sectionId = parent.sectionId,
+                parentId = parent.id,
+                label = label,
+                orderIndex = siblingCount,
+                x = x,
+                y = y,
+                isExpanded = true
+            )
+            val id = repository.insert(node)
+            if (!parent.isExpanded) repository.update(parent.copy(isExpanded = true))
+            onCreated(node.copy(id = id))
+        }
+    }
+
     fun pasteSubtree(
         targetParent: NodeEntity,
         sourceRootId: Long,

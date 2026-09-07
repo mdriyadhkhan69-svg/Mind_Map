@@ -597,6 +597,7 @@ fun MindMapScreen(
     }
 
     var showAddDateDialog by remember { mutableStateOf(false) }
+    var showAiMindMapDialog by remember { mutableStateOf(false) }
     var addChildDialogFor by remember { mutableStateOf<NodeEntity?>(null) }
     var addTextDialogFor by remember { mutableStateOf<NodeEntity?>(null) }
     var boxStyleDialogFor by remember { mutableStateOf<NodeEntity?>(null) }
@@ -1462,6 +1463,11 @@ fun MindMapScreen(
             modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)
         )
 
+        AiSparkleFab(
+            onClick = { showAiMindMapDialog = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 96.dp)
+        )
+
         if (attachLineFromId != null) {
             Text(
                 "একটা box-এ ট্যাপ করুন সংযুক্ত করতে (বাতিল করতে খালি জায়গায় ট্যাপ করুন)",
@@ -1730,6 +1736,14 @@ fun MindMapScreen(
                 onApplySectionStyleToAllChange = { enabled ->
                     settingsViewModel.setApplySectionStyleToAll(enabled, currentSectionStyle)
                 }
+            )
+        }
+
+        if (showAiMindMapDialog) {
+            AiMindMapDialog(
+                viewModel = viewModel,
+                sectionId = currentSectionId,
+                onDismiss = { showAiMindMapDialog = false }
             )
         }
 
