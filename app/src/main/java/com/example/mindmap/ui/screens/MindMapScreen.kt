@@ -28,6 +28,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateOffsetAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -4730,22 +4732,29 @@ fun StyledInputDialog(title: String, initialValue: String, onDismiss: () -> Unit
     var text by remember { mutableStateOf(initialValue) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    var visible by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        visible = true
         focusRequester.requestFocus()
         keyboardController?.show()
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(Brush.linearGradient(listOf(GlassDark1.copy(alpha = 0.96f), GlassDark2.copy(alpha = 0.96f))))
-                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
-                .padding(24.dp)
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(180)) + scaleIn(tween(210), initialScale = 0.9f),
+            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.92f)
         ) {
-            Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Brush.linearGradient(listOf(GlassDark1.copy(alpha = 0.96f), GlassDark2.copy(alpha = 0.96f))))
+                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                    .padding(24.dp)
+            ) {
+                Column {
                 Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
@@ -4780,6 +4789,7 @@ fun StyledInputDialog(title: String, initialValue: String, onDismiss: () -> Unit
                     ) {
                         Text("Save", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
+                }
                 }
             }
         }
@@ -6267,7 +6277,7 @@ private fun PdfLibraryHomeDialog(
     var isLoading by remember { mutableStateOf(cachedFilesAtOpen == null && hasAllFilesAccess) }
     var activeTab by remember { mutableStateOf(libraryPreferences.getString("last_tab", "files") ?: "files") }
     var pdfSearchQuery by remember { mutableStateOf("") }
-    var isPdfSearchVisible by remember { mutableStateOf(true) }
+    var isPdfSearchVisible by remember { mutableStateOf(libraryPreferences.getBoolean("search_bar_visible", true)) }
     var openedSectionId by remember { mutableStateOf<String?>(null) }
     var selectingForSectionId by remember { mutableStateOf<String?>(null) }
     var selectedPdfPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -6333,6 +6343,19 @@ private fun PdfLibraryHomeDialog(
             if (section.id != sectionId || section.entries.any { it.path == file.file.path }) section
             else section.copy(entries = section.entries + PdfLibraryEntry(file.file.path, file.name))
         })
+    }
+
+    // Selection mode-e thakle section tap korle sheta open na kore, selected PDF gulo
+    // shorashori otho section-e move kore dey — nahole normal open behavior thake
+    fun handleSectionTapForSelection(sectionId: String) {
+        if (selectionMode && selectedPdfPaths.isNotEmpty()) {
+            val chosenFiles = files.filter { it.file.path in selectedPdfPaths }
+            chosenFiles.forEach { file -> addPdfToSection(sectionId, file) }
+            selectionMode = false
+            selectedPdfPaths = emptySet()
+        } else {
+            openedSectionId = sectionId
+        }
     }
 
     val sectionIconPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -6567,6 +6590,9 @@ private fun PdfLibraryHomeDialog(
                                     .pointerInput("toggle-pdf-search") {
                                         detectTapGestures(onDoubleTap = {
                                             isPdfSearchVisible = !isPdfSearchVisible
+                                            libraryPreferences.edit()
+                                                .putBoolean("search_bar_visible", isPdfSearchVisible)
+                                                .apply()
                                         })
                                     }
                             )
@@ -6598,16 +6624,62 @@ private fun PdfLibraryHomeDialog(
                         }
                     }
 
-                    if (selectionMode) {
+                    AnimatedVisibility(
+                        visible = selectionMode,
+                        enter = fadeIn(tween(200)) + expandVertically(tween(220)),
+                        exit = fadeOut(tween(160)) + shrinkVertically(tween(180))
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("${selectedPdfPaths.size} selected", modifier = Modifier.weight(1f), fontSize = 13.sp)
-                            TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { removeSelectionDialog = true }) { Text("Remove", color = Color(0xFFFF7A7A)) }
-                            TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { showSectionTargetDialog = true }) { Text("Add Section", color = AccentCyan) }
-                            TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }) { Text("Share", color = AccentCyan) }
-                            TextButton(onClick = { selectionMode = false; selectedPdfPaths = emptySet() }) { Text("Cancel", color = AccentCyan) }
+                            // ekta single, stable count badge — number ta smoothly cross-fade/slide kore
+                            // uporer-nicher dike, "label" ta kokhono move/wrap kore na
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                AnimatedContent(
+                                    targetState = selectedPdfPaths.size,
+                                    transitionSpec = {
+                                        if (targetState > initialState) {
+                                            (slideInVertically(tween(180)) { h -> h } + fadeIn(tween(180))) togetherWith
+                                                    (slideOutVertically(tween(140)) { h -> -h } + fadeOut(tween(140)))
+                                        } else {
+                                            (slideInVertically(tween(180)) { h -> -h } + fadeIn(tween(180))) togetherWith
+                                                    (slideOutVertically(tween(140)) { h -> h } + fadeOut(tween(140)))
+                                        }
+                                    },
+                                    label = "selectedFileCount"
+                                ) { count ->
+                                    Text(
+                                        text = count.toString(),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SoftNeutral,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                                Spacer(Modifier.width(4.dp))
+                                Text("selected", fontSize = 13.sp, color = Color.LightGray, maxLines = 1, softWrap = false)
+                            }
+                            // buttons gulo ekta horizontalScroll row-e — chhoto screen-e kokhono
+                            // ei row wrap/overlap hobe na, sob shomoy ekhi line-e thakbe
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                            ) {
+                                TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { removeSelectionDialog = true }) {
+                                    Text("Remove", color = Color(0xFFFF7A7A), maxLines = 1, softWrap = false)
+                                }
+                                TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { showSectionTargetDialog = true }) {
+                                    Text("Add Section", color = AccentCyan, maxLines = 1, softWrap = false)
+                                }
+                                TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }) {
+                                    Text("Share", color = AccentCyan, maxLines = 1, softWrap = false)
+                                }
+                                TextButton(onClick = { selectionMode = false; selectedPdfPaths = emptySet() }) {
+                                    Text("Cancel", color = AccentCyan, maxLines = 1, softWrap = false)
+                                }
+                            }
                         }
                     }
                     if (!hasAllFilesAccess) {
@@ -6675,7 +6747,7 @@ private fun PdfLibraryHomeDialog(
                                     query = pdfSearchQuery,
                                     onQueryChange = { pdfSearchQuery = it },
                                     searchBarVisible = isPdfSearchVisible,
-                                    skipVisibilityAnimation = true,
+                                    skipVisibilityAnimation = false,
                                     textColor = libraryText,
                                     surfaceColor = librarySectionBackground,
                                     onOpen = onFileClick,
@@ -6712,7 +6784,7 @@ private fun PdfLibraryHomeDialog(
                                     sectionReorderDistance = sectionReorderDistance,
                                     reorderThreshold = reorderThreshold,
                                     onReorder = ::updateSections,
-                                    onOpenSection = { openedSectionId = it },
+                                    onOpenSection = ::handleSectionTapForSelection,
                                     onSectionAction = { sectionActionFor = it },
                                     onIconClick = { sectionIconPickerFor = it }
                                 )
@@ -6743,29 +6815,21 @@ private fun PdfLibraryHomeDialog(
 
 
     if (removeSelectionDialog) {
-        AlertDialog(
-            onDismissRequest = { removeSelectionDialog = false },
-            title = { Text("Remove PDF?") },
-            text = { Text("Choose whether to hide the PDFs from this library or permanently delete their files.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    hiddenPdfPaths.value = hiddenPdfPaths.value + selectedPdfPaths
-                    libraryPreferences.edit().putStringSet("hidden_pdf_paths", hiddenPdfPaths.value).apply()
-                    updateSections(sections.map { section -> section.copy(entries = section.entries.filterNot { it.path in selectedPdfPaths }) })
-                    selectionMode = false; selectedPdfPaths = emptySet(); removeSelectionDialog = false
-                }) { Text("Remove from here", color = AccentCyan) }
+        RemovePdfConfirmDialog(
+            count = selectedPdfPaths.size,
+            onDismiss = { removeSelectionDialog = false },
+            onRemoveFromHere = {
+                hiddenPdfPaths.value = hiddenPdfPaths.value + selectedPdfPaths
+                libraryPreferences.edit().putStringSet("hidden_pdf_paths", hiddenPdfPaths.value).apply()
+                updateSections(sections.map { section -> section.copy(entries = section.entries.filterNot { it.path in selectedPdfPaths }) })
+                selectionMode = false; selectedPdfPaths = emptySet(); removeSelectionDialog = false
             },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        val paths = selectedPdfPaths
-                        files.filter { it.file.path in paths }.forEach { it.file.delete() }
-                        updateSections(sections.map { section -> section.copy(entries = section.entries.filterNot { it.path in paths }) })
-                        files = files.filterNot { it.file.path in paths }
-                        selectionMode = false; selectedPdfPaths = emptySet(); removeSelectionDialog = false
-                    }) { Text("Permanently Delete", color = Color(0xFFFF7A7A)) }
-                    TextButton(onClick = { removeSelectionDialog = false }) { Text("Cancel") }
-                }
+            onPermanentlyDelete = {
+                val paths = selectedPdfPaths
+                files.filter { it.file.path in paths }.forEach { it.file.delete() }
+                updateSections(sections.map { section -> section.copy(entries = section.entries.filterNot { it.path in paths }) })
+                files = files.filterNot { it.file.path in paths }
+                selectionMode = false; selectedPdfPaths = emptySet(); removeSelectionDialog = false
             }
         )
     }
@@ -7030,6 +7094,60 @@ private fun PdfLibraryOption(label: String, color: Color = SoftNeutral, onClick:
     }
 }
 
+// Balanced, glassy, smoothly-animated replacement for the old system AlertDialog —
+// consistent left/right padding, stacked options (reusing PdfLibraryOption), and a
+// fade+scale entrance instead of the default abrupt AlertDialog pop.
+@Composable
+private fun RemovePdfConfirmDialog(
+    count: Int,
+    onDismiss: () -> Unit,
+    onRemoveFromHere: () -> Unit,
+    onPermanentlyDelete: () -> Unit
+) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    Dialog(onDismissRequest = onDismiss) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(180)) + scaleIn(tween(210), initialScale = 0.92f),
+            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.94f)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(min = 260.dp, max = 320.dp)
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp)),
+                shape = RoundedCornerShape(20.dp),
+                color = GlassDark1,
+                contentColor = SoftNeutral,
+                shadowElevation = 14.dp
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(
+                        "Remove $count PDF${if (count == 1) "" else "s"}?",
+                        color = SoftNeutral,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Choose whether to hide these files from this library, or permanently delete them from the device.",
+                        color = Color.LightGray,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    PdfLibraryOption("Remove from here", color = AccentCyan, onClick = onRemoveFromHere)
+                    PdfLibraryOption("Permanently delete", color = Color(0xFFFF7A7A), onClick = onPermanentlyDelete)
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = onDismiss) { Text("Cancel", color = Color.LightGray) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PdfLibrarySettingsDialog(
     style: PdfLibraryStyle,
@@ -7206,7 +7324,18 @@ private fun PdfDeviceFileList(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (selectionEnabled) {
-                        Checkbox(checked = file.file.path in selectedPaths, onCheckedChange = { onSelectChange(file, it) })
+                        val isChecked = file.file.path in selectedPaths
+                        val checkboxScale by animateFloatAsState(
+                            targetValue = if (isChecked) 1.1f else 1f,
+                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                            label = "pdfCheckboxScale"
+                        )
+                        Checkbox(
+                            checked = isChecked,
+                            onCheckedChange = { onSelectChange(file, it) },
+                            modifier = Modifier.graphicsLayer { scaleX = checkboxScale; scaleY = checkboxScale },
+                            colors = CheckboxDefaults.colors(checkedColor = AccentCyan)
+                        )
                     } else if (file.extension == "pdf") {
                         PdfThumbnail(file = file, modifier = Modifier.size(width = 34.dp, height = 40.dp))
                     } else {

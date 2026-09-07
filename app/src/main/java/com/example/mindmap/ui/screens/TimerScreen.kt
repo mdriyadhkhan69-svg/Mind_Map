@@ -791,16 +791,25 @@ private fun defaultTimerBoxSettings(scope: String, isLandscape: Boolean): TimerB
 private fun loadTimerBoxSettings(context: Context, isLandscape: Boolean, scope: String = "quick"): TimerBoxSettings {
     val prefs = context.getSharedPreferences("timer_box_settings", Context.MODE_PRIVATE)
     val key = timerBoxPrefsKey(scope, isLandscape)
+    // Stopwatch/Countdown age ekta shared "quick" scope-e save hoto. Notun kore
+    // separate "stopwatch"/"countdown" scope-e vag korar por, keu jodi age theke
+    // customize kore rekhe thake, first load-e sheta hariye jeno na jay — nijer
+    // scope-er key na thakle purono "quick" value-tay fallback kore. Ekbar ei
+    // scope-e kichhu save hole (save button/slider drag), nijer dedicated key-i
+    // ready hoye jay ar fallback ar dorkar hoy na.
+    val legacyKey = timerBoxPrefsKey("quick", isLandscape)
+    val hasOwnKey = prefs.contains("${key}_width_percent")
+    val effectiveKey = if (!hasOwnKey && (scope == "stopwatch" || scope == "countdown")) legacyKey else key
     val defaults = defaultTimerBoxSettings(scope, isLandscape)
     return TimerBoxSettings(
-        widthPercent = prefs.getFloat("${key}_width_percent", defaults.widthPercent),
-        boxHeightDp = prefs.getFloat("${key}_box_height", defaults.boxHeightDp),
-        fontSizeSp = prefs.getFloat("${key}_font_size", defaults.fontSizeSp),
-        fontWeightValue = prefs.getInt("${key}_font_weight", defaults.fontWeightValue),
-        spacingDp = prefs.getFloat("${key}_spacing", defaults.spacingDp),
-        boxBackgroundOpacity = prefs.getFloat("${key}_bg_opacity", defaults.boxBackgroundOpacity),
-        boxBorderOpacity = prefs.getFloat("${key}_border_opacity", defaults.boxBorderOpacity),
-        dividerEnabled = prefs.getBoolean("${key}_divider_enabled", defaults.dividerEnabled)
+        widthPercent = prefs.getFloat("${effectiveKey}_width_percent", defaults.widthPercent),
+        boxHeightDp = prefs.getFloat("${effectiveKey}_box_height", defaults.boxHeightDp),
+        fontSizeSp = prefs.getFloat("${effectiveKey}_font_size", defaults.fontSizeSp),
+        fontWeightValue = prefs.getInt("${effectiveKey}_font_weight", defaults.fontWeightValue),
+        spacingDp = prefs.getFloat("${effectiveKey}_spacing", defaults.spacingDp),
+        boxBackgroundOpacity = prefs.getFloat("${effectiveKey}_bg_opacity", defaults.boxBackgroundOpacity),
+        boxBorderOpacity = prefs.getFloat("${effectiveKey}_border_opacity", defaults.boxBorderOpacity),
+        dividerEnabled = prefs.getBoolean("${effectiveKey}_divider_enabled", defaults.dividerEnabled)
     )
 }
 
@@ -2406,9 +2415,16 @@ private fun StyledTimerSlider(
     onValueChange: (Float) -> Unit,
     accentColor: Color = TimerAccent
 ) {
+    val density = LocalDensity.current
     var trackWidthPx by remember { mutableStateOf(0f) }
     val rangeSize = valueRange.endInclusive - valueRange.start
     val fraction = if (rangeSize == 0f) 0f else ((value - valueRange.start) / rangeSize).coerceIn(0f, 1f)
+    val currentFraction by rememberUpdatedState(fraction)
+    // Shudhu thumb-er charpashe ekta generous grab radius (visual 28dp dot-er cheye
+    // boro) chhle-i drag shuru hobe. Track-er onno kono jaygay finger porle (jemon
+    // page vertically scroll korar shomoy) eta kichhui consume kore na, tai gesture
+    // parent scrollable porjonto smoothly chole jay — slider accidentally move kore na.
+    val grabRadiusPx = with(density) { 26.dp.toPx() }
 
     fun updateFromX(positionX: Float) {
         if (trackWidthPx <= 0f) return
@@ -2422,14 +2438,17 @@ private fun StyledTimerSlider(
             .height(40.dp)
             .onGloballyPositioned { trackWidthPx = it.size.width.toFloat() }
             .pointerInput(valueRange.start, valueRange.endInclusive) {
-                detectTapGestures(onTap = { updateFromX(it.x) })
-            }
-            .pointerInput(valueRange.start, valueRange.endInclusive) {
-                detectDragGestures(
-                    onDragStart = { updateFromX(it.x) }
-                ) { change, _ ->
-                    change.consume()
-                    updateFromX(change.position.x)
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val thumbX = trackWidthPx * currentFraction
+                    val grabbedThumb = kotlin.math.abs(down.position.x - thumbX) <= grabRadiusPx
+                    if (!grabbedThumb) return@awaitEachGesture
+                    down.consume()
+                    updateFromX(down.position.x)
+                    drag(down.id) { change ->
+                        change.consume()
+                        updateFromX(change.position.x)
+                    }
                 }
             }
     ) {
@@ -2459,6 +2478,102 @@ private fun StyledTimerSlider(
                 .background(Color.White)
                 .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape)
         )
+    }
+}
+
+// Stopwatch/Countdown double-tap korle je compact, glassy customization panel khole
+// setar composable — TimerBoxSettingsPanel-er style-e sliders diye, kintu ultra-transparent
+// aar full Dialog na hoye ekta overlay Box hishebe, jate underlying timer screen-er
+// context (mode, orientation) theke sorasori khola/bondho kora jay.
+@Composable
+private fun QuickTimerGlassCustomizePanel(
+    visible: Boolean,
+    settings: TimerBoxSettings,
+    title: String,
+    onSettingsChange: (TimerBoxSettings) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(200)) + scaleIn(tween(240, easing = FastOutSlowInEasing), initialScale = 0.9f),
+        exit = fadeOut(tween(160)) + scaleOut(tween(160), targetScale = 0.92f)
+    ) {
+        var widthPercent by remember(settings) { mutableStateOf(settings.widthPercent) }
+        var boxHeight by remember(settings) { mutableStateOf(settings.boxHeightDp) }
+        var fontSize by remember(settings) { mutableStateOf(settings.fontSizeSp) }
+        var fontWeightValue by remember(settings) { mutableStateOf(settings.fontWeightValue) }
+        val spacing = settings.spacingDp
+        var boxBackgroundOpacity by remember(settings) { mutableStateOf(settings.boxBackgroundOpacity) }
+        var boxBorderOpacity by remember(settings) { mutableStateOf(settings.boxBorderOpacity) }
+
+        fun push() {
+            onSettingsChange(
+                TimerBoxSettings(
+                    widthPercent, boxHeight, fontSize, fontWeightValue, spacing,
+                    boxBackgroundOpacity, boxBorderOpacity, true
+                )
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(60f)
+                .pointerInput("quick-customize-scrim") {
+                    detectTapGestures(onTap = { onDismiss() })
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 300.dp)
+                    .pointerInput("quick-customize-block") { detectTapGestures(onTap = {}) },
+                shape = RoundedCornerShape(22.dp),
+                color = Color.White.copy(alpha = 0.10f),
+                contentColor = Color.White,
+                shadowElevation = 18.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
+            ) {
+                Box(
+                    modifier = Modifier.background(
+                        Brush.linearGradient(listOf(Color.White.copy(alpha = 0.06f), Color.Black.copy(alpha = 0.30f)))
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(18.dp)
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+
+                        Text("Width  ${"%.0f".format(widthPercent * 100)}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        StyledTimerSlider(value = widthPercent, valueRange = 0.4f..3f, onValueChange = { widthPercent = it; push() })
+
+                        Text("Box height  ${boxHeight.toInt()}dp", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        StyledTimerSlider(value = boxHeight, valueRange = 60f..420f, onValueChange = { boxHeight = it; push() })
+
+                        Text("Number size  ${fontSize.toInt()}sp", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        StyledTimerSlider(value = fontSize, valueRange = 24f..420f, onValueChange = { fontSize = it; push() })
+
+                        Text("Number weight  $fontWeightValue", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        StyledTimerSlider(value = fontWeightValue.toFloat(), valueRange = 100f..900f, onValueChange = { fontWeightValue = it.toInt(); push() })
+
+                        Text("Background  ${(boxBackgroundOpacity * 100).toInt()}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        StyledTimerSlider(value = boxBackgroundOpacity, valueRange = 0f..1f, onValueChange = { boxBackgroundOpacity = it; push() })
+
+                        Text("Border  ${(boxBorderOpacity * 100).toInt()}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        StyledTimerSlider(value = boxBorderOpacity, valueRange = 0f..1f, onValueChange = { boxBorderOpacity = it; push() })
+
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                            TextButton(onClick = onDismiss) { Text("Done", color = TimerAccent, fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 @Composable
@@ -3140,8 +3255,10 @@ private fun TimerSettingsDialog(
                 listOf(
                     BoxEditTarget("clock", false, "Real-time clock (Portrait)"),
                     BoxEditTarget("clock", true, "Real-time clock (Landscape)"),
-                    BoxEditTarget("quick", false, "Stopwatch / Countdown (Portrait)"),
-                    BoxEditTarget("quick", true, "Stopwatch / Countdown (Landscape)")
+                    BoxEditTarget("stopwatch", false, "Stopwatch (Portrait)"),
+                    BoxEditTarget("stopwatch", true, "Stopwatch (Landscape)"),
+                    BoxEditTarget("countdown", false, "Countdown (Portrait)"),
+                    BoxEditTarget("countdown", true, "Countdown (Landscape)")
                 ).forEach { target ->
                     TextButton(onClick = { boxEditTarget = target }, modifier = Modifier.fillMaxWidth()) {
                         Text(target.label, color = SoftNeutral, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
@@ -3504,6 +3621,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     var pickerMinutes by rememberSaveable { mutableStateOf(((countdownTotalMillis / 60_000L) % 60).toInt()) }
     var showCustomTimeDialog by remember { mutableStateOf(false) }
     var maxWidthLandscapeSnapshot by rememberSaveable { mutableStateOf(false) }
+    var showQuickCustomizePanel by rememberSaveable { mutableStateOf(false) }
 
     fun applyPickerToCountdown() {
         val newMillis = (pickerHours * 3_600_000L + pickerMinutes * 60_000L).coerceAtLeast(1000L)
@@ -3589,7 +3707,10 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                 }
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
-                val activeBoxSettings = TimerBoxLiveSettingsState.get(context, "quick", isLandscape)
+                // Stopwatch aar Countdown ekhon nijeder alada scope byabohar kore, tai
+                // ekta customize korle onnota accidentally change hoy na.
+                val timerBoxScope = if (mode == "stopwatch") "stopwatch" else "countdown"
+                val activeBoxSettings = TimerBoxLiveSettingsState.get(context, timerBoxScope, isLandscape)
                 val digitFontSize = activeBoxSettings.fontSizeSp.sp
                 val digitFontWeight = FontWeight(activeBoxSettings.fontWeightValue)
                 val dividerThickness = if (isLandscape) 7.dp else 3.dp
@@ -3626,7 +3747,10 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             }
                         }
                         .pointerInput("quick-timer-tap") {
-                            detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+                            detectTapGestures(
+                                onTap = { controlsVisible = !controlsVisible },
+                                onDoubleTap = { showQuickCustomizePanel = true }
+                            )
                         }
                 ) {
                     var quickTopBarHeightPx by remember { mutableStateOf(0) }
@@ -3859,6 +3983,16 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         }
                     }
                     StudyCelebrationHost()
+                    QuickTimerGlassCustomizePanel(
+                        visible = showQuickCustomizePanel,
+                        settings = activeBoxSettings,
+                        title = if (mode == "stopwatch") "Stopwatch style" else "Countdown style",
+                        onSettingsChange = { updated ->
+                            saveTimerBoxSettings(context, isLandscape, updated, scope = timerBoxScope)
+                            TimerBoxLiveSettingsState.update(timerBoxScope, isLandscape, updated)
+                        },
+                        onDismiss = { showQuickCustomizePanel = false }
+                    )
                 }
             }
         }
