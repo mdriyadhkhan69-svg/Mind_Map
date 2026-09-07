@@ -337,7 +337,11 @@ fun MindMapApp(
     sectionViewModel: SectionViewModel,
     lineViewModel: LineViewModel,
     mediaViewModel: MediaViewModel,
-    calendarViewModel: com.example.mindmap.ui.viewmodel.CalendarViewModel
+    calendarViewModel: com.example.mindmap.ui.viewmodel.CalendarViewModel,
+    sectionRepository: com.example.mindmap.data.SectionRepository,
+    nodeRepository: com.example.mindmap.data.NodeRepository,
+    lineRepository: com.example.mindmap.data.LineRepository,
+    mediaRepository: com.example.mindmap.data.MediaRepository
 ) {
     val context = LocalContext.current
     TimerRunningWatcher()
@@ -354,6 +358,14 @@ fun MindMapApp(
     var libraryPptx by remember { mutableStateOf<MediaEntity?>(null) }
     var libraryXlsx by remember { mutableStateOf<MediaEntity?>(null) }
     var externalPdfViewer by remember { mutableStateOf<MediaEntity?>(null) }
+    var importPackageUri by remember { mutableStateOf<String?>(null) }
+    val allSectionsForImport by sectionRepository.getAllSections().collectAsState(initial = emptyList())
+    val pendingImportPackageUri by com.example.mindmap.ImportMindMapState.pendingPackageUri
+    LaunchedEffect(pendingImportPackageUri) {
+        val value = pendingImportPackageUri ?: return@LaunchedEffect
+        importPackageUri = value
+        com.example.mindmap.ImportMindMapState.pendingPackageUri.value = null
+    }
 
     fun openHome(home: String) {
         activeHome = home
@@ -521,6 +533,22 @@ fun MindMapApp(
     externalPdfViewer?.let { media ->
         PdfViewerDialog(media = media, onDismiss = { externalPdfViewer = null })
     }
+
+    importPackageUri?.let { uriString ->
+        ImportMindMapSectionDialog(
+            packageUriString = uriString,
+            sectionRepository = sectionRepository,
+            nodeRepository = nodeRepository,
+            lineRepository = lineRepository,
+            mediaRepository = mediaRepository,
+            existingSectionCount = allSectionsForImport.size,
+            onSelectImportedSection = { newSectionId ->
+                sectionViewModel.selectSection(newSectionId)
+                openHome("mind_map")
+            },
+            onDismiss = { importPackageUri = null }
+        )
+    }
 }
 
 @Composable
@@ -598,6 +626,7 @@ fun MindMapScreen(
 
     var showAddDateDialog by remember { mutableStateOf(false) }
     var showAiMindMapDialog by remember { mutableStateOf(false) }
+    var showShareSectionDialog by remember { mutableStateOf(false) }
     var addChildDialogFor by remember { mutableStateOf<NodeEntity?>(null) }
     var addTextDialogFor by remember { mutableStateOf<NodeEntity?>(null) }
     var boxStyleDialogFor by remember { mutableStateOf<NodeEntity?>(null) }
@@ -1341,6 +1370,7 @@ fun MindMapScreen(
             onRename = { showRenameSectionDialog = true },
             onAddSection = { sectionViewModel.addSection() },
             onRemoveSection = { currentSection?.let { sectionViewModel.removeSection(it) } },
+            onShareSection = { showShareSectionDialog = true },
             sectionNameColor = currentSectionStyle.titleArgb?.let { Color(it) } ?: themeColors.textPrimary,
             onSectionNameLongPress = { currentSection?.let { sectionTitleStyleFor = it } },
             themeColors = themeColors
@@ -1744,6 +1774,16 @@ fun MindMapScreen(
                 viewModel = viewModel,
                 sectionId = currentSectionId,
                 onDismiss = { showAiMindMapDialog = false }
+            )
+        }
+
+        if (showShareSectionDialog && currentSection != null) {
+            ShareSectionDialog(
+                section = currentSection,
+                allNodes = allNodes,
+                allLines = allLines,
+                allMedia = allMedia,
+                onDismiss = { showShareSectionDialog = false }
             )
         }
 
@@ -4457,6 +4497,7 @@ fun SectionTopBar(
     onRename: () -> Unit,
     onAddSection: () -> Unit,
     onRemoveSection: () -> Unit,
+    onShareSection: () -> Unit,
     sectionNameColor: Color,
     onSectionNameLongPress: () -> Unit,
     themeColors: MindMapColors
@@ -4527,11 +4568,12 @@ fun SectionTopBar(
                     contentColor = themeColors.textPrimary,
                     shadowElevation = 10.dp
                     ) {
-                        Column(modifier = Modifier.width(180.dp)) {
-                            DropdownMenuItem(text = { Text("Edit section name", color = themeColors.textPrimary) }, onClick = { onRename(); onToggleEdit() })
-                            DropdownMenuItem(text = { Text("Add section", color = themeColors.textPrimary) }, onClick = { onAddSection(); onToggleEdit() })
-                            DropdownMenuItem(text = { Text("Remove section", color = themeColors.textPrimary) }, onClick = { onRemoveSection(); onToggleEdit() })
-                        }
+                    Column(modifier = Modifier.width(180.dp)) {
+                        DropdownMenuItem(text = { Text("Edit section name", color = themeColors.textPrimary) }, onClick = { onRename(); onToggleEdit() })
+                        DropdownMenuItem(text = { Text("Add section", color = themeColors.textPrimary) }, onClick = { onAddSection(); onToggleEdit() })
+                        DropdownMenuItem(text = { Text("Share section", color = themeColors.textPrimary) }, onClick = { onShareSection(); onToggleEdit() })
+                        DropdownMenuItem(text = { Text("Remove section", color = themeColors.textPrimary) }, onClick = { onRemoveSection(); onToggleEdit() })
+                    }
                 }
                 }
             }

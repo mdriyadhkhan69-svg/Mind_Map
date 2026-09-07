@@ -49,10 +49,14 @@ class MainActivity : ComponentActivity() {
             .build()
 
         val settingsRepository = SettingsRepository(applicationContext)
-        val factory = MindMapViewModelFactory(NodeRepository(db.dao()))
-        val sectionFactory = SectionViewModelFactory(SectionRepository(db.sectionDao()), settingsRepository)
-        val lineFactory = LineViewModelFactory(LineRepository(db.lineDao()))
-        val mediaFactory = MediaViewModelFactory(MediaRepository(db.mediaDao()))
+        val nodeRepository = NodeRepository(db.dao())
+        val sectionRepository = SectionRepository(db.sectionDao())
+        val lineRepository = LineRepository(db.lineDao())
+        val mediaRepository = MediaRepository(db.mediaDao())
+        val factory = MindMapViewModelFactory(nodeRepository)
+        val sectionFactory = SectionViewModelFactory(sectionRepository, settingsRepository)
+        val lineFactory = LineViewModelFactory(lineRepository)
+        val mediaFactory = MediaViewModelFactory(mediaRepository)
         val settingsFactory = SettingsViewModelFactory(settingsRepository)
         val calendarFactory = com.example.mindmap.ui.viewmodel.CalendarViewModelFactory(
             com.example.mindmap.data.CalendarRepository(db.calendarDao())
@@ -67,7 +71,10 @@ class MainActivity : ComponentActivity() {
                     val mediaViewModel: MediaViewModel = viewModel(factory = mediaFactory)
                     val settingsViewModel: SettingsViewModel = viewModel(factory = settingsFactory)
                     val calendarViewModel: com.example.mindmap.ui.viewmodel.CalendarViewModel = viewModel(factory = calendarFactory)
-                    MindMapApp(viewModel, settingsViewModel, sectionViewModel, lineViewModel, mediaViewModel, calendarViewModel)
+                    MindMapApp(
+                        viewModel, settingsViewModel, sectionViewModel, lineViewModel, mediaViewModel, calendarViewModel,
+                        sectionRepository, nodeRepository, lineRepository, mediaRepository
+                    )
                 }
             }
         }
@@ -100,7 +107,26 @@ class MainActivity : ComponentActivity() {
                 runCatching {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                ExternalOpenState.pendingPdfUri.value = uri.toString()
+                val isMindMapSharePackage = intent.type == com.example.mindmap.data.share.MindMapShareManager.SHARE_MIME_TYPE ||
+                        uri.lastPathSegment?.endsWith(
+                            ".${com.example.mindmap.data.share.MindMapShareManager.SHARE_FILE_EXTENSION}",
+                            ignoreCase = true
+                        ) == true
+                if (isMindMapSharePackage) {
+                    ImportMindMapState.pendingPackageUri.value = uri.toString()
+                } else {
+                    ExternalOpenState.pendingPdfUri.value = uri.toString()
+                }
+            }
+        }
+        if (intent?.action == Intent.ACTION_SEND &&
+            intent.type == com.example.mindmap.data.share.MindMapShareManager.SHARE_MIME_TYPE
+        ) {
+            androidx.core.content.IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, android.net.Uri::class.java)?.let { uri ->
+                runCatching {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ImportMindMapState.pendingPackageUri.value = uri.toString()
             }
         }
         if (intent?.getBooleanExtra("open_timer", false) == true) {
