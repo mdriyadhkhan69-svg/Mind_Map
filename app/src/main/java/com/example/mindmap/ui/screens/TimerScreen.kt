@@ -258,7 +258,7 @@ internal object StrikeQuoteState {
         saveStrikeQuotes(context, updated)
     }
 }
-private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE }
+private enum class DigitTransitionStyle { FLIP, SLIDE, FADE_SCALE, BOUNCE, WAVE, SPLIT_FLAP }
 
 private val TopHalfShape = GenericShape { size, _ ->
     addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height / 2f))
@@ -1843,6 +1843,88 @@ private fun FlipDigitCell(
             )
         }
 
+        DigitTransitionStyle.SPLIT_FLAP -> {
+            // IMPORTANT: this branch is PURELY VISUAL. `char` always comes from the
+            // real timer/clock state upstream (QuickTimerState/StudyTimerState/
+            // LiveClockDisplay's formatted millis). This composable never writes
+            // back into that state and never delays/holds it — the LaunchedEffect
+            // below only starts a fire-and-forget visual animation whenever the
+            // upstream `char` changes. If the animation is still mid-flight when
+            // `char` changes again, LaunchedEffect(char) cancels and restarts it
+            // immediately with the new target — the actual timer is never blocked.
+            var topStatic by remember { mutableStateOf(char) }
+            var bottomStatic by remember { mutableStateOf(char) }
+            var flipTopFrom by remember { mutableStateOf<Char?>(null) }
+            var flipBottomFrom by remember { mutableStateOf<Char?>(null) }
+            val topRotation = remember { Animatable(0f) }
+            val bottomRotation = remember { Animatable(0f) }
+
+            LaunchedEffect(char) {
+                if (char != bottomStatic) {
+                    val oldChar = bottomStatic
+
+                    // Phase 1: reveal the new digit's top half immediately underneath,
+                    // and fold the OLD digit's top half away (rotating up/back).
+                    topStatic = char
+                    flipTopFrom = oldChar
+                    topRotation.snapTo(0f)
+                    topRotation.animateTo(-90f, tween(130, easing = FastOutLinearInEasing))
+                    flipTopFrom = null
+
+                    // Phase 2: the NEW digit's bottom half folds down into place.
+                    bottomStatic = char
+                    flipBottomFrom = char
+                    bottomRotation.snapTo(90f)
+                    bottomRotation.animateTo(0f, tween(150, easing = LinearOutSlowInEasing))
+                    flipBottomFrom = null
+                } else if (char != topStatic) {
+                    // Safety net: keep static halves in sync even if effect was
+                    // interrupted mid-flight by a rapid subsequent change.
+                    topStatic = char
+                }
+            }
+
+            Box(contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(topStatic) }
+                Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(bottomStatic) }
+
+                flipTopFrom?.let { oldTop ->
+                    Box(
+                        modifier = Modifier
+                            .clip(TopHalfShape)
+                            .graphicsLayer {
+                                rotationX = topRotation.value
+                                cameraDistance = 24f * density
+                                transformOrigin = TransformOrigin(0.5f, 1f)
+                                alpha = if (kotlin.math.abs(topRotation.value) < 89.5f) 1f else 0f
+                            }
+                    ) { DigitGlyph(oldTop) }
+                }
+
+                flipBottomFrom?.let { newBottom ->
+                    Box(
+                        modifier = Modifier
+                            .clip(BottomHalfShape)
+                            .graphicsLayer {
+                                rotationX = bottomRotation.value
+                                cameraDistance = 24f * density
+                                transformOrigin = TransformOrigin(0.5f, 0f)
+                                alpha = if (kotlin.math.abs(bottomRotation.value) < 89.5f) 1f else 0f
+                            }
+                    ) { DigitGlyph(newBottom) }
+                }
+
+                // fold-line shadow for a more mechanical split-flap look
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.35f))
+                )
+            }
+        }
+
     }
 }
 
@@ -3141,6 +3223,7 @@ private fun TimerSettingsDialog(
                         DigitTransitionStyle.FADE_SCALE to "Fade & Pop",
                         DigitTransitionStyle.BOUNCE to "Bounce",
                         DigitTransitionStyle.WAVE to "Wave",
+                        DigitTransitionStyle.SPLIT_FLAP to "Split-Flap",
                     ).forEach { (styleOption, label) ->
                         val selected = DigitStyleState.current == styleOption
                         Box(
@@ -4148,6 +4231,83 @@ fun ProductivityTimerSummary(): String {
 /* ---------------- Study feature ---------------- */
 
 @Composable
+private fun StudyStartStopButton(isRunning: Boolean, onToggle: () -> Unit) {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.90f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "studyStartStopScale"
+    )
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isRunning) Color(0xFFFF6E6E).copy(alpha = 0.85f) else SoftNeutral.copy(alpha = 0.92f),
+        animationSpec = tween(180),
+        label = "studyStartStopBg"
+    )
+    val glossAlpha by animateFloatAsState(
+        targetValue = if (pressed) 0.30f else 0.12f,
+        animationSpec = tween(if (pressed) 80 else 220),
+        label = "studyStartStopGloss"
+    )
+    Box(
+        modifier = Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(12.dp))
+            .background(Brush.linearGradient(listOf(backgroundColor.copy(alpha = (backgroundColor.alpha + glossAlpha).coerceAtMost(1f)), backgroundColor)))
+            .pointerInput(isRunning) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { onToggle() }
+                )
+            }
+            .padding(horizontal = 18.dp, vertical = 9.dp)
+    ) {
+        AnimatedContent(
+            targetState = isRunning,
+            transitionSpec = { (fadeIn(tween(140)) + scaleIn(tween(140), initialScale = 0.7f)) togetherWith (fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.7f)) },
+            label = "studyStartStopLabel"
+        ) { running ->
+            Text(
+                if (running) "Stop" else "Start",
+                color = Color(0xFF0F1020),
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun StudyOptionRow(label: String, color: Color = SoftNeutral, onClick: () -> Unit) {
+    var pressed by remember(label) { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, animationSpec = tween(110), label = "studyOptionRowScale")
+    val bgAlpha by animateFloatAsState(if (pressed) 0.16f else 0f, animationSpec = tween(if (pressed) 80 else 200), label = "studyOptionRowBg")
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = bgAlpha))
+            .pointerInput(label) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { onClick() }
+                )
+            }
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+    ) {
+        Text(label, color = color, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
 private fun StudyHomeDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     LaunchedEffect(Unit) { StudyTimerState.ensureLoaded(context) }
@@ -4264,22 +4424,7 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                                             fontSize = 13.sp
                                         )
                                     }
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(if (subject.isRunning) Color(0xFFFF6E6E).copy(alpha = 0.85f) else SoftNeutral.copy(alpha = 0.92f))
-                                            .pointerInput(subject.id, subject.isRunning) {
-                                                detectTapGestures(onTap = { toggleRunning(subject) })
-                                            }
-                                            .padding(horizontal = 18.dp, vertical = 9.dp)
-                                    ) {
-                                        Text(
-                                            if (subject.isRunning) "Stop" else "Start",
-                                            color = Color(0xFF0F1020),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp
-                                        )
-                                    }
+                                    StudyStartStopButton(isRunning = subject.isRunning) { toggleRunning(subject) }
                                 }
                             }
                         }
@@ -4306,47 +4451,73 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
     }
 
     optionsForSubject?.let { subject ->
-        Dialog(onDismissRequest = { optionsForSubject = null }) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = TimerCardBg,
-                contentColor = Color.White,
-                modifier = Modifier.widthIn(min = 240.dp, max = 340.dp)
+        var optionsVisible by remember(subject.id) { mutableStateOf(false) }
+        LaunchedEffect(subject.id) { optionsVisible = true }
+        fun dismissOptions() {
+            optionsVisible = false
+        }
+        LaunchedEffect(optionsVisible) {
+            if (!optionsVisible) {
+                delay(160)
+                optionsForSubject = null
+            }
+        }
+        Dialog(onDismissRequest = { dismissOptions() }) {
+            AnimatedVisibility(
+                visible = optionsVisible,
+                enter = fadeIn(tween(180)) + scaleIn(tween(210, easing = FastOutSlowInEasing), initialScale = 0.9f),
+                exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.92f)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(subject.name, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(10.dp))
-                    TextButton(onClick = {
-                        val updated = subjects.map { s -> if (s.id == subject.id) s.copy(accumulatedMillis = 0L, isRunning = false, startedAtMillis = 0L) else s }
-                        persist(updated)
-                        optionsForSubject = null
-                    }) { Text("Restart", color = SoftNeutral) }
-                    TextButton(onClick = {
-                        customiseForSubject = subject
-                        optionsForSubject = null
-                    }) { Text("Customise time", color = SoftNeutral) }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = TimerCardBg,
+                    contentColor = Color.White,
+                    shadowElevation = 12.dp,
+                    modifier = Modifier.widthIn(min = 240.dp, max = 340.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .animateContentSize(tween(200))
                     ) {
-                        Text("Show Popup Box", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = subject.popupEnabled,
-                            onCheckedChange = { enabled ->
-                                val updated = subjects.map { s -> if (s.id == subject.id) s.copy(popupEnabled = enabled) else s }
-                                persist(updated)
-                                optionsForSubject = updated.firstOrNull { it.id == subject.id }
-                            },
-                            colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
-                        )
-                    }
-                    TextButton(onClick = {
-                        persist(subjects.filterNot { it.id == subject.id })
-                        optionsForSubject = null
-                    }) { Text("Delete", color = Color(0xFFFF7A7A)) }
-                    Spacer(Modifier.height(6.dp))
-                    TextButton(onClick = { optionsForSubject = null }, modifier = Modifier.align(Alignment.End)) {
-                        Text("Close", color = Color.LightGray)
+                        Text(subject.name, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(10.dp))
+                        StudyOptionRow("Restart") {
+                            val updated = subjects.map { s -> if (s.id == subject.id) s.copy(accumulatedMillis = 0L, isRunning = false, startedAtMillis = 0L) else s }
+                            persist(updated)
+                            dismissOptions()
+                        }
+                        StudyOptionRow("Customise time") {
+                            customiseForSubject = subject
+                            dismissOptions()
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text("Show Popup Box", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                            Switch(
+                                checked = subject.popupEnabled,
+                                onCheckedChange = { enabled ->
+                                    val updated = subjects.map { s -> if (s.id == subject.id) s.copy(popupEnabled = enabled) else s }
+                                    persist(updated)
+                                    optionsForSubject = updated.firstOrNull { it.id == subject.id }
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                            )
+                        }
+                        StudyOptionRow("Delete", color = Color(0xFFFF7A7A)) {
+                            persist(subjects.filterNot { it.id == subject.id })
+                            dismissOptions()
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                            TextButton(onClick = { dismissOptions() }) {
+                                Text("Close", color = Color.LightGray)
+                            }
+                        }
                     }
                 }
             }

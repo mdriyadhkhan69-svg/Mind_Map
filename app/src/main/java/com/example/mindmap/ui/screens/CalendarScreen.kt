@@ -710,12 +710,12 @@ private fun CalendarDateOptionsDialog(
             AnimatedVisibility(
                 visible = visible,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 12.dp),
-                enter = fadeIn(tween(220, easing = FastOutSlowInEasing)) +
-                        slideInVertically(spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } +
-                        scaleIn(spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow), initialScale = 0.9f),
+                enter = fadeIn(tween(200, easing = FastOutSlowInEasing)) +
+                        slideInVertically(spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)) { -it / 3 } +
+                        scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow), initialScale = 0.9f),
                 exit = fadeOut(tween(150, easing = FastOutSlowInEasing)) +
-                        slideOutVertically(tween(170, easing = FastOutSlowInEasing)) { -it / 3 } +
-                        scaleOut(tween(170), targetScale = 0.92f)
+                        slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { -it / 3 } +
+                        scaleOut(tween(160), targetScale = 0.93f)
             ) {
                 Surface(
                     shape = RoundedCornerShape(18.dp),
@@ -725,7 +725,14 @@ private fun CalendarDateOptionsDialog(
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                     modifier = Modifier
                         .wrapContentWidth()
-                        .widthIn(min = 170.dp, max = if (panelMode == "timer") 200.dp else 250.dp)
+                        .widthIn(
+                            min = 170.dp,
+                            max = when (panelMode) {
+                                "timer" -> 230.dp
+                                "occasion" -> 250.dp
+                                else -> 220.dp
+                            }
+                        )
                         .animateContentSize(tween(220))
                         .pointerInput("calendar-panel-block") { detectTapGestures(onTap = {}) }
                 ) {
@@ -745,7 +752,7 @@ private fun CalendarDateOptionsDialog(
                                                 onValueChange = { occasionList[index] = it },
                                                 singleLine = true,
                                                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = SoftNeutral),
-                                                modifier = Modifier.widthIn(max = 150.dp)
+                                                modifier = Modifier.weight(1f)
                                             )
                                             PanelIconTap(onTap = { occasionList.removeAt(index) }) {
                                                 Text(
@@ -760,13 +767,18 @@ private fun CalendarDateOptionsDialog(
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateContentSize(tween(180))
+                                ) {
                                     OutlinedTextField(
                                         value = newOccasionText,
                                         onValueChange = { newOccasionText = it },
                                         label = { Text("New occasion") },
                                         singleLine = true,
-                                        modifier = Modifier.widthIn(max = 150.dp)
+                                        modifier = Modifier.weight(1f)
                                     )
                                     PanelIconTap(onTap = {
                                         if (newOccasionText.isNotBlank()) {
@@ -799,18 +811,27 @@ private fun CalendarDateOptionsDialog(
                                 }
                             }
                             "timer" -> {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateContentSize(tween(180))
+                                ) {
                                     CompactWheelColumn(
                                         range = 1..12,
                                         selected = (timerHourText.toIntOrNull() ?: 12).coerceIn(1, 12),
                                         onSelectedChange = { timerHourText = it.toString() }
                                     )
+                                    Spacer(Modifier.width(6.dp))
                                     Text(":", color = SoftNeutral, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                                    Spacer(Modifier.width(6.dp))
                                     CompactWheelColumn(
                                         range = 0..59,
                                         selected = (timerMinuteText.toIntOrNull() ?: 0).coerceIn(0, 59),
                                         onSelectedChange = { timerMinuteText = it.toString() }
                                     )
+                                    Spacer(Modifier.width(6.dp))
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(10.dp))
@@ -840,38 +861,39 @@ private fun CalendarDateOptionsDialog(
                                 }
                             }
                             else -> {
-                                if (occasionsOf(existing).isNotEmpty()) {
-                                    Text(
-                                        occasionsOf(existing).joinToString(" • "),
-                                        color = SoftNeutral, fontSize = 14.sp, maxLines = 3,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(bottom = 4.dp)
-                                    )
-                                    PremiumPanelButton("Edit Occasion", color = SoftNeutral, onClick = { panelMode = "occasion" })
-                                } else {
-                                    PremiumPanelButton("Add Occasion +", color = SoftNeutral, onClick = { panelMode = "occasion" })
-                                }
-                                if (existing?.hasTimer == true) {
-                                    Text(
-                                        "%02d:%02d".format(existing.timerHour, existing.timerMinute),
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    if (occasionsOf(existing).isNotEmpty()) {
+                                        Text(
+                                            occasionsOf(existing).joinToString(" • "),
+                                            color = SoftNeutral, fontSize = 14.sp, maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(bottom = 2.dp)
+                                        )
+                                        PremiumPanelButton("Edit Occasion", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
+                                    } else {
+                                        PremiumPanelButton("Add Occasion +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "occasion" })
+                                    }
+                                    if (existing?.hasTimer == true) {
+                                        Text(
+                                            "%02d:%02d".format(existing.timerHour, existing.timerMinute),
+                                            color = SoftNeutral,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                                        )
+                                        PremiumPanelButton("Edit Timer", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })
+                                    } else {
+                                        PremiumPanelButton("Add Timer +", color = SoftNeutral, modifier = Modifier.fillMaxWidth(), onClick = { panelMode = "timer" })
+                                    }
+                                    PremiumPanelButton(
+                                        if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete",
                                         color = SoftNeutral,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onClick = onToggleComplete
                                     )
-                                    PremiumPanelButton("Edit Timer", color = SoftNeutral, onClick = { panelMode = "timer" })
-                                    Spacer(Modifier.height(4.dp))
-                                } else {
-                                    PremiumPanelButton("Add Timer +", color = SoftNeutral, onClick = { panelMode = "timer" })
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                PremiumPanelButton(
-                                    if (existing?.isCompleted == true) "Undo Complete" else "Mark Complete",
-                                    color = SoftNeutral,
-                                    onClick = onToggleComplete
-                                )
-                                if (onDelete != null) {
-                                    PremiumPanelButton("Delete", color = Color(0xFFFF6E6E), onClick = onDelete)
+                                    if (onDelete != null) {
+                                        PremiumPanelButton("Delete", color = Color(0xFFFF6E6E), modifier = Modifier.fillMaxWidth(), onClick = onDelete)
+                                    }
                                 }
                             }
                         }
