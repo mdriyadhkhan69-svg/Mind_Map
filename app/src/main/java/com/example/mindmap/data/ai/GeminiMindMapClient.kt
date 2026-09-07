@@ -1,5 +1,6 @@
 package com.example.mindmap.data.ai
 
+import android.graphics.Bitmap
 import com.example.mindmap.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
@@ -10,13 +11,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 // Single entry point for both "create a new mind map" and (future) "edit this
-// existing branch" requests — both should call generateMindMap() with a
-// prompt that already embeds the relevant existing-node context, so no
-// second AI architecture is needed later.
+// existing branch" requests. Now also accepts an optional image so the user
+// can point their camera/gallery photo at Gemini and ask it to turn that
+// into a mind map, in Bangla or English.
 object GeminiMindMapClient {
 
     private const val SYSTEM_INSTRUCTION = """
-You are a mind map generator. Respond with ONLY valid JSON — no markdown, no code fences, no explanation, no extra text.
+You are a mind map generator. You understand requests in ANY language, including Bangla (বাংলা) and English, and you may also be given an image (a photo, diagram, textbook page, or document) — read the image content carefully and use it as the source topic when one is provided.
+
+Respond with ONLY valid JSON — no markdown, no code fences, no explanation, no extra text.
 JSON schema (exactly this shape):
 {
   "nodes": [
@@ -27,19 +30,20 @@ Rules:
 - Exactly one node has parentId = null (the central topic/root).
 - Every other node's parentId MUST match an existing node's id in the same list.
 - Keep "text" short (max 6 words) so it fits a small box.
+- Write every node's "text" in the SAME language the user used in their request (Bangla request -> Bangla labels, English request -> English labels).
 - Build a well-organized hierarchy (2-3 levels) when the topic allows it.
 - Output nothing outside the single JSON object.
 """
 
-    suspend fun generateMindMap(userPrompt: String): AiMindMapResult {
+    suspend fun generateMindMap(userPrompt: String, imageBitmap: Bitmap? = null): AiMindMapResult {
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isBlank()) {
             return AiMindMapResult.Error("Gemini API key not configured. Add GEMINI_API_KEY to local.properties.")
         }
         return try {
-            withTimeout(25_000L) {
+            withTimeout(30_000L) {
                 val model = GenerativeModel(
-                    modelName = "gemini-1.5-flash",
+                    modelName = "gemini-2.0-flash",
                     apiKey = apiKey,
                     generationConfig = generationConfig {
                         temperature = 0.6f
@@ -47,7 +51,10 @@ Rules:
                     }
                 )
                 val response = model.generateContent(
-                    content { text("$SYSTEM_INSTRUCTION\n\nUser request: $userPrompt") }
+                    content {
+                        imageBitmap?.let { image(it) }
+                        text("$SYSTEM_INSTRUCTION\n\nUser request: $userPrompt")
+                    }
                 )
                 val rawText = response.text
                 if (rawText.isNullOrBlank()) {
@@ -94,8 +101,6 @@ Rules:
                 return AiMindMapResult.Error("No valid nodes found in Gemini's response.")
             }
 
-            // Any parentId that doesn't resolve to a real node becomes a root
-            // instead of being dropped — keeps a malformed response usable.
             val idSet = allNodes.map { it.id }.toSet()
             val sanitized = allNodes.map { n ->
                 if (n.parentId != null && n.parentId !in idSet) n.copy(parentId = null) else n
