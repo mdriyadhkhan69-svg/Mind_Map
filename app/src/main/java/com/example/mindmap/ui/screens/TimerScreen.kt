@@ -1717,16 +1717,18 @@ private fun FlipDigitCell(
     LaunchedEffect(Unit) { DigitStyleState.ensureLoaded(context) }
     val style = DigitStyleState.current
 
+    // Split-Flap নিজেই প্রতি digit-কে top-half + bottom-half + flap overlay মিলিয়ে
+    // একাধিকবার কম্পোজ করে; তার উপর extraBold-এর ৩টা extra offset Text যোগ হলে
+    // একটা digit-এই প্রায় ১৬টা Text draw হয়ে যায় — এটাই কম শক্তিশালী device-এ
+    // real-time/countdown কয়েক সেকেন্ডের জন্য "আটকে" থাকার (main-thread জ্যাম) আসল কারণ।
+    // তাই Split-Flap-এ থাকলে এই extra faux-bold copy বাদ দেওয়া হলো — flap-এর নিজের
+    // divider/shadow দিয়েই যথেষ্ট bold/premium ফিল আসে।
+    val effectiveExtraBold = extraBold && style != DigitTransitionStyle.SPLIT_FLAP
+
     @Composable
     fun DigitGlyph(value: Char, modifier: Modifier = Modifier) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            // Split-Flap নিজেই প্রতি digit-কে top-half + bottom-half + flap overlay মিলিয়ে
-            // একাধিকবার কম্পোজ করে; তার উপর extraBold-এর ৩টা extra offset Text যোগ হলে
-            // একটা digit-এই প্রায় ১৬টা Text draw হয়ে যায় — এটাই কম শক্তিশালী device-এ
-            // real-time/countdown কয়েক সেকেন্ডের জন্য "আটকে" থাকার (main-thread জ্যাম) আসল কারণ।
-            // তাই Split-Flap-এ থাকলে এই extra faux-bold copy বাদ দেওয়া হলো — flap-এর নিজের
-            // divider/shadow দিয়েই যথেষ্ট bold/premium ফিল আসে।
-            if (extraBold) {
+            if (effectiveExtraBold) {
                 Text(
                     value.toString(),
                     color = color,
@@ -4452,12 +4454,23 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
 
     optionsForSubject?.let { subject ->
         var optionsVisible by remember(subject.id) { mutableStateOf(false) }
-        LaunchedEffect(subject.id) { optionsVisible = true }
+        // hasShown starts false in lockstep with optionsVisible and only ever
+        // flips true inside the SAME non-suspending coroutine that flips
+        // optionsVisible true — so no matter how Compose interleaves the two
+        // LaunchedEffects below on first composition, a stale read of
+        // optionsVisible=false is always paired with a stale hasShown=false,
+        // and the dismiss branch can never fire before the panel has actually
+        // been shown once.
+        var hasShown by remember(subject.id) { mutableStateOf(false) }
+        LaunchedEffect(subject.id) {
+            optionsVisible = true
+            hasShown = true
+        }
         fun dismissOptions() {
             optionsVisible = false
         }
         LaunchedEffect(optionsVisible) {
-            if (!optionsVisible) {
+            if (hasShown && !optionsVisible) {
                 delay(160)
                 optionsForSubject = null
             }
