@@ -7,12 +7,16 @@ import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
 import com.google.ai.client.generativeai.type.generationConfig
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.random.Random
 
 /** The one Gemini entry point for both creation and safe in-place editing. */
 object GeminiMindMapClient {
+    private const val MODEL_NAME = "gemini-3.6-flash"
+    private const val MAX_TRANSIENT_ATTEMPTS = 3
     private const val SYSTEM_INSTRUCTION = """
 You are an integrated mind-map assistant. Understand Bangla, English, and mixed Banglish. Reply in the user's language.
 Return ONLY valid JSON:
@@ -36,26 +40,81 @@ Rules:
         if (apiKey.isBlank()) return AiMindMapResult.Error("Gemini API key not configured. Add GEMINI_API_KEY to local.properties.")
         return try {
             withTimeout(45_000L) {
-                val model = GenerativeModel(
-                    modelName = "gemini-3.6-flash", apiKey = apiKey,
-                    generationConfig = generationConfig { temperature = 0.35f; responseMimeType = "application/json" }
-                )
-                val mapContext = existingNodes.take(180).joinToString("\n") { node ->
-                    "id=${node.id}; parent=${node.parentId ?: "root"}; text=${node.label.take(180)}; " +
-                        "pos=${node.x.toInt()},${node.y.toInt()}; size=${node.widthScale},${node.heightScale}; " +
-                        "font=${node.textSizeSp}/${node.textWeight}; bg=${node.colorArgb}; textColor=${node.textColorArgb}"
-                }.ifBlank { "(empty map)" }
-                val response = model.generateContent(content {
-                    images.take(4).forEach { image(it) }
-                    text("$SYSTEM_INSTRUCTION\n\nCURRENT MAP (compact, authoritative):\n$mapContext\n\nUSER REQUEST: $userPrompt")
-                })
-                response.text?.takeIf { it.isNotBlank() }?.let(::parseResponse)
-                    ?: AiMindMapResult.Error("Gemini returned an empty response.")
+                var lastTransientError: Exception? = null
+                repeat(MAX_TRANSIENT_ATTEMPTS) { attempt ->
+                    try {
+                        return@withTimeout requestMindMap(userPrompt, images, existingNodes, apiKey)
+                    } catch (error: Exception) {
+                        if (!error.isTransientGeminiFailure()) throw error
+                        lastTransientError = error
+                        if (attempt < MAX_TRANSIENT_ATTEMPTS - 1) {
+                            // 503/429 responses are normally short-lived. Backing off with
+                            // jitter prevents several clients from retrying in lockstep.
+                            delay((750L shl attempt) + Random.nextLong(250L))
+                        }
+                    }
+                }
+                throw requireNotNull(lastTransientError)
             }
         } catch (_: TimeoutCancellationException) {
             AiMindMapResult.Error("Request timed out. Please try again.")
         } catch (e: Exception) {
-            AiMindMapResult.Error(e.message ?: "Network or API error occurred.")
+            AiMindMapResult.Error(e.toFriendlyGeminiMessage())
+        }
+    }
+
+    private suspend fun requestMindMap(
+        userPrompt: String,
+        images: List<Bitmap>,
+        existingNodes: List<NodeEntity>,
+        apiKey: String
+    ): AiMindMapResult {
+        val model = GenerativeModel(
+            modelName = MODEL_NAME,
+            apiKey = apiKey,
+            generationConfig = generationConfig { temperature = 0.35f; responseMimeType = "application/json" }
+        )
+        val mapContext = existingNodes.take(180).joinToString("\n") { node ->
+            "id=${node.id}; parent=${node.parentId ?: "root"}; text=${node.label.take(180)}; " +
+                "pos=${node.x.toInt()},${node.y.toInt()}; size=${node.widthScale},${node.heightScale}; " +
+                "font=${node.textSizeSp}/${node.textWeight}; bg=${node.colorArgb}; textColor=${node.textColorArgb}"
+        }.ifBlank { "(empty map)" }
+        val response = model.generateContent(content {
+            images.take(4).forEach { image(it) }
+            text("$SYSTEM_INSTRUCTION\n\nCURRENT MAP (compact, authoritative):\n$mapContext\n\nUSER REQUEST: $userPrompt")
+        })
+        return response.text?.takeIf { it.isNotBlank() }?.let(::parseResponse)
+            ?: AiMindMapResult.Error("Gemini returned an empty response.")
+    }
+
+    /**
+     * The legacy Android SDK can wrap a 503 response in a serialization error
+     * (for example, a missing `details` field). Check the complete cause chain,
+     * so that wrapper never leaks into the chat UI or prevents a retry.
+     */
+    private fun Exception.isTransientGeminiFailure(): Boolean = generateSequence(this as Throwable?) { it.cause }
+        .mapNotNull { it.message }
+        .any { message ->
+            message.contains("503") || message.contains("UNAVAILABLE", ignoreCase = true) ||
+                message.contains("429") || message.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                message.contains("high demand", ignoreCase = true)
+        }
+
+    private fun Exception.toFriendlyGeminiMessage(): String {
+        val details = generateSequence(this as Throwable?) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+        return when {
+            details.contains("503") || details.contains("UNAVAILABLE", ignoreCase = true) ||
+                details.contains("high demand", ignoreCase = true) ->
+                "The AI service is busy right now. Please try again in a moment."
+            details.contains("429") || details.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ->
+                "AI request limit reached. Please wait a moment and try again."
+            details.contains("401") || details.contains("API key", ignoreCase = true) ->
+                "The Gemini API key is invalid or unavailable. Check the app configuration."
+            details.contains("403") || details.contains("PERMISSION_DENIED", ignoreCase = true) ->
+                "This Gemini API key does not have permission to use the selected model."
+            else -> "Could not reach the AI service. Check your internet connection and try again."
         }
     }
 

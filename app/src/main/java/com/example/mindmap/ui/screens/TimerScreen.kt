@@ -2730,10 +2730,6 @@ private fun QuickTimerGlassCustomizePanel(
                         Text("Border  ${(boxBorderOpacity * 100).toInt()}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
                         StyledTimerSlider(value = boxBorderOpacity, valueRange = 0f..1f, accentColor = softWhiteAccent, onValueChange = { boxBorderOpacity = it; push() })
 
-                        Spacer(Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                            TextButton(onClick = onDismiss) { Text("Done", color = TimerAccent, fontWeight = FontWeight.Bold) }
-                        }
                     }
                 }
             }

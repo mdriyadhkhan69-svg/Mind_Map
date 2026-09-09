@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.content.ContextCompat
 import com.example.mindmap.data.NodeEntity
 import com.example.mindmap.data.ai.AiMindMapResult
@@ -233,6 +236,7 @@ fun AiMindMapDialog(
     }
 
     Dialog(onDismissRequest = { if (!isGenerating) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        AiChatImeResize()
         Surface(shape = RoundedCornerShape(28.dp), color = Color(0xFF151724), contentColor = Color.White, shadowElevation = 20.dp,
             border = BorderStroke(1.dp, Color.White.copy(alpha = .1f)), modifier = Modifier.fillMaxWidth().fillMaxHeight(.90f).padding(12.dp).animateContentSize()) {
             Column(Modifier.fillMaxSize()) {
@@ -248,16 +252,47 @@ fun AiMindMapDialog(
                     AnimatedVisibility(attachments.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) { Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { attachments.forEachIndexed { index, bmp -> AttachmentPreview(bmp) { attachments.removeAt(index) } } } }
                     voiceError?.let { Text(it, color = Color(0xFFFFB4AB), fontSize = 12.sp, modifier = Modifier.padding(bottom = 5.dp)) }
                     Row(verticalAlignment = Alignment.Bottom) {
-                        IconButton(enabled = !isGenerating && attachments.size < 4, onClick = { multiImagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.clip(CircleShape).background(Color.White.copy(.08f))) { Icon(Icons.Default.Add, "Add images", tint = AiGlow2) }
+                        IconButton(enabled = !isGenerating && attachments.size < 4, onClick = { multiImagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(.08f))) { Icon(Icons.Default.Add, "Add images", tint = AiGlow2) }
                         Spacer(Modifier.width(8.dp))
-                        OutlinedTextField(value = inputText, onValueChange = { inputText = it }, enabled = !isGenerating, placeholder = { Text("Ask anything about this map…") }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { submit() }), modifier = Modifier.weight(1f).heightIn(min = 54.dp, max = 140.dp), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = AiGlow1, unfocusedBorderColor = Color.White.copy(.22f), cursorColor = AiGlow1))
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = { inputText = it },
+                            enabled = !isGenerating,
+                            placeholder = { Text("Ask about this map…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { submit() }),
+                            singleLine = false,
+                            minLines = 1,
+                            maxLines = 5,
+                            modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 132.dp).animateContentSize(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = AiGlow1,
+                                unfocusedBorderColor = Color.White.copy(.22f),
+                                cursorColor = AiGlow1
+                            )
+                        )
                         Spacer(Modifier.width(8.dp))
-                        IconButton(enabled = !isGenerating, onClick = { if (isRecording) { speechRecognizer.stopListening(); isRecording = false } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) beginListening() else micPermission.launch(Manifest.permission.RECORD_AUDIO) }, modifier = Modifier.clip(CircleShape).background(if (isRecording) Color(0xFFB3261E) else Color.White.copy(.08f))) { Icon(if (isRecording) Icons.Default.Stop else Icons.Default.Mic, if (isRecording) "Stop recording" else "Voice input", tint = Color.White) }
+                        IconButton(enabled = !isGenerating, onClick = { if (isRecording) { speechRecognizer.stopListening(); isRecording = false } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) beginListening() else micPermission.launch(Manifest.permission.RECORD_AUDIO) }, modifier = Modifier.size(48.dp).clip(CircleShape).background(if (isRecording) Color(0xFFB3261E) else Color.White.copy(.08f))) { Icon(if (isRecording) Icons.Default.Stop else Icons.Default.Mic, if (isRecording) "Stop recording" else "Voice input", tint = Color.White) }
                         val enabled = !isGenerating && (inputText.isNotBlank() || attachments.isNotEmpty()); val sendScale by animateFloatAsState(if (enabled) 1f else .84f, label = "send")
-                        IconButton(enabled = enabled, onClick = { submit() }, modifier = Modifier.graphicsLayer { scaleX = sendScale; scaleY = sendScale }.clip(CircleShape).background(if (enabled) AiGlow1 else Color.White.copy(.08f))) { Icon(Icons.Default.Send, "Send", tint = if (enabled) Color(0xFF10211E) else Color.White.copy(.35f)) }
+                        IconButton(enabled = enabled, onClick = { submit() }, modifier = Modifier.size(48.dp).graphicsLayer { scaleX = sendScale; scaleY = sendScale }.clip(CircleShape).background(if (enabled) AiGlow1 else Color.White.copy(.08f))) { Icon(Icons.Default.Send, "Send", tint = if (enabled) Color(0xFF10211E) else Color.White.copy(.35f)) }
                     }
                 }
             }
+        }
+    }
+}
+
+/** Uses the dialog window's single resize path; the composer is then anchored by its Column. */
+@Composable
+private fun AiChatImeResize() {
+    val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+    DisposableEffect(dialogWindow) {
+        val oldSoftInputMode = dialogWindow?.attributes?.softInputMode
+        dialogWindow?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        onDispose {
+            oldSoftInputMode?.let(dialogWindow::setSoftInputMode)
         }
     }
 }

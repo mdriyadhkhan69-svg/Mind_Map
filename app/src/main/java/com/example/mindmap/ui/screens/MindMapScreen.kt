@@ -6653,55 +6653,56 @@ private fun PdfLibraryHomeDialog(
                         enter = fadeIn(tween(200)) + expandVertically(tween(220)),
                         exit = fadeOut(tween(160)) + shrinkVertically(tween(180))
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color(0xEE17212E),
+                            contentColor = Color.White,
+                            shadowElevation = 10.dp,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
                         ) {
-                            // ekta single, stable count badge — number ta smoothly cross-fade/slide kore
-                            // uporer-nicher dike, "label" ta kokhono move/wrap kore na
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                AnimatedContent(
-                                    targetState = selectedPdfPaths.size,
-                                    transitionSpec = {
-                                        if (targetState > initialState) {
-                                            (slideInVertically(tween(180)) { h -> h } + fadeIn(tween(180))) togetherWith
-                                                    (slideOutVertically(tween(140)) { h -> -h } + fadeOut(tween(140)))
-                                        } else {
-                                            (slideInVertically(tween(180)) { h -> -h } + fadeIn(tween(180))) togetherWith
-                                                    (slideOutVertically(tween(140)) { h -> h } + fadeOut(tween(140)))
-                                        }
-                                    },
-                                    label = "selectedFileCount"
-                                ) { count ->
-                                    Text(
-                                        text = count.toString(),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SoftNeutral,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
-                                Spacer(Modifier.width(4.dp))
-                                Text("selected", fontSize = 13.sp, color = Color.LightGray, maxLines = 1, softWrap = false)
-                            }
-                            // buttons gulo ekta horizontalScroll row-e — chhoto screen-e kokhono
-                            // ei row wrap/overlap hobe na, sob shomoy ekhi line-e thakbe
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { removeSelectionDialog = true }) {
-                                    Text("Remove", color = Color(0xFFFF7A7A), maxLines = 1, softWrap = false)
+                                // A fixed-width badge keeps the action row stable while its
+                                // count animates, including on small devices.
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(Color.White.copy(alpha = 0.12f))
+                                        .padding(horizontal = 10.dp, vertical = 9.dp)
+                                ) {
+                                    AnimatedContent(
+                                        targetState = selectedPdfPaths.size,
+                                        transitionSpec = {
+                                            if (targetState > initialState) {
+                                                (slideInVertically(tween(180)) { h -> h } + fadeIn(tween(180))) togetherWith
+                                                        (slideOutVertically(tween(140)) { h -> -h } + fadeOut(tween(140)))
+                                            } else {
+                                                (slideInVertically(tween(180)) { h -> -h } + fadeIn(tween(180))) togetherWith
+                                                        (slideOutVertically(tween(140)) { h -> h } + fadeOut(tween(140)))
+                                            }
+                                        },
+                                        label = "selectedFileCount"
+                                    ) { count ->
+                                        Text(count.toString(), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+                                    }
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("selected", fontSize = 12.sp, color = Color.White.copy(alpha = 0.72f), maxLines = 1, softWrap = false)
                                 }
-                                TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { showSectionTargetDialog = true }) {
-                                    Text("Add Section", color = AccentCyan, maxLines = 1, softWrap = false)
-                                }
-                                TextButton(enabled = selectedPdfPaths.isNotEmpty(), onClick = { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }) {
-                                    Text("Share", color = AccentCyan, maxLines = 1, softWrap = false)
-                                }
-                                TextButton(onClick = { selectionMode = false; selectedPdfPaths = emptySet() }) {
-                                    Text("Cancel", color = AccentCyan, maxLines = 1, softWrap = false)
+                                Spacer(Modifier.width(6.dp))
+                                // Keep the action row horizontal: it scrolls only when a very
+                                // narrow screen cannot fit every compact white action chip.
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())
+                                ) {
+                                    PdfSelectionToolbarAction("Remove", selectedPdfPaths.isNotEmpty()) { removeSelectionDialog = true }
+                                    PdfSelectionToolbarAction("Add section", selectedPdfPaths.isNotEmpty()) { showSectionTargetDialog = true }
+                                    PdfSelectionToolbarAction("Share", selectedPdfPaths.isNotEmpty()) { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }
+                                    PdfSelectionToolbarAction("Cancel") { selectionMode = false; selectedPdfPaths = emptySet() }
                                 }
                             }
                         }
@@ -7072,18 +7073,31 @@ private fun PdfLibraryOptionsDialog(
             ) {
                 Surface(
                     modifier = Modifier
-                        .widthIn(min = 220.dp, max = 320.dp)
+                        .widthIn(min = 248.dp, max = 340.dp)
                         .heightIn(max = 460.dp)
+                        .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
                         .pointerInput("pdf-panel-block") { detectTapGestures(onTap = {}) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = GlassDark1,
-                    contentColor = SoftNeutral,
-                    shadowElevation = 12.dp
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF172331),
+                    contentColor = Color.White,
+                    shadowElevation = 20.dp
                 ) {
-                    Column(modifier = Modifier.padding(14.dp).verticalScroll(rememberScrollState())) {
-                        Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = SoftNeutral)
-                        Spacer(Modifier.height(8.dp))
-                        content()
+                    Box(
+                        modifier = Modifier.background(
+                            Brush.verticalGradient(
+                                listOf(Color.White.copy(alpha = 0.08f), Color.Transparent, Color.Black.copy(alpha = 0.14f))
+                            )
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                            Text("FILE OPTIONS", color = Color.White.copy(alpha = 0.52f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            Spacer(Modifier.height(5.dp))
+                            Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.White)
+                            Spacer(Modifier.height(12.dp))
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.11f))
+                            Spacer(Modifier.height(8.dp))
+                            content()
+                        }
                     }
                 }
             }
@@ -7092,16 +7106,17 @@ private fun PdfLibraryOptionsDialog(
 }
 
 @Composable
-private fun PdfLibraryOption(label: String, color: Color = SoftNeutral, onClick: () -> Unit) {
+private fun PdfLibraryOption(label: String, color: Color = Color.White, onClick: () -> Unit) {
     var pressed by remember(label) { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "pdfLibraryOptionPress")
+    val scale by animateFloatAsState(if (pressed) 0.985f else 1f, label = "pdfLibraryOptionPress")
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp)
+            .padding(vertical = 4.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (pressed) color.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f))
+            .clip(RoundedCornerShape(15.dp))
+            .background(if (pressed) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.07f))
+            .border(1.dp, Color.White.copy(alpha = if (pressed) 0.18f else 0.08f), RoundedCornerShape(15.dp))
             .pointerInput(label) {
                 detectTapGestures(
                     onPress = {
@@ -7112,9 +7127,43 @@ private fun PdfLibraryOption(label: String, color: Color = SoftNeutral, onClick:
                     onTap = { onClick() }
                 )
             }
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(horizontal = 15.dp, vertical = 13.dp)
     ) {
         Text(label, color = color, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun PdfSelectionToolbarAction(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    var pressed by remember(label, enabled) { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, label = "pdfSelectionActionPress")
+    Box(
+        modifier = Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(13.dp))
+            .background(if (pressed && enabled) Color.White.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.09f))
+            .pointerInput(label, enabled) {
+                detectTapGestures(
+                    onPress = {
+                        if (enabled) {
+                            pressed = true
+                            tryAwaitRelease()
+                            pressed = false
+                        }
+                    },
+                    onTap = { if (enabled) onClick() }
+                )
+            }
+            .padding(horizontal = 11.dp, vertical = 10.dp)
+    ) {
+        Text(
+            label,
+            color = if (enabled) Color.White else Color.White.copy(alpha = 0.36f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
