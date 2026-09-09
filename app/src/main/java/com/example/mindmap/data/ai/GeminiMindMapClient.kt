@@ -59,22 +59,24 @@ Rules:
         }
     }
 
-    private fun parseResponse(rawText: String): AiMindMapResult = try {
-        val start = rawText.indexOf('{'); val end = rawText.lastIndexOf('}')
-        if (start < 0 || end < start) return AiMindMapResult.Error("Gemini response was not valid JSON.")
-        val root = JSONObject(rawText.substring(start, end + 1))
-        val mode = root.optString("mode", "create").lowercase()
-        val message = root.optString("message").trim().takeIf { it.isNotBlank() }
-        val allNodes = parseNodes(root.optJSONArray("nodes") ?: JSONArray())
-        val ids = allNodes.map { it.id }.toSet()
-        val sanitized = allNodes.map { if (it.parentId != null && it.parentId !in ids) it.copy(parentId = null) else it }
-        val actions = parseActions(root.optJSONArray("actions") ?: JSONArray())
-        if (mode == "create" && sanitized.isEmpty()) return AiMindMapResult.Error("Gemini returned no valid nodes.")
-        AiMindMapResult.Success(
-            rootNodes = sanitized.filter { it.parentId == null }, childrenOf = sanitized.groupBy { it.parentId },
-            actions = actions, message = message, needsClarification = mode == "clarify"
-        )
-    } catch (e: Exception) { AiMindMapResult.Error("Failed to parse Gemini response: ${e.message}") }
+    private fun parseResponse(rawText: String): AiMindMapResult {
+        return try {
+            val start = rawText.indexOf('{'); val end = rawText.lastIndexOf('}')
+            if (start < 0 || end < start) return AiMindMapResult.Error("Gemini response was not valid JSON.")
+            val root = JSONObject(rawText.substring(start, end + 1))
+            val mode = root.optString("mode", "create").lowercase()
+            val message = root.optString("message").trim().takeIf { it.isNotBlank() }
+            val allNodes = parseNodes(root.optJSONArray("nodes") ?: JSONArray())
+            val ids = allNodes.map { it.id }.toSet()
+            val sanitized = allNodes.map { if (it.parentId != null && it.parentId !in ids) it.copy(parentId = null) else it }
+            val actions = parseActions(root.optJSONArray("actions") ?: JSONArray())
+            if (mode == "create" && sanitized.isEmpty()) return AiMindMapResult.Error("Gemini returned no valid nodes.")
+            AiMindMapResult.Success(
+                rootNodes = sanitized.filter { it.parentId == null }, childrenOf = sanitized.groupBy { it.parentId },
+                actions = actions, message = message, needsClarification = mode == "clarify"
+            )
+        } catch (e: Exception) { AiMindMapResult.Error("Failed to parse Gemini response: ${e.message}") }
+    }
 
     private fun parseNodes(array: JSONArray): List<AiNode> {
         val seen = mutableSetOf<String>()
