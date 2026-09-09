@@ -16,10 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -47,13 +44,14 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -266,6 +264,12 @@ fun AiMindMapDialog(
 
 @Composable private fun AttachmentPreview(bitmap: Bitmap, onRemove: () -> Unit) = Box(Modifier.size(64.dp)) { Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))); IconButton(onClick = onRemove, modifier = Modifier.align(Alignment.TopEnd).size(22.dp).clip(CircleShape).background(Color.Black.copy(.7f))) { Icon(Icons.Default.Close, "Remove image", tint = Color.White, modifier = Modifier.size(14.dp)) } }
 
-@Composable private fun ThinkingRow() { val transition = rememberInfiniteTransition(label = "thinking"); val alpha by transition.animateFloat(.35f, 1f, infiniteRepeatable(tween(700, easing = LinearEasing)), label = "thinkingAlpha"); Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.graphicsLayer { this.alpha = alpha }) { Icon(Icons.Default.AutoAwesome, null, tint = AiGlow1, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text("Thinking…", color = Color.White.copy(.7f), fontSize = 13.sp) } }
+@Composable private fun ThinkingRow() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(color = AiGlow1, modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
+        Spacer(Modifier.width(8.dp))
+        Text("Thinking…", color = Color.White.copy(.7f), fontSize = 13.sp)
+    }
+}
 
 @Composable private fun ChatBubble(message: ChatMessage) { val alignment = if (message.isUser) Alignment.End else Alignment.Start; val color = when { message.isError -> Color(0xFF4A1D22); message.isUser -> AiGlow1.copy(.18f); else -> Color.White.copy(.07f) }; Column(Modifier.fillMaxWidth(), horizontalAlignment = alignment) { Column(Modifier.widthIn(max = 330.dp).clip(RoundedCornerShape(18.dp)).background(color).padding(12.dp)) { if (message.images.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { message.images.forEach { Image(it.asImageBitmap(), null, Modifier.size(72.dp).clip(RoundedCornerShape(10.dp))) } }; if (message.images.isNotEmpty()) Spacer(Modifier.height(8.dp)); Text(message.text, color = if (message.isError) Color(0xFFFFB4AB) else Color.White, fontSize = 14.sp, lineHeight = 20.sp, overflow = TextOverflow.Clip) } } }
