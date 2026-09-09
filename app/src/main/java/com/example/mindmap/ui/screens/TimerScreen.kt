@@ -3218,8 +3218,10 @@ private fun TimerSettingsDialog(
     FloatingPopupLabelSettingsState.ensureLoaded(context)
     StrikeAnimationSettingsState.ensureLoaded(context)
     StrikeQuoteState.ensureLoaded(context)
+    AiFloatingSettingsState.ensureLoaded(context)
     var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
     var floatingPopupLabelEnabled by remember { mutableStateOf(FloatingPopupLabelSettingsState.enabled) }
+    var aiIconEnabled by remember { mutableStateOf(AiFloatingSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var showClockFacePickerInSettings by remember { mutableStateOf(false) }
     var showQuoteManager by remember { mutableStateOf(false) }
@@ -3295,6 +3297,21 @@ private fun TimerSettingsDialog(
                         onCheckedChange = { value ->
                             floatingPopupLabelEnabled = value
                             FloatingPopupLabelSettingsState.update(context, value)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("AI assistant icon", fontSize = 15.sp)
+                        Text("Show the movable AI button on Mind Map", color = Color.LightGray, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = aiIconEnabled,
+                        onCheckedChange = { value ->
+                            aiIconEnabled = value
+                            AiFloatingSettingsState.setEnabled(context, value)
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )

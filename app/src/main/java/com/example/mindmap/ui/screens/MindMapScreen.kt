@@ -98,6 +98,7 @@ import com.example.mindmap.data.CanvasViewport
 import com.example.mindmap.data.LineEntity
 import com.example.mindmap.data.MediaEntity
 import com.example.mindmap.data.MediaType
+import com.example.mindmap.data.MindMapNodeSizing
 import com.example.mindmap.data.NodeEntity
 import com.example.mindmap.data.RootCollisionBehavior
 import com.example.mindmap.data.SectionEntity
@@ -566,6 +567,9 @@ fun MindMapScreen(
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     val context = LocalContext.current
+    AiFloatingSettingsState.ensureLoaded(context)
+    var aiFabXRatio by remember { mutableFloatStateOf(AiFloatingSettingsState.xRatio) }
+    var aiFabYRatio by remember { mutableFloatStateOf(AiFloatingSettingsState.yRatio) }
 
     val allNodes by viewModel.allNodes.collectAsState()
     val glow by settingsViewModel.glowIntensity.collectAsState()
@@ -1495,10 +1499,23 @@ fun MindMapScreen(
             modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)
         )
 
-        AiSparkleFab(
-            onClick = { showAiMindMapDialog = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 96.dp)
-        )
+        if (AiFloatingSettingsState.enabled && viewportSize != IntSize.Zero) {
+            val fabSize = with(density) { 58.dp.toPx() }
+            val margin = with(density) { 12.dp.toPx() }
+            val maxX = (viewportSize.width - fabSize - margin * 2).coerceAtLeast(1f)
+            val maxY = (viewportSize.height - fabSize - margin * 2).coerceAtLeast(1f)
+            AiSparkleFab(
+                onClick = { showAiMindMapDialog = true },
+                onDrag = { delta ->
+                    aiFabXRatio = (aiFabXRatio + delta.x / maxX).coerceIn(0f, 1f)
+                    aiFabYRatio = (aiFabYRatio + delta.y / maxY).coerceIn(0f, 1f)
+                },
+                onDragEnd = { AiFloatingSettingsState.setPosition(context, aiFabXRatio, aiFabYRatio) },
+                modifier = Modifier.offset {
+                    IntOffset((margin + aiFabXRatio * maxX).roundToInt(), (margin + aiFabYRatio * maxY).roundToInt())
+                }.zIndex(60f)
+            )
+        }
 
         if (attachLineFromId != null) {
             Text(
@@ -1774,7 +1791,9 @@ fun MindMapScreen(
         if (showAiMindMapDialog) {
             AiMindMapDialog(
                 viewModel = viewModel,
+                lineViewModel = lineViewModel,
                 sectionId = currentSectionId,
+                nodesInSection = nodesInSection,
                 onDismiss = { showAiMindMapDialog = false }
             )
         }
@@ -2161,8 +2180,13 @@ fun NodeBox(
     }
     val baseBoxWidth = if (media?.type == MediaType.FILE) 126.dp else if (isRoot) 86.dp else 70.dp
     val baseBoxHeight = if (media != null) 58.dp else if (isRoot) 42.dp else 32.dp
-    val boxWidth = baseBoxWidth * node.widthScale
-    val boxHeight = baseBoxHeight * node.heightScale
+    // Keep manual dimensions, but never let a label be clipped simply because
+    // it was produced by AI or pasted from a longer note.
+    val autoSize = remember(node.label, node.textSizeSp, isRoot) {
+        MindMapNodeSizing.forLabel(node.label, node.textSizeSp, isRoot)
+    }
+    val boxWidth = baseBoxWidth * maxOf(node.widthScale, autoSize.width)
+    val boxHeight = baseBoxHeight * maxOf(node.heightScale, autoSize.height)
     val textColor = if (node.isDone) {
         completionColor
     } else {
@@ -2291,20 +2315,20 @@ fun NodeBox(
                 Text(
                     text = node.label, color = textColor,
                     fontSize = node.textSizeSp.sp, fontWeight = FontWeight.Black,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    maxLines = Int.MAX_VALUE, overflow = TextOverflow.Clip,
                     modifier = Modifier.offset(x = extraBoldOffset.dp)
                 )
                 Text(
                     text = node.label, color = textColor,
                     fontSize = node.textSizeSp.sp, fontWeight = FontWeight.Black,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    maxLines = Int.MAX_VALUE, overflow = TextOverflow.Clip,
                     modifier = Modifier.offset(x = (-extraBoldOffset).dp)
                 )
             }
             Text(
                 text = node.label, color = textColor,
                 fontSize = node.textSizeSp.sp, fontWeight = FontWeight(node.textWeight.coerceAtMost(900)),
-                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                maxLines = Int.MAX_VALUE, overflow = TextOverflow.Clip,
                 onTextLayout = { textLayoutResult = it },
                 modifier = completionLineModifier
             )
@@ -5115,14 +5139,14 @@ private fun BoxStyleDialog(
                 Spacer(Modifier.height(18.dp))
                 Text("Width  ${"%.0f".format(widthScale * 100)}%", color = mutedColor, fontSize = 14.sp)
                 StyledValueSlider(
-                    value = widthScale, valueRange = 0.65f..2.2f,
+                    value = widthScale, valueRange = MindMapNodeSizing.MIN_SCALE..MindMapNodeSizing.MAX_SCALE,
                     trackBrush = Brush.horizontalGradient(listOf(displayColor.copy(alpha = 0.35f), displayColor)),
                     thumbColor = displayColor,
                     onValueChange = { value -> widthScale = value; updateStyle() }
                 )
                 Text("Height  ${"%.0f".format(heightScale * 100)}%", color = mutedColor, fontSize = 14.sp)
                 StyledValueSlider(
-                    value = heightScale, valueRange = 0.65f..2.2f,
+                    value = heightScale, valueRange = MindMapNodeSizing.MIN_SCALE..MindMapNodeSizing.MAX_SCALE,
                     trackBrush = Brush.horizontalGradient(listOf(displayColor.copy(alpha = 0.35f), displayColor)),
                     thumbColor = displayColor,
                     onValueChange = { value -> heightScale = value; updateStyle() }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.mindmap.data.NodeEntity
+import com.example.mindmap.data.MindMapNodeSizing
 import com.example.mindmap.data.NodeRepository
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +72,7 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
         viewModelScope.launch {
             val roots = allNodes.value.filter { it.parentId == null && it.sectionId == sectionId }
             val nextIndex = (roots.maxOfOrNull { it.orderIndex } ?: -1) + 1
+            val size = MindMapNodeSizing.forLabel(label, isRoot = true)
             val node = NodeEntity(
                 sectionId = sectionId,
                 parentId = null,
@@ -78,7 +80,9 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
                 orderIndex = nextIndex,
                 x = x,
                 y = y,
-                isExpanded = true
+                isExpanded = true,
+                widthScale = size.width,
+                heightScale = size.height
             )
             val id = repository.insert(node)
             onCreated(node.copy(id = id))
@@ -88,6 +92,7 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
     fun addAiChildNode(parent: NodeEntity, label: String, x: Float, y: Float, onCreated: (NodeEntity) -> Unit) {
         viewModelScope.launch {
             val siblingCount = allNodes.value.count { it.parentId == parent.id }
+            val size = MindMapNodeSizing.forLabel(label)
             val node = NodeEntity(
                 sectionId = parent.sectionId,
                 parentId = parent.id,
@@ -95,7 +100,9 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
                 orderIndex = siblingCount,
                 x = x,
                 y = y,
-                isExpanded = true
+                isExpanded = true,
+                widthScale = size.width,
+                heightScale = size.height
             )
             val id = repository.insert(node)
             if (!parent.isExpanded) repository.update(parent.copy(isExpanded = true))
@@ -150,7 +157,10 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
     }
 
     fun updateLabel(node: NodeEntity, newLabel: String) {
-        viewModelScope.launch { repository.update(node.copy(label = newLabel)) }
+        viewModelScope.launch {
+            val auto = MindMapNodeSizing.forLabel(newLabel, node.textSizeSp, node.parentId == null)
+            repository.update(node.copy(label = newLabel, widthScale = maxOf(node.widthScale, auto.width), heightScale = maxOf(node.heightScale, auto.height)))
+        }
     }
 
     fun toggleDone(node: NodeEntity) {
@@ -183,8 +193,8 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
                 node.copy(
                     colorArgb = colorArgb,
                     textColorArgb = textColorArgb,
-                    widthScale = widthScale.coerceIn(0.65f, 2.2f),
-                    heightScale = heightScale.coerceIn(0.65f, 2.2f)
+                    widthScale = widthScale.coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
+                    heightScale = heightScale.coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE)
                 )
             )
         }
@@ -205,6 +215,36 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
                     textColorArgb = textColorArgb
                 )
             )
+        }
+    }
+
+    fun applyAiUpdate(
+        node: NodeEntity,
+        label: String? = null,
+        colorArgb: Long? = node.colorArgb,
+        textColorArgb: Long? = node.textColorArgb,
+        widthScale: Float? = null,
+        heightScale: Float? = null,
+        textSizeSp: Float? = null,
+        textWeight: Int? = null,
+        x: Float? = null,
+        y: Float? = null
+    ) {
+        viewModelScope.launch {
+            val nextLabel = label?.takeIf { it.isNotBlank() } ?: node.label
+            val nextTextSize = (textSizeSp ?: node.textSizeSp).coerceIn(10f, 40f)
+            val auto = MindMapNodeSizing.forLabel(nextLabel, nextTextSize, node.parentId == null)
+            repository.update(node.copy(
+                label = nextLabel,
+                colorArgb = colorArgb,
+                textColorArgb = textColorArgb,
+                widthScale = maxOf(widthScale ?: node.widthScale, auto.width).coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
+                heightScale = maxOf(heightScale ?: node.heightScale, auto.height).coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
+                textSizeSp = nextTextSize,
+                textWeight = (textWeight ?: node.textWeight).coerceIn(100, 1200),
+                x = x ?: node.x,
+                y = y ?: node.y
+            ))
         }
     }
     fun toggleExpand(node: NodeEntity, allowMultipleRoots: Boolean) {
