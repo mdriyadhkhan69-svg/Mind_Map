@@ -2504,17 +2504,39 @@ private fun StyledTimerSlider(
     val rangeSize = valueRange.endInclusive - valueRange.start
     val fraction = if (rangeSize == 0f) 0f else ((value - valueRange.start) / rangeSize).coerceIn(0f, 1f)
     val currentFraction by rememberUpdatedState(fraction)
-    val thumbSizeDp = 16.dp
-    val thumbSizePx = with(density) { thumbSizeDp.toPx() }
-    // Shudhu thumb-er charpashe ekta generous grab radius chhle-i drag shuru hobe.
-    // Track-er onno kono jaygay finger porle eta kichhui consume kore na, tai gesture
-    // parent scrollable porjonto smoothly chole jay — slider accidentally move kore na.
-    val grabRadiusPx = with(density) { 22.dp.toPx() }
+
+    // Small VISUAL thumb, but a much larger invisible grab radius around it —
+    // this is what lets a finger comfortably catch the thumb while a finger
+    // landing anywhere else on the track (or on the page) keeps scrolling.
+    val thumbVisualSizeDp = 14.dp
+    val thumbHaloSizeDp = 30.dp
+    val thumbVisualSizePx = with(density) { thumbVisualSizeDp.toPx() }
+    val grabRadiusPx = with(density) { 36.dp.toPx() }
+
     var isPressed by remember { mutableStateOf(false) }
     val thumbScale by animateFloatAsState(
-        targetValue = if (isPressed) 1.2f else 1f,
+        targetValue = if (isPressed) 1.3f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "timerSliderThumbScale"
+    )
+    val haloAlpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.28f else 0f,
+        animationSpec = tween(if (isPressed) 90 else 220),
+        label = "timerSliderHaloAlpha"
+    )
+    // While actively dragging, the rendered position tracks the finger almost
+    // instantly (near-zero spring lag) so there's no perceptible delay between
+    // finger -> thumb -> timer preview. When the value changes programmatically
+    // (Default button, syncing from prefs, etc.) it eases in smoothly instead
+    // of snapping.
+    val animatedFraction by animateFloatAsState(
+        targetValue = fraction,
+        animationSpec = if (isPressed) {
+            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 6000f)
+        } else {
+            spring(dampingRatio = 0.82f, stiffness = 280f)
+        },
+        label = "timerSliderFraction"
     )
 
     fun updateFromX(positionX: Float) {
@@ -2526,9 +2548,14 @@ private fun StyledTimerSlider(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(32.dp)
+            .height(34.dp)
             .onGloballyPositioned { trackWidthPx = it.size.width.toFloat() }
             .pointerInput(valueRange.start, valueRange.endInclusive) {
+                // Only a touch starting within grabRadiusPx of the thumb's CURRENT
+                // center is claimed here. Everything else — including a finger
+                // anywhere else on the track — is left completely untouched, so a
+                // vertical scroll that happens to start over the slider always
+                // reaches the parent scrollable instead of moving the value.
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val thumbX = trackWidthPx * currentFraction
@@ -2545,35 +2572,59 @@ private fun StyledTimerSlider(
                 }
             }
     ) {
+        // inactive track
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth()
                 .height(4.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = 0.10f))
+                .background(Color.White.copy(alpha = 0.08f))
         )
+        // active track — soft gradient fill instead of a flat color
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .fillMaxWidth(fraction)
+                .fillMaxWidth(animatedFraction.coerceIn(0f, 1f))
                 .height(4.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color(0xFF16324A))
+                .background(Brush.horizontalGradient(listOf(accentColor.copy(alpha = 0.5f), accentColor)))
         )
-        val thumbOffsetPx = (trackWidthPx * fraction - thumbSizePx / 2f)
-            .coerceIn(0f, (trackWidthPx - thumbSizePx).coerceAtLeast(0f))
+
+        // Thumb center is clamped so the VISUAL circle can never cross the
+        // track's own bounds — fixes it visually overshooting past the right
+        // edge at 100%, while still keeping the drag input itself full-range.
+        val halfThumbPx = thumbVisualSizePx / 2f
+        val thumbCenterPx = (trackWidthPx * animatedFraction)
+            .coerceIn(halfThumbPx, (trackWidthPx - halfThumbPx).coerceAtLeast(halfThumbPx))
+        val thumbOffsetPx = thumbCenterPx - halfThumbPx
+
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .offset { IntOffset(thumbOffsetPx.roundToInt(), 0) }
-                .graphicsLayer { scaleX = thumbScale; scaleY = thumbScale }
-                .size(thumbSizeDp)
-                .shadow(4.dp, CircleShape, ambientColor = accentColor, spotColor = accentColor)
-                .clip(CircleShape)
-                .background(Color.White)
-                .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape)
-        )
+                .size(thumbVisualSizeDp)
+        ) {
+            // soft glow halo on press — purely additive, never changes layout size
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(thumbHaloSizeDp)
+                    .graphicsLayer { alpha = haloAlpha }
+                    .clip(CircleShape)
+                    .background(accentColor)
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .graphicsLayer { scaleX = thumbScale; scaleY = thumbScale }
+                    .size(thumbVisualSizeDp)
+                    .shadow(3.dp, CircleShape, ambientColor = accentColor, spotColor = accentColor)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .border(1.dp, accentColor.copy(alpha = 0.6f), CircleShape)
+            )
+        }
     }
 }
 
@@ -2619,12 +2670,22 @@ private fun QuickTimerGlassCustomizePanel(
                 .pointerInput("quick-customize-scrim") {
                     detectTapGestures(onTap = { onDismiss() })
                 }
-                .then(if (isLandscape) Modifier.padding(top = 54.dp) else Modifier),
-            contentAlignment = if (isLandscape) Alignment.TopCenter else Alignment.Center
+                // Anchored near the top, close to where the timer display/header
+                // actually sits, instead of dead-center over the whole screen —
+                // it reads as appearing "from" the current timer, not as an
+                // unrelated full-screen sheet. Portrait gets a little more top
+                // offset since the display sits a bit lower there.
+                .padding(top = if (isLandscape) 54.dp else 84.dp),
+            contentAlignment = Alignment.TopCenter
         ) {
             Surface(
                 modifier = Modifier
                     .widthIn(max = 300.dp)
+                    .graphicsLayer {
+                        // subtle settle-in: starts a touch higher and slides down
+                        // into place together with the fade/scale from AnimatedVisibility
+                        translationY = (1f - thumbEntranceProgressFor(visible)) * -14f
+                    }
                     .pointerInput("quick-customize-block") { detectTapGestures(onTap = {}) },
                 shape = RoundedCornerShape(22.dp),
                 color = Color.White.copy(alpha = 0.10f),
@@ -2674,6 +2735,10 @@ private fun QuickTimerGlassCustomizePanel(
         }
     }
 }
+// Tiny helper so the panel's slide-in tracks the same visible/hidden flag
+// AnimatedVisibility already uses, without introducing a second animation
+// state machine — it just reads as "in" once visible flips true.
+private fun thumbEntranceProgressFor(visible: Boolean): Float = if (visible) 1f else 0f
 @Composable
 private fun TimerBoxSettingsPanel(
     settings: TimerBoxSettings,
