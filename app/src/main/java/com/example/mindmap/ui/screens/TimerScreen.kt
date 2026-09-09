@@ -73,6 +73,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -2653,6 +2654,10 @@ private fun QuickTimerGlassCustomizePanel(
         val spacing = settings.spacingDp
         var boxBackgroundOpacity by remember(settings) { mutableStateOf(settings.boxBackgroundOpacity) }
         var boxBorderOpacity by remember(settings) { mutableStateOf(settings.boxBorderOpacity) }
+        // Minimal soft-white slider accent for this glass panel — no bright/saturated
+        // color, just white with reduced opacity so it reads as premium/glossy while
+        // active vs inactive track stay distinguishable via alpha only.
+        val softWhiteAccent = Color.White.copy(alpha = 0.82f)
 
         fun push() {
             onSettingsChange(
@@ -2708,22 +2713,22 @@ private fun QuickTimerGlassCustomizePanel(
                         Spacer(Modifier.height(10.dp))
 
                         Text("Width  ${"%.0f".format(widthPercent * 100)}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        StyledTimerSlider(value = widthPercent, valueRange = 0.4f..3f, onValueChange = { widthPercent = it; push() })
+                        StyledTimerSlider(value = widthPercent, valueRange = 0.4f..3f, accentColor = softWhiteAccent, onValueChange = { widthPercent = it; push() })
 
                         Text("Box height  ${boxHeight.toInt()}dp", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        StyledTimerSlider(value = boxHeight, valueRange = 60f..420f, onValueChange = { boxHeight = it; push() })
+                        StyledTimerSlider(value = boxHeight, valueRange = 60f..420f, accentColor = softWhiteAccent, onValueChange = { boxHeight = it; push() })
 
                         Text("Number size  ${fontSize.toInt()}sp", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        StyledTimerSlider(value = fontSize, valueRange = 24f..420f, onValueChange = { fontSize = it; push() })
+                        StyledTimerSlider(value = fontSize, valueRange = 24f..420f, accentColor = softWhiteAccent, onValueChange = { fontSize = it; push() })
 
                         Text("Number weight  $fontWeightValue", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        StyledTimerSlider(value = fontWeightValue.toFloat(), valueRange = 100f..900f, onValueChange = { fontWeightValue = it.toInt(); push() })
+                        StyledTimerSlider(value = fontWeightValue.toFloat(), valueRange = 100f..900f, accentColor = softWhiteAccent, onValueChange = { fontWeightValue = it.toInt(); push() })
 
                         Text("Background  ${(boxBackgroundOpacity * 100).toInt()}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        StyledTimerSlider(value = boxBackgroundOpacity, valueRange = 0f..1f, onValueChange = { boxBackgroundOpacity = it; push() })
+                        StyledTimerSlider(value = boxBackgroundOpacity, valueRange = 0f..1f, accentColor = softWhiteAccent, onValueChange = { boxBackgroundOpacity = it; push() })
 
                         Text("Border  ${(boxBorderOpacity * 100).toInt()}%", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                        StyledTimerSlider(value = boxBorderOpacity, valueRange = 0f..1f, onValueChange = { boxBorderOpacity = it; push() })
+                        StyledTimerSlider(value = boxBorderOpacity, valueRange = 0f..1f, accentColor = softWhiteAccent, onValueChange = { boxBorderOpacity = it; push() })
 
                         Spacer(Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
@@ -3894,27 +3899,44 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        // Previously the horizontal-drag (mode switch) and the tap/double-tap
+                        // (controls toggle + open customize panel) gestures lived in TWO
+                        // separate .pointerInput blocks on the same node. Once one block
+                        // consumed a pointer move (even the tiny, sub-slop jitter a real
+                        // finger produces between the two taps of a double-tap), the other
+                        // block's detector was fed an already-consumed event on the next
+                        // pass and silently bailed out — this is the exact
+                        // "combining gestures in separate blocks causes instability" issue
+                        // already solved elsewhere in this project (see Modifier.mindMapNode).
+                        // Merging both into ONE pointerInput using coroutineScope + launch
+                        // is that same established fix: both detectors now run as parallel
+                        // coroutines sharing the same gesture arbitration pass, so a double
+                        // tap on the header reliably reaches detectTapGestures's onDoubleTap.
                         .pointerInput(mode, isRunning) {
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    if (kotlin.math.abs(horizontalDragAccum) > swipeThresholdPx && !isRunning) {
-                                        mode = if (horizontalDragAccum < 0) "countdown" else "stopwatch"
-                                        finished = false
-                                        if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
+                            coroutineScope {
+                                launch {
+                                    detectHorizontalDragGestures(
+                                        onDragEnd = {
+                                            if (kotlin.math.abs(horizontalDragAccum) > swipeThresholdPx && !isRunning) {
+                                                mode = if (horizontalDragAccum < 0) "countdown" else "stopwatch"
+                                                finished = false
+                                                if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
+                                            }
+                                            horizontalDragAccum = 0f
+                                        },
+                                        onDragCancel = { horizontalDragAccum = 0f }
+                                    ) { change, dragAmount ->
+                                        change.consume()
+                                        horizontalDragAccum += dragAmount
                                     }
-                                    horizontalDragAccum = 0f
-                                },
-                                onDragCancel = { horizontalDragAccum = 0f }
-                            ) { change, dragAmount ->
-                                change.consume()
-                                horizontalDragAccum += dragAmount
+                                }
+                                launch {
+                                    detectTapGestures(
+                                        onTap = { controlsVisible = !controlsVisible },
+                                        onDoubleTap = { showQuickCustomizePanel = !showQuickCustomizePanel }
+                                    )
+                                }
                             }
-                        }
-                        .pointerInput("quick-timer-tap") {
-                            detectTapGestures(
-                                onTap = { controlsVisible = !controlsVisible },
-                                onDoubleTap = { showQuickCustomizePanel = true }
-                            )
                         }
                 ) {
                     var quickTopBarHeightPx by remember { mutableStateOf(0) }
