@@ -2504,11 +2504,18 @@ private fun StyledTimerSlider(
     val rangeSize = valueRange.endInclusive - valueRange.start
     val fraction = if (rangeSize == 0f) 0f else ((value - valueRange.start) / rangeSize).coerceIn(0f, 1f)
     val currentFraction by rememberUpdatedState(fraction)
-    // Shudhu thumb-er charpashe ekta generous grab radius (visual 28dp dot-er cheye
-    // boro) chhle-i drag shuru hobe. Track-er onno kono jaygay finger porle (jemon
-    // page vertically scroll korar shomoy) eta kichhui consume kore na, tai gesture
+    val thumbSizeDp = 16.dp
+    val thumbSizePx = with(density) { thumbSizeDp.toPx() }
+    // Shudhu thumb-er charpashe ekta generous grab radius chhle-i drag shuru hobe.
+    // Track-er onno kono jaygay finger porle eta kichhui consume kore na, tai gesture
     // parent scrollable porjonto smoothly chole jay — slider accidentally move kore na.
-    val grabRadiusPx = with(density) { 26.dp.toPx() }
+    val grabRadiusPx = with(density) { 22.dp.toPx() }
+    var isPressed by remember { mutableStateOf(false) }
+    val thumbScale by animateFloatAsState(
+        targetValue = if (isPressed) 1.2f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "timerSliderThumbScale"
+    )
 
     fun updateFromX(positionX: Float) {
         if (trackWidthPx <= 0f) return
@@ -2519,7 +2526,7 @@ private fun StyledTimerSlider(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(32.dp)
             .onGloballyPositioned { trackWidthPx = it.size.width.toFloat() }
             .pointerInput(valueRange.start, valueRange.endInclusive) {
                 awaitEachGesture {
@@ -2528,11 +2535,13 @@ private fun StyledTimerSlider(
                     val grabbedThumb = kotlin.math.abs(down.position.x - thumbX) <= grabRadiusPx
                     if (!grabbedThumb) return@awaitEachGesture
                     down.consume()
+                    isPressed = true
                     updateFromX(down.position.x)
                     drag(down.id) { change ->
                         change.consume()
                         updateFromX(change.position.x)
                     }
+                    isPressed = false
                 }
             }
     ) {
@@ -2540,24 +2549,27 @@ private fun StyledTimerSlider(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth()
-                .height(8.dp)
+                .height(4.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = 0.12f))
+                .background(Color.White.copy(alpha = 0.10f))
         )
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxWidth(fraction)
-                .height(8.dp)
+                .height(4.dp)
                 .clip(RoundedCornerShape(50))
                 .background(Color(0xFF16324A))
         )
+        val thumbOffsetPx = (trackWidthPx * fraction - thumbSizePx / 2f)
+            .coerceIn(0f, (trackWidthPx - thumbSizePx).coerceAtLeast(0f))
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .offset { IntOffset((trackWidthPx * fraction).roundToInt() - 14, 0) }
-                .size(28.dp)
-                .shadow(6.dp, CircleShape, ambientColor = accentColor, spotColor = accentColor)
+                .offset { IntOffset(thumbOffsetPx.roundToInt(), 0) }
+                .graphicsLayer { scaleX = thumbScale; scaleY = thumbScale }
+                .size(thumbSizeDp)
+                .shadow(4.dp, CircleShape, ambientColor = accentColor, spotColor = accentColor)
                 .clip(CircleShape)
                 .background(Color.White)
                 .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape)
@@ -2574,6 +2586,7 @@ private fun QuickTimerGlassCustomizePanel(
     visible: Boolean,
     settings: TimerBoxSettings,
     title: String,
+    isLandscape: Boolean = false,
     onSettingsChange: (TimerBoxSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2605,8 +2618,9 @@ private fun QuickTimerGlassCustomizePanel(
                 .zIndex(60f)
                 .pointerInput("quick-customize-scrim") {
                     detectTapGestures(onTap = { onDismiss() })
-                },
-            contentAlignment = Alignment.Center
+                }
+                .then(if (isLandscape) Modifier.padding(top = 54.dp) else Modifier),
+            contentAlignment = if (isLandscape) Alignment.TopCenter else Alignment.Center
         ) {
             Surface(
                 modifier = Modifier
@@ -4072,6 +4086,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         visible = showQuickCustomizePanel,
                         settings = activeBoxSettings,
                         title = if (mode == "stopwatch") "Stopwatch style" else "Countdown style",
+                        isLandscape = isLandscape,
                         onSettingsChange = { updated ->
                             saveTimerBoxSettings(context, isLandscape, updated, scope = timerBoxScope)
                             TimerBoxLiveSettingsState.update(timerBoxScope, isLandscape, updated)
