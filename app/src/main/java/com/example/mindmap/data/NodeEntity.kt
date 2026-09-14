@@ -42,5 +42,15 @@ data class NodeEntity(
     val connectorColorArgb: Long? = null,
     val connectorStrokeWidth: Float = 3f,
     val isConnectorHidden: Boolean = false,
-    val completionLineColorArgb: Long? = null
+    val completionLineColorArgb: Long? = null,
+    // Reminder state belongs to the box that owns the queue. The queued task
+    // itself always remains an ordinary node, so completion still has one
+    // authoritative source: isDone.
+    val reminderEnabled: Boolean = false,
+    val reminderActiveTaskId: Long? = null,
+    val reminderEscalationMinutes: Int = 0,
+    val reminderDeliveryCount: Int = 0,
+    val reminderIntervalMinutes: Int = 30,
+    val reminderNextTriggerMillis: Long = 0L,
+    val reminderQueueActive: Boolean = false
 )

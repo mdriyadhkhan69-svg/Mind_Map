@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
             .addMigrations(AppDatabase.MIGRATION_9_10)
             .addMigrations(AppDatabase.MIGRATION_10_11)
             .addMigrations(AppDatabase.MIGRATION_11_12)
+            .addMigrations(AppDatabase.MIGRATION_12_13)
             .fallbackToDestructiveMigration()
             .build()
 
@@ -134,6 +135,10 @@ class MainActivity : ComponentActivity() {
         }
         intent?.getStringExtra("open_timer_section")?.let { section ->
             com.example.mindmap.TimerNavigationState.requestOpenSection.value = section
+        }
+        if (intent?.getBooleanExtra("open_mind_map_reminder", false) == true) {
+            com.example.mindmap.ReminderNavigationState.pendingSectionId.value = intent.getLongExtra("reminder_section_id", 0L).takeIf { it != 0L }
+            com.example.mindmap.ReminderNavigationState.pendingNodeId.value = intent.getLongExtra("reminder_node_id", 0L).takeIf { it != 0L }
         }
     }
 }

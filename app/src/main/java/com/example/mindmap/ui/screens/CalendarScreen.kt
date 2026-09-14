@@ -519,86 +519,6 @@ private fun CalendarUpcomingList(
 /* ---------------- dialogs ---------------- */
 
 @Composable
-private fun CompactWheelColumn(
-    range: IntRange,
-    selected: Int,
-    onSelectedChange: (Int) -> Unit,
-    itemHeight: Dp = 30.dp,
-    visibleCount: Int = 3,
-    columnWidth: Dp = 46.dp
-) {
-    val density = LocalDensity.current
-    val itemHeightPx = with(density) { itemHeight.toPx() }
-    val values = remember(range) { range.toList() }
-    val listState = rememberLazyListState()
-    val flingBehavior = rememberSnapFlingBehavior(listState)
-    val currentSelected by rememberUpdatedState(selected)
-
-    LaunchedEffect(selected, values) {
-        val targetIndex = values.indexOf(selected).coerceAtLeast(0)
-        if (!listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIndex) {
-            listState.scrollToItem(targetIndex)
-        }
-    }
-
-    LaunchedEffect(listState) {
-        combine(
-            snapshotFlow { listState.firstVisibleItemIndex },
-            snapshotFlow { listState.firstVisibleItemScrollOffset },
-            snapshotFlow { listState.isScrollInProgress }
-        ) { index, offset, scrolling -> Triple(index, offset, scrolling) }
-            .collect { (index, offset, inProgress) ->
-                val centeredIndex = (index + if (offset > itemHeightPx / 2) 1 else 0).coerceIn(values.indices)
-                val value = values[centeredIndex]
-                if (value != currentSelected) onSelectedChange(value)
-                if (!inProgress) {
-                    val settledIndex = (listState.firstVisibleItemIndex +
-                            if (listState.firstVisibleItemScrollOffset > itemHeightPx / 2) 1 else 0
-                            ).coerceIn(values.indices)
-                    val settledValue = values[settledIndex]
-                    if (settledValue != currentSelected) onSelectedChange(settledValue)
-                }
-            }
-    }
-
-    Box(modifier = Modifier.height(itemHeight * visibleCount), contentAlignment = Alignment.Center) {
-        LazyColumn(
-            state = listState,
-            flingBehavior = flingBehavior,
-            contentPadding = PaddingValues(vertical = itemHeight * (visibleCount / 2)),
-            modifier = Modifier.fillMaxHeight().width(columnWidth)
-        ) {
-            items(values) { value ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(itemHeight)
-                        .pointerInput(value) {
-                            detectTapGestures(onTap = { onSelectedChange(value) })
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    val isSelected = value == selected
-                    Text(
-                        "%02d".format(value),
-                        color = if (isSelected) SoftNeutral else SoftNeutral.copy(alpha = 0.35f),
-                        fontSize = if (isSelected) 16.sp else 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
-            }
-        }
-        Box(
-            Modifier
-                .width(columnWidth)
-                .height(itemHeight)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.White.copy(alpha = 0.08f))
-        )
-    }
-}
-
-@Composable
 private fun PanelIconTap(
     onTap: () -> Unit,
     content: @Composable () -> Unit
@@ -818,7 +738,7 @@ private fun CalendarDateOptionsDialog(
                                         .fillMaxWidth()
                                         .animateContentSize(tween(180))
                                 ) {
-                                    CompactWheelColumn(
+                                    MiniWheelPicker(
                                         range = 1..12,
                                         selected = (timerHourText.toIntOrNull() ?: 12).coerceIn(1, 12),
                                         onSelectedChange = { timerHourText = it.toString() }
@@ -826,7 +746,7 @@ private fun CalendarDateOptionsDialog(
                                     Spacer(Modifier.width(6.dp))
                                     Text(":", color = SoftNeutral, fontSize = 18.sp, fontWeight = FontWeight.Black)
                                     Spacer(Modifier.width(6.dp))
-                                    CompactWheelColumn(
+                                    MiniWheelPicker(
                                         range = 0..59,
                                         selected = (timerMinuteText.toIntOrNull() ?: 0).coerceIn(0, 59),
                                         onSelectedChange = { timerMinuteText = it.toString() }

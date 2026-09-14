@@ -35,6 +35,7 @@
         </provider>
         <service android:name=".FloatingTimerService" android:exported="false" />
         <receiver android:name=".CalendarAlarmReceiver" android:exported="false" />
+        <receiver android:name=".MindMapReminderReceiver" android:exported="false" />
         <activity
             android:name=".AlarmActivity"
             android:exported="false"

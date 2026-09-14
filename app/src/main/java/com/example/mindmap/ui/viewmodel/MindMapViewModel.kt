@@ -1,11 +1,14 @@
 package com.example.mindmap.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.mindmap.data.NodeEntity
 import com.example.mindmap.data.MindMapNodeSizing
 import com.example.mindmap.data.NodeRepository
+import com.example.mindmap.data.MindMapReminderScheduler
+import com.example.mindmap.data.MindMapReminderSettings
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -20,12 +23,15 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
         viewModelScope.launch {
             val roots = allNodes.value.filter { it.parentId == null && it.sectionId == sectionId }
             val nextIndex = (roots.maxOfOrNull { it.orderIndex } ?: -1) + 1
+            val size = MindMapNodeSizing.forLabel(label, isRoot = true)
             repository.insert(
                 NodeEntity(
                     sectionId = sectionId,
                     parentId = null, label = label, orderIndex = nextIndex,
                     x = x ?: 200f,
-                    y = y ?: 300f + nextIndex * 260f
+                    y = y ?: 300f + nextIndex * 260f,
+                    widthScale = size.width,
+                    heightScale = size.height
                 )
             )
         }
@@ -34,12 +40,15 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
     fun addChildNode(parent: NodeEntity, label: String) {
         viewModelScope.launch {
             val siblingCount = allNodes.value.count { it.parentId == parent.id }
+            val size = MindMapNodeSizing.forLabel(label)
             repository.insert(
                 NodeEntity(
                     sectionId = parent.sectionId,
                     parentId = parent.id, label = label,
                     orderIndex = siblingCount,
-                    x = parent.x + 360f, y = parent.y + siblingCount * 150f
+                    x = parent.x + 360f, y = parent.y + siblingCount * 150f,
+                    widthScale = size.width,
+                    heightScale = size.height
                 )
             )
             if (!parent.isExpanded) repository.update(parent.copy(isExpanded = true))
@@ -159,16 +168,108 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
     fun updateLabel(node: NodeEntity, newLabel: String) {
         viewModelScope.launch {
             val auto = MindMapNodeSizing.forLabel(newLabel, node.textSizeSp, node.parentId == null)
-            repository.update(node.copy(label = newLabel, widthScale = maxOf(node.widthScale, auto.width), heightScale = maxOf(node.heightScale, auto.height)))
+            repository.update(node.copy(label = newLabel, widthScale = auto.width, heightScale = auto.height))
         }
     }
 
-    fun toggleDone(node: NodeEntity) {
-        viewModelScope.launch { repository.update(node.copy(isDone = !node.isDone)) }
+    fun toggleDone(context: Context, node: NodeEntity) {
+        viewModelScope.launch {
+            val updatedNode = node.copy(isDone = !node.isDone)
+            repository.update(updatedNode)
+            reconcileReminderOwners(context, allNodes.value.map { if (it.id == node.id) updatedNode else it })
+        }
     }
 
-    fun deleteNode(node: NodeEntity) {
-        viewModelScope.launch { repository.delete(node) }
+    fun deleteNode(context: Context, node: NodeEntity) {
+        viewModelScope.launch {
+            MindMapReminderScheduler.cancel(context, node.id)
+            repository.delete(node)
+            reconcileReminderOwners(context, repository.getNodesNow())
+        }
+    }
+
+    fun toggleReminder(context: Context, owner: NodeEntity) {
+        viewModelScope.launch {
+            if (owner.reminderEnabled) {
+                MindMapReminderScheduler.cancel(context, owner.id)
+                repository.update(owner.copy(
+                    reminderEnabled = false,
+                    reminderQueueActive = false,
+                    reminderActiveTaskId = null,
+                    reminderEscalationMinutes = 0,
+                    reminderDeliveryCount = 0,
+                    reminderNextTriggerMillis = 0L
+                ))
+                return@launch
+            }
+            val directIncomplete = allNodes.value.asSequence()
+                .filter { it.parentId == owner.id && !it.isDone }
+                .sortedWith(compareBy<NodeEntity> { it.orderIndex }.thenBy { it.id })
+                .toList()
+            val firstTask = directIncomplete.firstOrNull()
+            if (firstTask == null) {
+                // No queue is persisted for a leaf or an already completed branch.
+                MindMapReminderScheduler.cancel(context, owner.id)
+                repository.update(owner.copy(reminderEnabled = false, reminderQueueActive = false))
+                return@launch
+            }
+            val enabled = owner.copy(
+                reminderEnabled = true,
+                reminderQueueActive = true,
+                reminderActiveTaskId = firstTask.id,
+                reminderEscalationMinutes = 0,
+                reminderDeliveryCount = 0,
+                reminderIntervalMinutes = MindMapReminderSettings.intervalMinutes(context),
+                reminderNextTriggerMillis = System.currentTimeMillis() + 10 * 60_000L
+            )
+            repository.update(enabled)
+            MindMapReminderScheduler.schedule(context, enabled)
+        }
+    }
+
+    /** Existing alarms are intentionally left in place; the new interval takes
+     * effect when that cycle schedules its next occurrence. */
+    fun updateReminderInterval(context: Context, minutes: Int) {
+        viewModelScope.launch {
+            val valid = minutes.coerceIn(1, 59 * 60 + 59)
+            MindMapReminderSettings.setIntervalMinutes(context, valid)
+            allNodes.value.filter { it.reminderEnabled && it.reminderQueueActive }
+                .forEach { repository.update(it.copy(reminderIntervalMinutes = valid)) }
+        }
+    }
+
+    /** Rebuilds only direct-child queues after completion/deletion, never grandchildren. */
+    private suspend fun reconcileReminderOwners(context: Context, snapshot: List<NodeEntity>) {
+        snapshot.filter { it.reminderEnabled }.forEach { owner ->
+            val incomplete = snapshot.asSequence()
+                .filter { it.parentId == owner.id && !it.isDone }
+                .sortedWith(compareBy<NodeEntity> { it.orderIndex }.thenBy { it.id })
+                .toList()
+            val current = incomplete.firstOrNull { it.id == owner.reminderActiveTaskId }
+            val next = current ?: incomplete.firstOrNull()
+            val updated = when {
+                next == null -> owner.copy(
+                    reminderEnabled = false,
+                    reminderQueueActive = false,
+                    reminderActiveTaskId = null,
+                    reminderNextTriggerMillis = 0L
+                )
+                current == null -> owner.copy(
+                    reminderQueueActive = true,
+                    reminderActiveTaskId = next.id,
+                    reminderEscalationMinutes = 0,
+                    reminderDeliveryCount = 0,
+                    reminderNextTriggerMillis = System.currentTimeMillis() + 10 * 60_000L
+                )
+                else -> owner
+            }
+            if (updated != owner) repository.update(updated)
+            if (!updated.reminderEnabled || !updated.reminderQueueActive) {
+                MindMapReminderScheduler.cancel(context, owner.id)
+            } else if (updated != owner) {
+                MindMapReminderScheduler.schedule(context, updated)
+            }
+        }
     }
 
     fun updatePosition(node: NodeEntity, x: Float, y: Float) {
@@ -207,10 +308,14 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
         textColorArgb: Long?
     ) {
         viewModelScope.launch {
+            val safeTextSize = textSizeSp.coerceIn(10f, 34f)
+            val auto = MindMapNodeSizing.forLabel(label, safeTextSize, node.parentId == null)
             repository.update(
                 node.copy(
                     label = label,
-                    textSizeSp = textSizeSp.coerceIn(10f, 34f),
+                    widthScale = auto.width,
+                    heightScale = auto.height,
+                    textSizeSp = safeTextSize,
                     textWeight = textWeight.coerceIn(100, 1200),
                     textColorArgb = textColorArgb
                 )
@@ -238,8 +343,8 @@ class MindMapViewModel(private val repository: NodeRepository) : ViewModel() {
                 label = nextLabel,
                 colorArgb = colorArgb,
                 textColorArgb = textColorArgb,
-                widthScale = maxOf(widthScale ?: node.widthScale, auto.width).coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
-                heightScale = maxOf(heightScale ?: node.heightScale, auto.height).coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
+                widthScale = (widthScale ?: auto.width).coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
+                heightScale = (heightScale ?: auto.height).coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE),
                 textSizeSp = nextTextSize,
                 textWeight = (textWeight ?: node.textWeight).coerceIn(100, 1200),
                 x = x ?: node.x,

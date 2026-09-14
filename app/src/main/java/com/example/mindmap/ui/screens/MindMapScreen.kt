@@ -2,6 +2,8 @@ package com.example.mindmap.ui.screens
 
 import android.content.Intent
 import android.content.ClipData
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.graphics.pdf.PdfRenderer
@@ -46,12 +48,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateMap
@@ -93,6 +99,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import com.example.mindmap.data.CollapseAnimationStyle
 import com.example.mindmap.data.CanvasViewport
 import com.example.mindmap.data.LineEntity
@@ -104,6 +111,7 @@ import com.example.mindmap.data.RootCollisionBehavior
 import com.example.mindmap.data.SectionEntity
 import com.example.mindmap.data.SectionStyle
 import com.example.mindmap.data.ThemeMode
+import com.example.mindmap.data.MindMapReminderSettings
 import com.example.mindmap.ui.theme.SoftNeutral
 import com.example.mindmap.ui.viewmodel.LineViewModel
 import com.example.mindmap.ui.viewmodel.MediaViewModel
@@ -347,6 +355,7 @@ fun MindMapApp(
     mediaRepository: com.example.mindmap.data.MediaRepository
 ) {
     val context = LocalContext.current
+    AiFloatingSettingsState.ensureLoaded(context)
     TimerRunningWatcher()
     if (com.example.mindmap.PipState.isInPictureInPicture.value) {
         PipTimerContent()
@@ -397,6 +406,11 @@ fun MindMapApp(
             openHome("timer")
             com.example.mindmap.TimerNavigationState.requestOpenTimer.value = false
         }
+    }
+
+    val reminderTargetNodeId by com.example.mindmap.ReminderNavigationState.pendingNodeId
+    LaunchedEffect(reminderTargetNodeId) {
+        if (reminderTargetNodeId != null) openHome("mind_map")
     }
 
     LaunchedEffect(
@@ -667,6 +681,38 @@ fun MindMapScreen(
     var mediaFocusNodeId by remember { mutableStateOf<Long?>(null) }
     var attachmentErrorMessage by remember { mutableStateOf<String?>(null) }
     val mediaPickerScope = rememberCoroutineScope()
+    val reminderPermissionPreferences = remember(context) {
+        context.getSharedPreferences("mind_map_reminder_settings", android.content.Context.MODE_PRIVATE)
+    }
+    val reminderNotificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    fun toggleReminderWithPermission(node: NodeEntity) {
+        val needsPermission = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (!node.reminderEnabled && needsPermission && !reminderPermissionPreferences.getBoolean("notification_permission_asked", false)) {
+            reminderPermissionPreferences.edit().putBoolean("notification_permission_asked", true).apply()
+            reminderNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        viewModel.toggleReminder(context, node)
+    }
+
+    val reminderTargetSectionId by com.example.mindmap.ReminderNavigationState.pendingSectionId
+    val reminderTargetNodeId by com.example.mindmap.ReminderNavigationState.pendingNodeId
+    LaunchedEffect(reminderTargetSectionId, reminderTargetNodeId, currentSectionId) {
+        val targetNodeId = reminderTargetNodeId ?: return@LaunchedEffect
+        val targetSectionId = reminderTargetSectionId
+        if (targetSectionId != null && currentSectionId != targetSectionId) {
+            sectionViewModel.selectSection(targetSectionId)
+            return@LaunchedEffect
+        }
+        if (allNodes.any { it.id == targetNodeId }) {
+            viewModel.expandAncestors(targetNodeId)
+            mediaFocusNodeId = targetNodeId
+            com.example.mindmap.ReminderNavigationState.pendingNodeId.value = null
+            com.example.mindmap.ReminderNavigationState.pendingSectionId.value = null
+        }
+    }
 
 
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -1261,9 +1307,10 @@ fun MindMapScreen(
                         },
                         onTapNode = onTapNode, onDoubleTapNode = onDoubleTapNode,
                         onDragNode = onDragNode, onDragEndNode = onDragEndNode,
-                        onRemove = { viewModel.deleteNode(it) },
+                        onRemove = { viewModel.deleteNode(context, it) },
                         onRemoveMedia = { mediaViewModel.delete(it.id) },
-                        onComplete = { viewModel.toggleDone(it) },
+                        onComplete = { viewModel.toggleDone(context, it) },
+                        onToggleReminder = ::toggleReminderWithPermission,
                         onCopy = onCopyNode,
                         onPaste = onPasteNode,
                         copiedNoticeForId = copiedNoticeForId,
@@ -1784,7 +1831,8 @@ fun MindMapScreen(
                 },
                 onApplySectionStyleToAllChange = { enabled ->
                     settingsViewModel.setApplySectionStyleToAll(enabled, currentSectionStyle)
-                }
+                },
+                onReminderIntervalSave = { viewModel.updateReminderInterval(context, it) }
             )
         }
 
@@ -1939,6 +1987,7 @@ fun RenderNodeTree(
     onRemove: (NodeEntity) -> Unit,
     onRemoveMedia: (MediaEntity) -> Unit,
     onComplete: (NodeEntity) -> Unit,
+    onToggleReminder: (NodeEntity) -> Unit,
     onCopy: (NodeEntity) -> Unit,
     onPaste: (NodeEntity, Boolean) -> Unit,
     copiedNoticeForId: Long?,
@@ -2074,6 +2123,18 @@ fun RenderNodeTree(
                         onComplete(node)
                         onSetMenu(null)
                     })
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (node.reminderEnabled) "Reminder   ✓" else "Reminder",
+                                color = if (node.reminderEnabled) AccentCyan else themeColors.textPrimary
+                            )
+                        },
+                        // Keep this action panel open after a toggle. The updated
+                        // node state then immediately shows the visible checkmark,
+                        // instead of dismissing the only confirmation to the user.
+                        onClick = { onToggleReminder(node) }
+                    )
                     DropdownMenuItem(text = { Text("Back") }, onClick = { onShowActionOptions(null) })
                 } else {
                     DropdownMenuItem(text = { Text(if (isRoot) "Add Task" else "Add Sub-task") }, onClick = { onAddChild(node); onSetMenu(null) })
@@ -2109,7 +2170,7 @@ fun RenderNodeTree(
                 onSetMenu = onSetMenu,
                 onTapNode = onTapNode, onDoubleTapNode = onDoubleTapNode,
                 onDragNode = onDragNode, onDragEndNode = onDragEndNode,
-                onRemove = onRemove, onRemoveMedia = onRemoveMedia, onComplete = onComplete, onCopy = onCopy, onPaste = onPaste,
+                onRemove = onRemove, onRemoveMedia = onRemoveMedia, onComplete = onComplete, onToggleReminder = onToggleReminder, onCopy = onCopy, onPaste = onPaste,
                 copiedNoticeForId = copiedNoticeForId, copiedSourceNodeIds = copiedSourceNodeIds, onAddChild = onAddChild,
                 onAddMedia = onAddMedia, onReplaceMedia = onReplaceMedia, onOpenMedia = onOpenMedia,
                 inlineTextEditingNodeId = inlineTextEditingNodeId, onAddText = onAddText, onSubmitText = onSubmitText,
@@ -2180,13 +2241,9 @@ fun NodeBox(
     }
     val baseBoxWidth = if (media?.type == MediaType.FILE) 126.dp else if (isRoot) 86.dp else 70.dp
     val baseBoxHeight = if (media != null) 58.dp else if (isRoot) 42.dp else 32.dp
-    // Keep manual dimensions, but never let a label be clipped simply because
-    // it was produced by AI or pasted from a longer note.
-    val autoSize = remember(node.label, node.textSizeSp, isRoot) {
-        MindMapNodeSizing.forLabel(node.label, node.textSizeSp, isRoot)
-    }
-    val boxWidth = baseBoxWidth * maxOf(node.widthScale, autoSize.width)
-    val boxHeight = baseBoxHeight * maxOf(node.heightScale, autoSize.height)
+    // Saved content-aware scales must be allowed to shrink as well as grow.
+    val boxWidth = baseBoxWidth * node.widthScale.coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE)
+    val boxHeight = baseBoxHeight * node.heightScale.coerceIn(MindMapNodeSizing.MIN_SCALE, MindMapNodeSizing.MAX_SCALE)
     val textColor = if (node.isDone) {
         completionColor
     } else {
@@ -5389,8 +5446,11 @@ private fun SettingsDialog(
     onSectionBoxColorReset: () -> Unit,
     onSectionCompletionColorChange: (Long) -> Unit,
     onSectionCompletionColorReset: () -> Unit,
-    onApplySectionStyleToAllChange: (Boolean) -> Unit
+    onApplySectionStyleToAllChange: (Boolean) -> Unit,
+    onReminderIntervalSave: (Int) -> Unit
 ) {
+    val context = LocalContext.current
+    AiFloatingSettingsState.ensureLoaded(context)
     var showGlowColorPicker by remember { mutableStateOf(false) }
     var showBackgroundColorPicker by remember { mutableStateOf(false) }
     var showTextColorPicker by remember { mutableStateOf(false) }
@@ -5413,25 +5473,49 @@ private fun SettingsDialog(
         Brush.linearGradient(listOf(GlassDark1.copy(alpha = 0.96f), GlassDark2.copy(alpha = 0.96f)))
     }
     val dialogBorderColor = if (isWhiteTheme) Color(0x22000000) else Color.White.copy(alpha = 0.15f)
+    var savedReminderMinutes by remember { mutableIntStateOf(MindMapReminderSettings.intervalMinutes(context)) }
+    var reminderHours by remember { mutableIntStateOf(savedReminderMinutes / 60) }
+    var reminderMinutes by remember { mutableIntStateOf(savedReminderMinutes % 60) }
+    val reminderDraftMinutes = reminderHours * 60 + reminderMinutes
+    val reminderDirty = reminderDraftMinutes in 1..(59 * 60 + 59) && reminderDraftMinutes != savedReminderMinutes
 
     Dialog(onDismissRequest = { if (!isClosing) onDismiss() }) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .shadow(24.dp, RoundedCornerShape(30.dp))
                 .graphicsLayer {
                     alpha = closeProgress
                     scaleX = 0.96f + closeProgress * 0.04f
                     scaleY = 0.96f + closeProgress * 0.04f
                 }
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(30.dp))
                 .background(dialogBrush)
-                .border(1.dp, dialogBorderColor, RoundedCornerShape(24.dp))
-                .padding(24.dp)
+                .border(1.dp, dialogBorderColor.copy(alpha = 0.78f), RoundedCornerShape(30.dp))
+                .padding(22.dp)
         ) {
             Column(modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
-                Text("Settings", color = dialogTextColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Mind map settings", color = dialogTextColor, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text("Shape the canvas around the way you think", color = dialogMutedColor, fontSize = 12.sp)
+                    }
+                    Text(
+                        "CANVAS",
+                        color = AccentCyan,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AccentCyan.copy(alpha = 0.12f))
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    )
+                }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(20.dp))
+                Text("CANVAS INTERACTION", color = AccentCyan.copy(alpha = 0.88f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Pinch zoom", color = dialogTextColor, fontSize = 15.sp)
@@ -5503,7 +5587,7 @@ private fun SettingsDialog(
                 }
 
                 Spacer(Modifier.height(20.dp))
-                Text("Theme", color = dialogMutedColor, fontSize = 14.sp)
+                Text("APPEARANCE", color = AccentCyan.copy(alpha = 0.88f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Row {
                     listOf(ThemeMode.DEFAULT to "Default", ThemeMode.WHITE to "White").forEach { (mode, label) ->
@@ -5521,7 +5605,7 @@ private fun SettingsDialog(
                 }
 
                 Spacer(Modifier.height(20.dp))
-                Text("Glow intensity", color = dialogMutedColor, fontSize = 14.sp)
+                Text("GLOW INTENSITY", color = dialogMutedColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 Box(
                     Modifier
@@ -5546,7 +5630,78 @@ private fun SettingsDialog(
                     )
                 }
 
+                Spacer(Modifier.height(18.dp))
+                Text("AI ASSISTANT", color = AccentCyan.copy(alpha = 0.88f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("AI Icon", color = dialogTextColor, fontSize = 15.sp)
+                        Text("Show the movable AI button on Mind Map", color = dialogMutedColor, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = AiFloatingSettingsState.enabled,
+                        onCheckedChange = { AiFloatingSettingsState.setEnabled(context, it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = AccentCyan, checkedTrackColor = AccentCyan.copy(alpha = 0.3f))
+                    )
+                }
+
+                Spacer(Modifier.height(18.dp))
+                Text("REMINDER TIMER", color = AccentCyan.copy(alpha = 0.88f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("First reminder comes after 10 minutes, then repeats at this interval", color = dialogMutedColor, fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.White.copy(alpha = 0.055f))
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    ReminderWheel("HOURS", reminderHours, { reminderHours = it }, Modifier.weight(1f))
+                    // The label makes a wheel column taller than its actual picker
+                    // viewport.  Align this fixed-height box to the bottom of the
+                    // row so the colon's centre is the picker centre, not the
+                    // combined label + picker centre.
+                    Box(
+                        modifier = Modifier
+                            .width(16.dp)
+                            .height(84.dp)
+                            .align(Alignment.Bottom),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(":", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    }
+                    ReminderWheel("MINUTES", reminderMinutes, { reminderMinutes = it }, Modifier.weight(1f))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(
+                            enabled = reminderDirty,
+                            onClick = {
+                                MindMapReminderSettings.setIntervalMinutes(context, reminderDraftMinutes)
+                                savedReminderMinutes = reminderDraftMinutes
+                                onReminderIntervalSave(reminderDraftMinutes)
+                            }
+                        ) {
+                            Icon(Icons.Default.Check, "Save reminder timer", tint = if (reminderDirty) AccentCyan else dialogMutedColor.copy(alpha = 0.35f))
+                        }
+                        IconButton(onClick = {
+                            reminderHours = 0
+                            reminderMinutes = MindMapReminderSettings.DefaultIntervalMinutes
+                            MindMapReminderSettings.setIntervalMinutes(context, MindMapReminderSettings.DefaultIntervalMinutes)
+                            savedReminderMinutes = MindMapReminderSettings.DefaultIntervalMinutes
+                            onReminderIntervalSave(MindMapReminderSettings.DefaultIntervalMinutes)
+                        }) {
+                            Icon(Icons.Default.Refresh, "Reset reminder timer", tint = dialogMutedColor)
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(4.dp))
+                Text("SECTION STYLE", color = AccentCyan.copy(alpha = 0.88f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Media", color = dialogTextColor, fontSize = 15.sp)
@@ -5632,7 +5787,7 @@ private fun SettingsDialog(
                 }
 
                 Spacer(Modifier.height(20.dp))
-                Text("Collapse animation", color = dialogMutedColor, fontSize = 14.sp)
+                Text("COLLAPSE MOTION", color = AccentCyan.copy(alpha = 0.88f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -5733,6 +5888,25 @@ private fun SettingsDialog(
             onSelect = { argb -> onSectionCompletionColorChange(argb); showCompletionColorPicker = false },
             allowReset = false,
             onReset = {}
+        )
+    }
+}
+
+@Composable
+private fun ReminderWheel(label: String, selected: Int, onSelectedChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
+        Text(label, color = Color.White.copy(alpha = 0.54f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        MiniWheelPicker(
+            range = 0..59,
+            selected = selected,
+            onSelectedChange = onSelectedChange,
+            itemHeight = 28.dp,
+            visibleCount = 3,
+            columnWidth = 52.dp,
+            selectedColor = Color.White,
+            unselectedColor = Color.White.copy(alpha = 0.42f),
+            selectedFontSize = 16,
+            unselectedFontSize = 13
         )
     }
 }
@@ -6653,18 +6827,11 @@ private fun PdfLibraryHomeDialog(
                         enter = fadeIn(tween(200)) + expandVertically(tween(220)),
                         exit = fadeOut(tween(160)) + shrinkVertically(tween(180))
                     ) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color(0xEE17212E),
-                            contentColor = Color.White,
-                            shadowElevation = 10.dp,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
                                 // A fixed-width badge keeps the action row stable while its
                                 // count animates, including on small devices.
                                 Row(
@@ -6689,22 +6856,11 @@ private fun PdfLibraryHomeDialog(
                                     ) { count ->
                                         Text(count.toString(), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
                                     }
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("selected", fontSize = 12.sp, color = Color.White.copy(alpha = 0.72f), maxLines = 1, softWrap = false)
                                 }
-                                Spacer(Modifier.width(6.dp))
-                                // Keep the action row horizontal: it scrolls only when a very
-                                // narrow screen cannot fit every compact white action chip.
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())
-                                ) {
-                                    PdfSelectionToolbarAction("Remove", selectedPdfPaths.isNotEmpty()) { removeSelectionDialog = true }
-                                    PdfSelectionToolbarAction("Add section", selectedPdfPaths.isNotEmpty()) { showSectionTargetDialog = true }
-                                    PdfSelectionToolbarAction("Share", selectedPdfPaths.isNotEmpty()) { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }
-                                    PdfSelectionToolbarAction("Cancel") { selectionMode = false; selectedPdfPaths = emptySet() }
-                                }
-                            }
+                            PdfSelectionToolbarAction("Remove", selectedPdfPaths.isNotEmpty()) { removeSelectionDialog = true }
+                            PdfSelectionToolbarAction("Add section", selectedPdfPaths.isNotEmpty()) { showSectionTargetDialog = true }
+                            PdfSelectionToolbarAction("Share", selectedPdfPaths.isNotEmpty()) { sharePdfFiles(context, files.filter { it.file.path in selectedPdfPaths }) }
+                            PdfSelectionToolbarAction("Cancel") { selectionMode = false; selectedPdfPaths = emptySet() }
                         }
                     }
                     if (!hasAllFilesAccess) {
@@ -7233,15 +7389,36 @@ private fun PdfLibrarySettingsDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
-            shape = RoundedCornerShape(24.dp),
-            color = GlassDark1,
+            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp).shadow(24.dp, RoundedCornerShape(30.dp)),
+            shape = RoundedCornerShape(30.dp),
+            color = Color.Transparent,
             contentColor = dialogText
         ) {
-            Column(modifier = Modifier.padding(22.dp).verticalScroll(rememberScrollState())) {
-                Text("Files settings", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Box(
+                modifier = Modifier
+                    .background(Brush.verticalGradient(listOf(Color(0xFF263544), GlassDark1, Color(0xFF0D121A))))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(30.dp))
+            ) {
+                Column(modifier = Modifier.padding(22.dp).verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Files settings", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text("Make your PDF library feel like your own", color = dialogMuted, fontSize = 12.sp)
+                    }
+                    Text(
+                        "PDF LIBRARY",
+                        color = AccentCyan,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AccentCyan.copy(alpha = 0.13f))
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
-                Text("Only PDF Files home changes", color = dialogMuted, fontSize = 13.sp)
+                Text("Changes apply only to the PDF Files home", color = dialogMuted, fontSize = 13.sp)
                 Spacer(Modifier.height(18.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -7249,19 +7426,32 @@ private fun PdfLibrarySettingsDialog(
                         Text("Theme", fontWeight = FontWeight.SemiBold)
                         Text("Default or white Files home", color = dialogMuted, fontSize = 12.sp)
                     }
-                    TextButton(onClick = { onStyleChange(PdfLibraryStyle()) }) {
-                        Text("Default", color = AccentCyan)
+                    val isDefaultTheme = style.backgroundArgb == null && style.textArgb == null
+                    val isWhiteTheme = style.backgroundArgb == 0xFFF4F4F8
+                    TextButton(
+                        onClick = { onStyleChange(PdfLibraryStyle()) },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isDefaultTheme) AccentCyan.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f))
+                    ) {
+                        Text("Default", color = if (isDefaultTheme) AccentCyan else dialogMuted)
                     }
-                    TextButton(onClick = {
-                        onStyleChange(
-                            PdfLibraryStyle(
-                                backgroundArgb = 0xFFF4F4F8,
-                                textArgb = 0xFF1A1A1A,
-                                sectionBackgroundArgb = 0xFFFFFFFF,
-                                sectionTextArgb = 0xFF1A1A1A
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(
+                        onClick = {
+                            onStyleChange(
+                                PdfLibraryStyle(
+                                    backgroundArgb = 0xFFF4F4F8,
+                                    textArgb = 0xFF1A1A1A,
+                                    sectionBackgroundArgb = 0xFFFFFFFF,
+                                    sectionTextArgb = 0xFF1A1A1A
+                                )
                             )
-                        )
-                    }) { Text("White", color = AccentCyan) }
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isWhiteTheme) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f))
+                    ) { Text("White", color = if (isWhiteTheme) Color.White else dialogMuted) }
                 }
 
                 Spacer(Modifier.height(14.dp))
@@ -7297,6 +7487,7 @@ private fun PdfLibrarySettingsDialog(
                 Spacer(Modifier.height(18.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End).height(48.dp)) {
                     Text("Done", color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
                 }
             }
         }
@@ -7336,7 +7527,15 @@ private fun PdfLibraryColorRow(
     onDefault: () -> Unit,
     onPick: () -> Unit
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.White.copy(alpha = 0.055f))
+            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
+            .padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
+    ) {
         Text(label, modifier = Modifier.weight(1f), fontSize = 14.sp)
         TextButton(onClick = onDefault, modifier = Modifier.width(80.dp)) {
             Text("Default", color = AccentCyan, fontSize = 12.sp)

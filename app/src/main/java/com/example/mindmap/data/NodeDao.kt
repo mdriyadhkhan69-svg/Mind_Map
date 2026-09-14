@@ -8,6 +8,9 @@ interface NodeDao {
     @Query("SELECT * FROM nodes")
     fun getAllNodes(): Flow<List<NodeEntity>>
 
+    @Query("SELECT * FROM nodes")
+    suspend fun getNodesNow(): List<NodeEntity>
+
     @Insert
     suspend fun insert(node: NodeEntity): Long
 

@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NodeEntity::class, SectionEntity::class, LineEntity::class, MediaEntity::class, CalendarEventEntity::class], version = 12)
+@Database(entities = [NodeEntity::class, SectionEntity::class, LineEntity::class, MediaEntity::class, CalendarEventEntity::class], version = 13)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): NodeDao
     abstract fun sectionDao(): SectionDao
@@ -86,6 +86,18 @@ abstract class AppDatabase : RoomDatabase() {
                             "`isCompleted` INTEGER NOT NULL, " +
                             "`createdAtMillis` INTEGER NOT NULL)"
                 )
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderEnabled INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderActiveTaskId INTEGER")
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderEscalationMinutes INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderDeliveryCount INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderIntervalMinutes INTEGER NOT NULL DEFAULT 30")
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderNextTriggerMillis INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE nodes ADD COLUMN reminderQueueActive INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

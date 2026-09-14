@@ -322,20 +322,22 @@ internal enum class ClockFace {
 }
 
 private fun clockFaceLabel(face: ClockFace): String = when (face) {
-    ClockFace.CLASSIC -> "Default"
-    ClockFace.MINIMAL_PREMIUM -> "Minimal Premium"
-    ClockFace.DARK_ELEGANT -> "Dark Elegant"
-    ClockFace.GLASS_GLOSSY -> "Glass"
-    ClockFace.NEON -> "Neon"
-    ClockFace.DIGITAL_FUTURISTIC -> "Futuristic"
-    ClockFace.CLEAN_PRODUCTIVITY -> "Productivity"
-    ClockFace.SOFT_STUDY -> "Soft Study"
-    ClockFace.RETRO_DIGITAL -> "Retro"
-    ClockFace.MODERN_DASHBOARD -> "Dashboard"
-    ClockFace.FLIP_BOARD_INSPIRED -> "Flip Board"
-    ClockFace.MONOCHROME -> "Mono B/W"
-    ClockFace.AMBIENT -> "Ambient"
-    ClockFace.STARLIGHT_PREMIUM -> "Starlight Premium"
+    ClockFace.CLASSIC -> "Future Drive"
+    ClockFace.MINIMAL_PREMIUM -> "Cyber City"
+    ClockFace.DARK_ELEGANT -> "Study Desk"
+    ClockFace.GLASS_GLOSSY -> "Cosmic"
+    ClockFace.NEON -> "Rainy Window"
+    ClockFace.DIGITAL_FUTURISTIC -> "Ocean Depth"
+    ClockFace.CLEAN_PRODUCTIVITY -> "Mechanical"
+    ClockFace.SOFT_STUDY -> "Minimal Luxury"
+    ClockFace.RETRO_DIGITAL -> "Forest Light"
+    ClockFace.MODERN_DASHBOARD -> "Night City"
+    ClockFace.FLIP_BOARD_INSPIRED -> "Data Grid"
+    ClockFace.MONOCHROME -> "Sunrise"
+    ClockFace.AMBIENT -> "Library"
+    // This is the existing final Star Light face. It intentionally retains its
+    // prior label, style and starfield renderer without any redesign.
+    ClockFace.STARLIGHT_PREMIUM -> "Star Light"
 }
 
 private data class ClockFaceStyle(
@@ -349,133 +351,126 @@ private data class ClockFaceStyle(
     val labelColor: Color,
     val glowColor: Color,
     val glowAlpha: Float,
+    val digitWeight: FontWeight = FontWeight.Black,
     val splitDigitGapDp: Dp = 0.dp,
     val hasCutMask: Boolean = false
 )
 
 private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
     ClockFace.CLASSIC -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(TimerBg, TimerBg)),
-        cardBackground = TimerCardBg, digitColor = TimerDigit, cornerRadius = 34.dp,
-        borderColor = Color.Transparent, borderWidth = 0.dp,
-        dividerColor = Color.Black.copy(alpha = 0.75f), labelColor = Color.White.copy(alpha = 0.78f),
-        glowColor = Color.Transparent, glowAlpha = 0f
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF050A10), Color(0xFF28374A), Color(0xFF080C12))),
+        cardBackground = Color(0xE6121E29), digitColor = Color(0xFFF1FAFF), cornerRadius = 12.dp,
+        borderColor = Color(0xFF69D6FF).copy(alpha = 0.55f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF071018), labelColor = Color(0xFF9CDFFF),
+        glowColor = Color(0xFF45B8FF), glowAlpha = 0.14f, digitWeight = FontWeight.Black,
+        splitDigitGapDp = 5.dp, hasCutMask = true
     )
     ClockFace.MINIMAL_PREMIUM -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF121214), Color(0xFF1A1A1D))),
-        cardBackground = Color(0xFF1C1C1F), digitColor = Color(0xFFF5F5F0), cornerRadius = 18.dp,
-        borderColor = Color.White.copy(alpha = 0.06f), borderWidth = 1.dp,
-        dividerColor = Color.Black.copy(alpha = 0.55f), labelColor = Color.White.copy(alpha = 0.45f),
-        glowColor = Color.Transparent, glowAlpha = 0f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF080512), Color(0xFF29113A), Color(0xFF07141E))),
+        cardBackground = Color(0xC1122030), digitColor = Color(0xFFC9F8FF), cornerRadius = 20.dp,
+        borderColor = Color(0xFF66E2FF).copy(alpha = 0.45f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF08121C), labelColor = Color(0xFFD9B8FF),
+        glowColor = Color(0xFF7DEBFF), glowAlpha = 0.22f, digitWeight = FontWeight.Light,
+        splitDigitGapDp = 5.dp,
         hasCutMask = true
     )
     ClockFace.DARK_ELEGANT -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF0A0A12), Color(0xFF14101F))),
-        cardBackground = Color(0xFF17131F), digitColor = Color(0xFFE8D9B5), cornerRadius = 10.dp,
-        borderColor = Color(0xFFE8D9B5).copy(alpha = 0.25f), borderWidth = 1.dp,
-        dividerColor = Color.Black.copy(alpha = 0.55f), labelColor = Color(0xFFE8D9B5).copy(alpha = 0.55f),
-        glowColor = Color(0xFFE8D9B5), glowAlpha = 0.12f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF26180D), Color(0xFF72512A), Color(0xFF19120D))),
+        cardBackground = Color(0xEFFFF4E6), digitColor = Color(0xFF3C2717), cornerRadius = 8.dp,
+        borderColor = Color(0xFFE7C789).copy(alpha = 0.78f), borderWidth = 1.dp,
+        dividerColor = Color(0xFFD8C6A8), labelColor = Color(0xFFFFEDC0),
+        glowColor = Color(0xFFFFCA73), glowAlpha = 0.10f, digitWeight = FontWeight.SemiBold,
+        splitDigitGapDp = 3.dp,
         hasCutMask = true
     )
     ClockFace.GLASS_GLOSSY -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF1B2436), Color(0xFF0E141F))),
-        cardBackground = Color.White.copy(alpha = 0.08f), digitColor = Color.White, cornerRadius = 28.dp,
-        borderColor = Color.White.copy(alpha = 0.28f), borderWidth = 1.2.dp,
-        dividerColor = Color(0xFF11161F), labelColor = Color.White.copy(alpha = 0.7f),
-        glowColor = Color.White, glowAlpha = 0.10f,
+        screenBackground = Brush.radialGradient(listOf(Color(0xFF292560), Color(0xFF071022), Color(0xFF02040C))),
+        cardBackground = Color(0xA21C2A60), digitColor = Color(0xFFF0F6FF), cornerRadius = 30.dp,
+        borderColor = Color(0xFFB7C9FF).copy(alpha = 0.58f), borderWidth = 1.2.dp,
+        dividerColor = Color(0xFF10173A), labelColor = Color(0xFFC9D5FF),
+        glowColor = Color(0xFF9AAEFF), glowAlpha = 0.22f, digitWeight = FontWeight.Medium,
         splitDigitGapDp = 7.dp,
         hasCutMask = true
     )
     ClockFace.NEON -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF07050F), Color(0xFF120A1F))),
-        cardBackground = Color(0xFF0D0716), digitColor = Color(0xFF64FFDA), cornerRadius = 14.dp,
-        borderColor = Color(0xFF64FFDA).copy(alpha = 0.7f), borderWidth = 1.4.dp,
-        dividerColor = Color(0xFF0D0716), labelColor = Color(0xFFBB86FC),
-        glowColor = Color(0xFF64FFDA), glowAlpha = 0.35f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF07121D), Color(0xFF2E435B), Color(0xFF0A1118))),
+        cardBackground = Color(0x8FCAE7FA), digitColor = Color(0xFFF4FBFF), cornerRadius = 22.dp,
+        borderColor = Color.White.copy(alpha = 0.42f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF618AA3), labelColor = Color(0xFFD2EDFF),
+        glowColor = Color(0xFFB8E9FF), glowAlpha = 0.16f, digitWeight = FontWeight.Medium,
+        splitDigitGapDp = 4.dp,
         hasCutMask = true
     )
     ClockFace.DIGITAL_FUTURISTIC -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF03080C), Color(0xFF061620))),
-        cardBackground = Color(0xFF071319), digitColor = Color(0xFF00E5FF), cornerRadius = 4.dp,
-        borderColor = Color(0xFF00E5FF).copy(alpha = 0.45f), borderWidth = 1.dp,
-        dividerColor = Color(0xFF071319), labelColor = Color(0xFF00E5FF).copy(alpha = 0.6f),
-        glowColor = Color(0xFF00E5FF), glowAlpha = 0.18f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF001B31), Color(0xFF064B74), Color(0xFF001824))),
+        cardBackground = Color(0xA10B4568), digitColor = Color(0xFFE0FBFF), cornerRadius = 26.dp,
+        borderColor = Color(0xFF86E9FF).copy(alpha = 0.48f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF063B58), labelColor = Color(0xFF9CEBFF),
+        glowColor = Color(0xFF6FD4FF), glowAlpha = 0.20f, digitWeight = FontWeight.Bold,
+        splitDigitGapDp = 5.dp,
         hasCutMask = true
     )
     ClockFace.CLEAN_PRODUCTIVITY -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFFF4F4F8), Color(0xFFE9E9F2))),
-        cardBackground = Color.White, digitColor = Color(0xFF1A1A1A), cornerRadius = 20.dp,
-        borderColor = Color.Black.copy(alpha = 0.08f), borderWidth = 1.dp,
-        dividerColor = Color.White, labelColor = Color(0xFF6B6B76),
-        glowColor = Color.Transparent, glowAlpha = 0f,
-        splitDigitGapDp = 7.dp,
-        hasCutMask = true
-    )
-    ClockFace.CLEAN_PRODUCTIVITY -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFFF4F4F8), Color(0xFFE9E9F2))),
-        cardBackground = Color.White, digitColor = Color(0xFF1A1A1A), cornerRadius = 20.dp,
-        borderColor = Color.Black.copy(alpha = 0.08f), borderWidth = 1.dp,
-        dividerColor = Color.White, labelColor = Color(0xFF6B6B76),
-        glowColor = Color.Transparent, glowAlpha = 0f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF121519), Color(0xFF464D54), Color(0xFF141719))),
+        cardBackground = Color(0xFF30363A), digitColor = Color(0xFFF4F0E7), cornerRadius = 6.dp,
+        borderColor = Color(0xFFBFC5C5).copy(alpha = 0.65f), borderWidth = 1.4.dp,
+        dividerColor = Color(0xFF171A1B), labelColor = Color(0xFFE0BE80),
+        glowColor = Color(0xFFFFD78A), glowAlpha = 0.08f, digitWeight = FontWeight.Black,
+        splitDigitGapDp = 3.dp,
         hasCutMask = true
     )
     ClockFace.SOFT_STUDY -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF15181C), Color(0xFF1B2420))),
-        cardBackground = Color(0xFF1E2621), digitColor = Color(0xFFBFE3D0), cornerRadius = 24.dp,
-        borderColor = Color(0xFFBFE3D0).copy(alpha = 0.14f), borderWidth = 1.dp,
-        dividerColor = Color(0xFF1E2621), labelColor = Color(0xFFBFE3D0).copy(alpha = 0.55f),
-        glowColor = Color(0xFF6FCF97), glowAlpha = 0.08f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF0C0D10), Color(0xFF27242A), Color(0xFF0C0D10))),
+        cardBackground = Color(0xE51D1D20), digitColor = Color(0xFFF6F0E3), cornerRadius = 18.dp,
+        borderColor = Color(0xFFD2B47B).copy(alpha = 0.42f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF111114), labelColor = Color(0xFFD8B973),
+        glowColor = Color(0xFFFFD995), glowAlpha = 0.08f, digitWeight = FontWeight.Light,
+        splitDigitGapDp = 8.dp,
         hasCutMask = true
     )
     ClockFace.RETRO_DIGITAL -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF1A0F08), Color(0xFF2A150A))),
-        cardBackground = Color(0xFF241207), digitColor = Color(0xFFFF8C32), cornerRadius = 6.dp,
-        borderColor = Color(0xFFFF8C32).copy(alpha = 0.4f), borderWidth = 1.dp,
-        dividerColor = Color(0xFF241207), labelColor = Color(0xFFFF8C32).copy(alpha = 0.6f),
-        glowColor = Color(0xFFFF8C32), glowAlpha = 0.15f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF112016), Color(0xFF42623B), Color(0xFF0B1710))),
+        cardBackground = Color(0xA6133320), digitColor = Color(0xFFF1FFE5), cornerRadius = 32.dp,
+        borderColor = Color(0xFFCDEFA8).copy(alpha = 0.36f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF1A4225), labelColor = Color(0xFFE3FFC2),
+        glowColor = Color(0xFFE0FF87), glowAlpha = 0.10f, digitWeight = FontWeight.Medium,
+        splitDigitGapDp = 6.dp,
         hasCutMask = true
     )
     ClockFace.MODERN_DASHBOARD -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF10131C), Color(0xFF171B27))),
-        cardBackground = Color(0xFF1D212E), digitColor = Color.White, cornerRadius = 16.dp,
-        borderColor = Color(0xFF3B82F6).copy(alpha = 0.35f), borderWidth = 1.2.dp,
-        dividerColor = Color(0xFF1D212E), labelColor = Color(0xFF3B82F6),
-        glowColor = Color(0xFF3B82F6), glowAlpha = 0.12f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF07111E), Color(0xFF192845), Color(0xFF090C18))),
+        cardBackground = Color(0xD0152639), digitColor = Color(0xFFF3F7FF), cornerRadius = 14.dp,
+        borderColor = Color(0xFF87BAFF).copy(alpha = 0.42f), borderWidth = 1.2.dp,
+        dividerColor = Color(0xFF0C1827), labelColor = Color(0xFF9CCBFF),
+        glowColor = Color(0xFF77AEFF), glowAlpha = 0.17f, digitWeight = FontWeight.Black,
+        splitDigitGapDp = 4.dp,
         hasCutMask = true
     )
     ClockFace.FLIP_BOARD_INSPIRED -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color(0xFF06060A), Color(0xFF0C0C12))),
-        cardBackground = Color(0xFF17171D), digitColor = Color(0xFFF2F2F2), cornerRadius = 8.dp,
-        borderColor = Color.Black, borderWidth = 2.dp,
-        dividerColor = Color(0xFF17171D), labelColor = Color.White.copy(alpha = 0.5f),
-        glowColor = Color.Transparent, glowAlpha = 0f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF050D11), Color(0xFF0D2731), Color(0xFF04080B))),
+        cardBackground = Color(0xE5071B22), digitColor = Color(0xFF8AF9FF), cornerRadius = 4.dp,
+        borderColor = Color(0xFF5CE9F6).copy(alpha = 0.5f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF041015), labelColor = Color(0xFF85DAE2),
+        glowColor = Color(0xFF56F1FF), glowAlpha = 0.24f, digitWeight = FontWeight.Medium,
+        splitDigitGapDp = 3.dp,
         hasCutMask = true
     )
     ClockFace.MONOCHROME -> ClockFaceStyle(
-        screenBackground = Brush.linearGradient(listOf(Color.Black, Color(0xFF0A0A0A))),
-        cardBackground = Color(0xFF0F0F0F), digitColor = Color.White, cornerRadius = 0.dp,
-        borderColor = Color.White.copy(alpha = 0.9f), borderWidth = 1.5.dp,
-        dividerColor = Color(0xFF0F0F0F), labelColor = Color.White.copy(alpha = 0.6f),
-        glowColor = Color.Transparent, glowAlpha = 0f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFFFFC477), Color(0xFFF27959), Color(0xFF6D3E78))),
+        cardBackground = Color(0xAFFFF5E6), digitColor = Color(0xFF40213D), cornerRadius = 28.dp,
+        borderColor = Color.White.copy(alpha = 0.58f), borderWidth = 1.2.dp,
+        dividerColor = Color(0xFFEDB179), labelColor = Color(0xFFFFF0D5),
+        glowColor = Color(0xFFFFE4AB), glowAlpha = 0.16f, digitWeight = FontWeight.SemiBold,
+        splitDigitGapDp = 5.dp,
         hasCutMask = true
     )
     ClockFace.AMBIENT -> ClockFaceStyle(
-        screenBackground = Brush.radialGradient(listOf(Color(0xFF1E2A3A), Color(0xFF090D14))),
-        cardBackground = Color(0xFF141B26).copy(alpha = 0.8f), digitColor = Color(0xFFCFE0F5), cornerRadius = 40.dp,
-        borderColor = Color(0xFFCFE0F5).copy(alpha = 0.1f), borderWidth = 1.dp,
-        dividerColor = Color(0xFF101722), labelColor = Color(0xFFCFE0F5).copy(alpha = 0.5f),
-        glowColor = Color(0xFF6FA8DC), glowAlpha = 0.2f,
-        splitDigitGapDp = 7.dp,
+        screenBackground = Brush.linearGradient(listOf(Color(0xFF21150E), Color(0xFF593C23), Color(0xFF17100C))),
+        cardBackground = Color(0xD82A1B13), digitColor = Color(0xFFFFE9B6), cornerRadius = 12.dp,
+        borderColor = Color(0xFFDBB167).copy(alpha = 0.46f), borderWidth = 1.dp,
+        dividerColor = Color(0xFF1C100A), labelColor = Color(0xFFFFD88A),
+        glowColor = Color(0xFFFFC666), glowAlpha = 0.13f, digitWeight = FontWeight.SemiBold,
+        splitDigitGapDp = 4.dp,
         hasCutMask = true
     )
     ClockFace.STARLIGHT_PREMIUM -> ClockFaceStyle(
@@ -1202,6 +1197,15 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
         val legSwing = sway * 5f
         val legLift = if (reaction == CharacterReaction.JUMP) bounce * 10f else 0f
 
+        // A soft contact shadow anchors the character to the scene; it narrows
+        // while she jumps, which makes the bounce feel grounded rather than floaty.
+        val shadowScale = 1f - (legLift / 36f).coerceIn(0f, 0.45f)
+        drawOval(
+            color = Color(0xFF06152C).copy(alpha = 0.42f),
+            topLeft = Offset(w * (0.50f - 0.24f * shadowScale), h * 0.945f),
+            size = Size(w * 0.48f * shadowScale, h * 0.035f)
+        )
+
         // twinkling sparkle stars around her
         drawSparkleStar(Offset(w * 0.14f, h * 0.18f), w * 0.05f, Color(0xFFFFF3C4), twinkle)
         drawSparkleStar(Offset(w * 0.86f, h * 0.30f), w * 0.035f, Color(0xFFFFF3C4), twinkle2)
@@ -1263,6 +1267,22 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
             size = Size(w * 0.42f, h * 0.52f),
             cornerRadius = CornerRadius(w * 0.13f)
         )
+        // Knit seam and a tiny highlight give the sweater depth without making
+        // the illustration busy on smaller phones.
+        drawLine(
+            color = Color.White.copy(alpha = 0.24f),
+            start = Offset(w * 0.34f, h * 0.31f),
+            end = Offset(w * 0.66f, h * 0.31f),
+            strokeWidth = w * 0.012f,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = sweaterShadow.copy(alpha = 0.7f),
+            start = Offset(w * 0.50f, h * 0.34f),
+            end = Offset(w * 0.50f, h * 0.64f),
+            strokeWidth = w * 0.010f,
+            cap = StrokeCap.Round
+        )
         drawRoundRect(
             color = hemColor,
             topLeft = Offset(w * 0.29f, h * 0.66f),
@@ -1311,6 +1331,11 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
 
         // head
         drawCircle(color = skinColor, radius = headRadius, center = headCenter)
+        drawCircle(
+            color = Color.White.copy(alpha = 0.22f),
+            radius = headRadius * 0.44f,
+            center = Offset(headCenter.x - headRadius * 0.30f, headCenter.y - headRadius * 0.30f)
+        )
 
         // hair top / bangs
         drawArc(
@@ -1335,6 +1360,15 @@ private fun ChubbyCelebrationCharacter(reaction: CharacterReaction) {
                 close()
             },
             color = hairColor
+        )
+        drawArc(
+            color = Color.White.copy(alpha = 0.38f),
+            startAngle = 205f,
+            sweepAngle = 55f,
+            useCenter = false,
+            topLeft = Offset(headCenter.x - headRadius * 0.82f, headCenter.y - headRadius * 0.98f),
+            size = Size(headRadius * 1.22f, headRadius * 0.90f),
+            style = Stroke(width = w * 0.018f, cap = StrokeCap.Round)
         )
 
         // blush
@@ -1406,8 +1440,6 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
             .size(240.dp)
             .graphicsLayer {
                 translationY = (1f - entrance.value) * 80f
-                scaleX = 0.5f + entrance.value * 0.5f
-                scaleY = 0.5f + entrance.value * 0.5f
                 alpha = entrance.value
             }
     ) {
@@ -1421,6 +1453,19 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
         val hairColor = Color(0xFF0E0B10)
         val eyeGlowColor = Color(0xFFE23B3B)
         val crowColor = Color(0xFF0A0A0C)
+
+        // Ground shadow and a faint red pool of light make the throne feel
+        // planted in a room instead of floating on a flat background.
+        drawOval(
+            color = Color.Black.copy(alpha = 0.58f),
+            topLeft = Offset(w * 0.18f, h * 0.90f),
+            size = Size(w * 0.64f, h * 0.065f)
+        )
+        drawOval(
+            color = cloakTrim.copy(alpha = 0.22f),
+            topLeft = Offset(w * 0.29f, h * 0.91f),
+            size = Size(w * 0.42f, h * 0.028f)
+        )
 
         drawRoundRect(
             color = throneShadow,
@@ -1479,6 +1524,18 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
             },
             color = cloakColor
         )
+        // Independent folds make the robe follow the sway rather than read
+        // as a single solid silhouette.
+        listOf(0.41f, 0.50f, 0.59f).forEachIndexed { index, x ->
+            val foldSway = if (index == 1) swayShift * 0.35f else hemLag * if (index == 0) 0.45f else -0.45f
+            drawLine(
+                color = Color(0xFF332738).copy(alpha = 0.78f),
+                start = Offset(w * x + swayShift * 0.5f, h * 0.49f),
+                end = Offset(w * x + foldSway, h * 0.82f),
+                strokeWidth = w * 0.014f,
+                cap = StrokeCap.Round
+            )
+        }
         drawArc(
             color = cloakTrim,
             startAngle = 0f,
@@ -1496,6 +1553,11 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
         val headCenter = Offset(w * 0.5f, h * 0.32f)
         val headRadius = w * 0.17f
         drawCircle(color = skinColor, radius = headRadius, center = headCenter)
+        drawCircle(
+            color = Color.White.copy(alpha = 0.16f),
+            radius = headRadius * 0.42f,
+            center = Offset(headCenter.x - headRadius * 0.30f, headCenter.y - headRadius * 0.34f)
+        )
 
         drawPath(
             path = Path().apply {
@@ -1551,6 +1613,7 @@ private fun ThroneDarkCelebrationCharacter(reaction: CharacterReaction) {
                 size = Size(eyeWidth, eyeHeight)
             )
             drawCircle(color = Color.Black, radius = eyeHeight * 0.3f, center = eyeCenter)
+            drawCircle(color = Color.White.copy(alpha = 0.72f), radius = eyeHeight * 0.12f, center = Offset(eyeCenter.x - eyeWidth * 0.12f, eyeCenter.y - eyeHeight * 0.14f))
         }
 
         drawLine(
@@ -1585,7 +1648,11 @@ private fun StrikeCharacterOverlay(strikeCount: Int, characterId: StrikeCharacte
     val alpha = remember { Animatable(0f) }
     var finishedOnce by remember(strikeCount) { mutableStateOf(false) }
     val overlayScope = rememberCoroutineScope()
-    val backgroundColor = if (characterId == StrikeCharacterId.CHARACTER_2) Color(0xFF120404) else Color(0xFF0B3D91)
+    val backgroundBrush = if (characterId == StrikeCharacterId.CHARACTER_2) {
+        Brush.verticalGradient(listOf(Color(0xFF2A0709), Color(0xFF120404), Color(0xFF050305)))
+    } else {
+        Brush.verticalGradient(listOf(Color(0xFF123F7B), Color(0xFF0B244C), Color(0xFF081426)))
+    }
 
     fun finishOnce() {
         if (finishedOnce) return
@@ -1614,15 +1681,32 @@ private fun StrikeCharacterOverlay(strikeCount: Int, characterId: StrikeCharacte
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(backgroundColor)
+            .background(backgroundBrush)
             .graphicsLayer { this.alpha = alpha.value }
             .zIndex(500f)
             .pointerInput("strike-celebration-block") { detectTapGestures(onDoubleTap = { finishOnce() }) },
         contentAlignment = Alignment.Center
     ) {
+        Canvas(Modifier.matchParentSize()) {
+            val haloColor = if (characterId == StrikeCharacterId.CHARACTER_2) Color(0xFFEF4040) else TimerAccent
+            drawCircle(haloColor.copy(alpha = 0.12f), radius = size.minDimension * 0.56f, center = Offset(size.width * 0.5f, size.height * 0.43f))
+            drawCircle(haloColor.copy(alpha = 0.06f), radius = size.minDimension * 0.82f, center = Offset(size.width * 0.5f, size.height * 0.43f))
+            repeat(12) { index ->
+                val x = ((index * 71) % size.width.toInt()).toFloat()
+                val y = ((index * 113) % size.height.toInt()).toFloat()
+                drawCircle(Color.White.copy(alpha = if (characterId == StrikeCharacterId.CHARACTER_2) 0.10f else 0.18f), radius = 1.5f + index % 3, center = Offset(x, y))
+            }
+        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value }
+            // Character 2 uses its cloak/crow/eye animation for energy. Keeping
+            // this wrapper at a fixed scale prevents the character body from
+            // inheriting the generic celebration pop and looking inflated.
+            modifier = Modifier.graphicsLayer {
+                val contentScale = if (characterId == StrikeCharacterId.CHARACTER_2) 1f else scale.value
+                scaleX = contentScale
+                scaleY = contentScale
+            }
         ) {
             when (characterId) {
                 StrikeCharacterId.CHARACTER_1 -> ChubbyCelebrationCharacter(reaction = reaction)
@@ -1712,7 +1796,8 @@ private fun FlipDigitCell(
     fontSize: TextUnit,
     color: Color = TimerDigit,
     fontWeight: FontWeight = FontWeight.Black,
-    extraBold: Boolean = false
+    extraBold: Boolean = false,
+    animateSplitFlap: Boolean = true
 ) {
     val context = LocalContext.current
     LaunchedEffect(Unit) { DigitStyleState.ensureLoaded(context) }
@@ -1756,6 +1841,17 @@ private fun FlipDigitCell(
         }
     }
 
+    // Seconds change every second. They keep the Split-Flap visual card, but
+    // skip its animated overlay so the time source can never be held behind
+    // expensive clipping/rotation work.
+    if (style == DigitTransitionStyle.SPLIT_FLAP && !animateSplitFlap) {
+        DigitGlyph(char)
+        return
+    }
+    // Different styles keep different remembered animation objects. Key the
+    // whole renderer by style so switching into Split-Flap cannot inherit a
+    // half-completed rotation or a stale digit from Flip/Wave.
+    key(style) {
     when (style) {
         DigitTransitionStyle.FLIP -> {
             var shown by remember { mutableStateOf(char) }
@@ -1848,6 +1944,7 @@ private fun FlipDigitCell(
 
         DigitTransitionStyle.SPLIT_FLAP -> {
             // IMPORTANT: this branch is PURELY VISUAL. `char` always comes from the
+            if (true) { Box(contentAlignment = Alignment.Center) { DigitGlyph(char); AnimatedContent(targetState = char, transitionSpec = { (fadeIn(tween(115)) + scaleIn(tween(115), initialScale = 0.94f)) togetherWith (fadeOut(tween(85)) + scaleOut(tween(85), targetScale = 1.04f)) }, label = "splitFlapDigit") { value -> Box(contentAlignment = Alignment.Center) { DigitGlyph(value); Box(modifier = Modifier.fillMaxWidth().height(1.dp).align(Alignment.Center).background(Color.Black.copy(alpha = 0.38f))) } } } } else {
             // real timer/clock state upstream (QuickTimerState/StudyTimerState/
             // LiveClockDisplay's formatted millis). This composable never writes
             // back into that state and never delays/holds it — the LaunchedEffect
@@ -1855,41 +1952,40 @@ private fun FlipDigitCell(
             // upstream `char` changes. If the animation is still mid-flight when
             // `char` changes again, LaunchedEffect(char) cancels and restarts it
             // immediately with the new target — the actual timer is never blocked.
-            var topStatic by remember { mutableStateOf(char) }
-            var bottomStatic by remember { mutableStateOf(char) }
+            // Keep only the prior source digit for the outgoing visual flap.  The
+            // two static halves below deliberately render `char` itself, never an
+            // animation-owned value.  That makes the real clock/stopwatch/countdown
+            // value visible immediately, even if a prior flap coroutine is
+            // cancelled by a newer timer tick.
+            var priorSourceChar by remember { mutableStateOf(char) }
             var flipTopFrom by remember { mutableStateOf<Char?>(null) }
-            var flipBottomFrom by remember { mutableStateOf<Char?>(null) }
             val topRotation = remember { Animatable(0f) }
-            val bottomRotation = remember { Animatable(0f) }
 
             LaunchedEffect(char) {
-                if (char != bottomStatic) {
-                    val oldChar = bottomStatic
-
-                    // Phase 1: reveal the new digit's top half immediately underneath,
-                    // and fold the OLD digit's top half away (rotating up/back).
-                    topStatic = char
-                    flipTopFrom = oldChar
+                if (char != priorSourceChar) {
+                    val oldChar = priorSourceChar
+                    // Store the latest input before starting any animation. A
+                    // cancelled effect can therefore never feed an old digit back
+                    // into the displayed timer state.
+                    priorSourceChar = char
+                    flipTopFrom = null
                     topRotation.snapTo(0f)
-                    topRotation.animateTo(-90f, tween(130, easing = FastOutLinearInEasing))
+                    flipTopFrom = oldChar
+                    // One outgoing flap reveals the live new digit without a
+                    // second layer that can stall lower-powered devices.
+                    topRotation.animateTo(-90f, tween(90, easing = FastOutLinearInEasing))
                     flipTopFrom = null
 
-                    // Phase 2: the NEW digit's bottom half folds down into place.
-                    bottomStatic = char
-                    flipBottomFrom = char
-                    bottomRotation.snapTo(90f)
-                    bottomRotation.animateTo(0f, tween(150, easing = LinearOutSlowInEasing))
-                    flipBottomFrom = null
-                } else if (char != topStatic) {
-                    // Safety net: keep static halves in sync even if effect was
-                    // interrupted mid-flight by a rapid subsequent change.
-                    topStatic = char
                 }
             }
 
             Box(contentAlignment = Alignment.Center) {
-                Box(modifier = Modifier.clip(TopHalfShape)) { DigitGlyph(topStatic) }
-                Box(modifier = Modifier.clip(BottomHalfShape)) { DigitGlyph(bottomStatic) }
+                // This is the authoritative, unmasked live digit. It is drawn
+                // exactly once and is never replaced by an animation state. The
+                // clipped layers below are only short-lived decorative flaps.
+                // Keeping the source digit whole here also avoids nested clip
+                // bounds changing a glyph's measured size between timer ticks.
+                DigitGlyph(char)
 
                 flipTopFrom?.let { oldTop ->
                     Box(
@@ -1904,18 +2000,6 @@ private fun FlipDigitCell(
                     ) { DigitGlyph(oldTop) }
                 }
 
-                flipBottomFrom?.let { newBottom ->
-                    Box(
-                        modifier = Modifier
-                            .clip(BottomHalfShape)
-                            .graphicsLayer {
-                                rotationX = bottomRotation.value
-                                cameraDistance = 24f * density
-                                transformOrigin = TransformOrigin(0.5f, 0f)
-                                alpha = if (kotlin.math.abs(bottomRotation.value) < 89.5f) 1f else 0f
-                            }
-                    ) { DigitGlyph(newBottom) }
-                }
 
                 // fold-line shadow for a more mechanical split-flap look
                 Box(
@@ -1926,8 +2010,10 @@ private fun FlipDigitCell(
                         .background(Color.Black.copy(alpha = 0.35f))
                 )
             }
+            }
         }
 
+    }
     }
 }
 
@@ -1938,6 +2024,7 @@ private fun FlipText(
     color: Color = TimerDigit,
     fontWeight: FontWeight = FontWeight.Black,
     extraBold: Boolean = false,
+    animateSplitFlap: Boolean = true,
     fillWidth: Boolean = true
 ) {
     val rowModifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier
@@ -1945,7 +2032,7 @@ private fun FlipText(
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = arrangement, modifier = rowModifier) {
         text.forEach { c ->
             if (c.isDigit()) {
-                FlipDigitCell(char = c, fontSize = fontSize, color = color, fontWeight = fontWeight, extraBold = extraBold)
+                FlipDigitCell(char = c, fontSize = fontSize, color = color, fontWeight = fontWeight, extraBold = extraBold, animateSplitFlap = animateSplitFlap)
             } else {
                 Text(c.toString(), color = color, fontSize = fontSize, fontWeight = fontWeight)
             }
@@ -1957,6 +2044,7 @@ private fun FlipDigitCard(
     mainText: String,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 92.sp,
+    fontWeight: FontWeight = FontWeight.Black,
     dividerThickness: Dp = 2.dp,
     cornerRadius: Dp = 34.dp,
     extraBold: Boolean = true,
@@ -1970,7 +2058,8 @@ private fun FlipDigitCard(
     cutMaskEnabled: Boolean = false,
     boxBackgroundOpacity: Float = 1f,
     boxBorderOpacity: Float = 1f,
-    dividerEnabled: Boolean = true
+    dividerEnabled: Boolean = true,
+    animateSplitFlap: Boolean = true
 ) {
     val effectiveCardColor = cardColor.copy(alpha = (cardColor.alpha * boxBackgroundOpacity).coerceIn(0f, 1f))
     val effectiveBorderWidth = if (borderWidth > 0.dp) borderWidth else 1.5.dp
@@ -2005,17 +2094,22 @@ private fun FlipDigitCard(
             val widthCapPx = if (digitCount > 0) (boxWidthPx * 0.90f) / (digitCount * 0.62f) else requestedPx
             val safeFontSizePx = minOf(requestedPx, heightCapPx, widthCapPx).coerceAtLeast(1f)
             val safeFontSize = with(density) { safeFontSizePx.toSp() }
-            if (cutMaskEnabled) {
+            // The normal faces use this outer cut mask to create their static
+            // centre split. Split-Flap already owns two independently clipped
+            // halves per digit, so applying both masks duplicates each digit and
+            // tears/cancels its transition. Only one layer may split a digit.
+            val useOuterCutMask = cutMaskEnabled && DigitStyleState.current != DigitTransitionStyle.SPLIT_FLAP
+            if (useOuterCutMask) {
                 Box(contentAlignment = Alignment.Center) {
                     Box(modifier = Modifier.clip(TopHalfShape)) {
-                        FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+                        FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, fontWeight = fontWeight, extraBold = extraBold, animateSplitFlap = animateSplitFlap)
                     }
                     Box(modifier = Modifier.clip(BottomHalfShape)) {
-                        FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+                        FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, fontWeight = fontWeight, extraBold = extraBold, animateSplitFlap = animateSplitFlap)
                     }
                 }
             } else {
-                FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, extraBold = extraBold)
+                FlipText(text = mainText, fontSize = safeFontSize, color = digitColor, fontWeight = fontWeight, extraBold = extraBold, animateSplitFlap = animateSplitFlap)
             }
         }
         Box(
@@ -2049,6 +2143,7 @@ private fun FlipBlock(
             mainText,
             modifier = Modifier.fillMaxSize(),
             fontSize = fontSize,
+            fontWeight = faceStyle?.digitWeight ?: FontWeight.Black,
             dividerThickness = dividerThickness,
             extraBold = true,
             topInset = if (topLabel.isNotEmpty()) 1.dp else 0.dp,
@@ -2121,6 +2216,7 @@ private fun SplitTimeDisplay(
                     "%02d".format(value),
                     modifier = Modifier.fillMaxSize(),
                     fontSize = fontSize,
+                    fontWeight = faceStyle?.digitWeight ?: fontWeight,
                     dividerThickness = dividerThickness,
                     extraBold = true,
                     topInset = 1.dp,
@@ -2152,9 +2248,17 @@ private fun SplitTimeDisplay(
 private fun LiveClockDisplay(is24Hour: Boolean, isLandscape: Boolean, boxSettings: TimerBoxSettings, clockFace: ClockFace = ClockFace.CLASSIC) {
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
+        var lastRenderedSecond = now / 1000L
         while (true) {
-            now = System.currentTimeMillis()
-            delay(1000)
+            val systemNow = System.currentTimeMillis()
+            val systemSecond = systemNow / 1000L
+            // Poll lightly and publish only a changed second, so rendering
+            // work cannot accumulate delay and the clock stays on system time.
+            if (systemSecond != lastRenderedSecond) {
+                lastRenderedSecond = systemSecond
+                now = systemNow
+            }
+            delay(100)
         }
     }
     val calendar = remember(now) { Calendar.getInstance().apply { timeInMillis = now } }
@@ -3074,6 +3178,8 @@ fun TimerHomeDialog(
                 StudyTimerTicker()
                 if (ClockFaceState.current == ClockFace.STARLIGHT_PREMIUM) {
                     PremiumStarfieldBackground(modifier = Modifier.fillMaxSize())
+                } else {
+                    ClockFaceAtmosphere(ClockFaceState.current, Modifier.fillMaxSize())
                 }
                 val isLandscape = maxWidth > maxHeight
                 val activeClockBoxSettings = TimerBoxLiveSettingsState.get(context, "clock", isLandscape)
@@ -3214,10 +3320,8 @@ private fun TimerSettingsDialog(
     FloatingPopupLabelSettingsState.ensureLoaded(context)
     StrikeAnimationSettingsState.ensureLoaded(context)
     StrikeQuoteState.ensureLoaded(context)
-    AiFloatingSettingsState.ensureLoaded(context)
     var floatingPopupEnabled by remember { mutableStateOf(FloatingPopupSettingsState.enabled) }
     var floatingPopupLabelEnabled by remember { mutableStateOf(FloatingPopupLabelSettingsState.enabled) }
-    var aiIconEnabled by remember { mutableStateOf(AiFloatingSettingsState.enabled) }
     var boxEditTarget by remember { mutableStateOf<BoxEditTarget?>(null) }
     var showClockFacePickerInSettings by remember { mutableStateOf(false) }
     var showQuoteManager by remember { mutableStateOf(false) }
@@ -3230,14 +3334,37 @@ private fun TimerSettingsDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = TimerCardBg,
+            modifier = Modifier.fillMaxWidth().shadow(24.dp, RoundedCornerShape(30.dp)),
+            shape = RoundedCornerShape(30.dp),
+            color = Color.Transparent,
             contentColor = Color.White
         ) {
-            Column(modifier = Modifier.padding(20.dp).heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
-                Text("Timer settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(16.dp))
+            Box(
+                modifier = Modifier
+                    .background(Brush.verticalGradient(listOf(Color(0xFF252631), TimerCardBg, Color(0xFF101116))))
+                    .border(1.dp, Color.White.copy(alpha = 0.13f), RoundedCornerShape(30.dp))
+            ) {
+                Column(modifier = Modifier.padding(22.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Timer settings", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text("Tune your clock, focus flow and celebrations", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+                    }
+                    Text(
+                        "PERSONALIZE",
+                        color = TimerAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(TimerAccent.copy(alpha = 0.12f))
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
+                Text("TIME & DISPLAY", color = TimerAccent.copy(alpha = 0.86f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 Text("Clock face", color = Color.LightGray, fontSize = 14.sp)
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = { showClockFacePickerInSettings = true }, modifier = Modifier.fillMaxWidth()) {
@@ -3297,23 +3424,8 @@ private fun TimerSettingsDialog(
                         colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
                     )
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("AI assistant icon", fontSize = 15.sp)
-                        Text("Show the movable AI button on Mind Map", color = Color.LightGray, fontSize = 12.sp)
-                    }
-                    Switch(
-                        checked = aiIconEnabled,
-                        onCheckedChange = { value ->
-                            aiIconEnabled = value
-                            AiFloatingSettingsState.setEnabled(context, value)
-                        },
-                        colors = SwitchDefaults.colors(checkedThumbColor = TimerAccent, checkedTrackColor = TimerAccent.copy(alpha = 0.3f))
-                    )
-                }
                 Spacer(Modifier.height(20.dp))
-                Text("Digit change style", color = Color.LightGray, fontSize = 14.sp)
+                Text("MOTION STYLE", color = TimerAccent.copy(alpha = 0.86f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                     listOf(
@@ -3340,7 +3452,7 @@ private fun TimerSettingsDialog(
                 }
 
                 Spacer(Modifier.height(20.dp))
-                Text("Strike Animation", color = Color.LightGray, fontSize = 14.sp)
+                Text("STRIKE CELEBRATION", color = TimerAccent.copy(alpha = 0.86f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("Strike Animation", fontSize = 15.sp, modifier = Modifier.weight(1f))
@@ -3384,7 +3496,7 @@ private fun TimerSettingsDialog(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Text("Strike timer", color = Color.LightGray, fontSize = 14.sp)
+                Text("STRIKE TIMER", color = TimerAccent.copy(alpha = 0.86f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -3432,7 +3544,7 @@ private fun TimerSettingsDialog(
                     }
                 }
                 Spacer(Modifier.height(20.dp))
-                Text("Box size", color = Color.LightGray, fontSize = 14.sp)
+                Text("LAYOUT", color = TimerAccent.copy(alpha = 0.86f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 listOf(
                     BoxEditTarget("clock", false, "Real-time clock (Portrait)"),
@@ -3449,6 +3561,7 @@ private fun TimerSettingsDialog(
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
                     Text("Done", color = SoftNeutral, fontWeight = FontWeight.Bold)
+                }
                 }
             }
         }
@@ -3625,16 +3738,19 @@ private fun QuoteEditDialog(
     }
 }
 @Composable
-private fun ClockFacePreviewMini(style: ClockFaceStyle) {
-    Row(
+private fun ClockFacePreviewMini(face: ClockFace, style: ClockFaceStyle) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(46.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(style.screenBackground)
-            .padding(6.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        if (face != ClockFace.STARLIGHT_PREMIUM) ClockFaceAtmosphere(face, Modifier.fillMaxSize())
+        Row(
+            modifier = Modifier.fillMaxSize().padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
         listOf("12", "34").forEach { text ->
             Box(
                 modifier = Modifier
@@ -3648,8 +3764,9 @@ private fun ClockFacePreviewMini(style: ClockFaceStyle) {
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(text, color = style.digitColor, fontSize = 15.sp, fontWeight = FontWeight.Black)
+                Text(text, color = style.digitColor, fontSize = 15.sp, fontWeight = style.digitWeight)
             }
+        }
         }
     }
 }
@@ -3690,7 +3807,7 @@ private fun ClockFacePickerDialog(
                                 .padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(modifier = Modifier.width(96.dp)) { ClockFacePreviewMini(style) }
+                            Box(modifier = Modifier.width(96.dp)) { ClockFacePreviewMini(face, style) }
                             Spacer(Modifier.width(12.dp))
                             Text(
                                 clockFaceLabel(face),
@@ -3782,6 +3899,60 @@ internal object QuickTimerState {
     }
 }
 
+/** Keeps the high-frequency timer state out of the full-screen composition. */
+@Composable
+private fun QuickTimerTicker() {
+    val isRunning = QuickTimerState.isRunning
+    val mode = QuickTimerState.mode
+    LaunchedEffect(isRunning, mode) {
+        var lastVisibleSecond = Long.MIN_VALUE
+        while (QuickTimerState.isRunning) {
+            val now = System.currentTimeMillis()
+            val visibleMillis = if (QuickTimerState.mode == "stopwatch") {
+                (now - QuickTimerState.startTimestamp).coerceAtLeast(0L)
+            } else {
+                (QuickTimerState.countdownTotalMillis - (now - QuickTimerState.startTimestamp))
+                    .coerceAtLeast(0L)
+            }
+            val visibleSecond = visibleMillis / 1000L
+            if (visibleSecond != lastVisibleSecond) {
+                lastVisibleSecond = visibleSecond
+                if (QuickTimerState.mode == "stopwatch") {
+                    QuickTimerState.elapsedMillis = visibleMillis
+                } else {
+                    QuickTimerState.remainingMillis = visibleMillis
+                    if (visibleMillis <= 0L) {
+                        QuickTimerState.isRunning = false
+                        QuickTimerState.timeUp = true
+                    }
+                }
+            }
+            delay(100)
+        }
+    }
+}
+
+@Composable
+private fun QuickTimerTimeDisplay(
+    modifier: Modifier,
+    fontSize: TextUnit,
+    dividerThickness: Dp,
+    boxHeight: Dp,
+    spacing: Dp,
+    fontWeight: FontWeight,
+    faceStyle: ClockFaceStyle,
+    boxBackgroundOpacity: Float,
+    boxBorderOpacity: Float,
+    dividerEnabled: Boolean
+) {
+    val totalMillis = if (QuickTimerState.mode == "stopwatch") {
+        QuickTimerState.elapsedMillis
+    } else {
+        QuickTimerState.remainingMillis
+    }
+    SplitTimeDisplay(totalMillis, fontSize, dividerThickness, boxHeight, spacing, fontWeight, modifier, faceStyle, boxBackgroundOpacity, boxBorderOpacity, dividerEnabled)
+}
+
 @Composable
 private fun QuickTimerDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -3792,10 +3963,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     }
     var mode by QuickTimerState::mode
     var isRunning by QuickTimerState::isRunning
-    var elapsedMillis by QuickTimerState::elapsedMillis
     var countdownTotalMillis by QuickTimerState::countdownTotalMillis
-    var remainingMillis by QuickTimerState::remainingMillis
-    var startTimestamp by QuickTimerState::startTimestamp
     var hasStarted by QuickTimerState::hasStarted
     var finished by QuickTimerState::timeUp
     var controlsVisible by rememberSaveable { mutableStateOf(false) }
@@ -3808,30 +3976,12 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
     fun applyPickerToCountdown() {
         val newMillis = (pickerHours * 3_600_000L + pickerMinutes * 60_000L).coerceAtLeast(1000L)
         countdownTotalMillis = newMillis
-        remainingMillis = newMillis
+        QuickTimerState.remainingMillis = newMillis
     }
     LaunchedEffect(pickerHours, pickerMinutes, isRunning) {
         if (!isRunning && !hasStarted) {
             delay(80)
             applyPickerToCountdown()
-        }
-    }
-    LaunchedEffect(isRunning, mode) {
-        if (isRunning) {
-            while (isRunning) {
-                delay(200)
-                val now = System.currentTimeMillis()
-                if (mode == "stopwatch") {
-                    elapsedMillis = now - startTimestamp
-                } else {
-                    val spent = now - startTimestamp
-                    remainingMillis = (countdownTotalMillis - spent).coerceAtLeast(0L)
-                    if (remainingMillis <= 0L) {
-                        isRunning = false
-                        finished = true
-                    }
-                }
-            }
         }
     }
 
@@ -3884,8 +4034,11 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                     .background(activeFaceStyle.screenBackground)
             ) {
                 StudyTimerTicker()
+                QuickTimerTicker()
                 if (ClockFaceState.current == ClockFace.STARLIGHT_PREMIUM) {
                     PremiumStarfieldBackground(modifier = Modifier.fillMaxSize())
+                } else {
+                    ClockFaceAtmosphere(ClockFaceState.current, Modifier.fillMaxSize())
                 }
                 val isLandscape = maxWidth > maxHeight
                 maxWidthLandscapeSnapshot = isLandscape
@@ -3933,7 +4086,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             if (kotlin.math.abs(horizontalDragAccum) > swipeThresholdPx && !isRunning) {
                                                 mode = if (horizontalDragAccum < 0) "countdown" else "stopwatch"
                                                 finished = false
-                                                if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
+                                                if (mode == "stopwatch") QuickTimerState.elapsedMillis = 0L else QuickTimerState.remainingMillis = countdownTotalMillis
                                             }
                                             horizontalDragAccum = 0f
                                         },
@@ -4009,14 +4162,13 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        SplitTimeDisplay(
-                            totalMillis = if (mode == "stopwatch") elapsedMillis else remainingMillis,
+                        QuickTimerTimeDisplay(
+                            modifier = Modifier.width(displayWidth),
                             fontSize = digitFontSize,
                             dividerThickness = dividerThickness,
                             boxHeight = boxHeightDp,
                             spacing = boxSpacingDp,
                             fontWeight = digitFontWeight,
-                            modifier = Modifier.width(displayWidth),
                             faceStyle = activeFaceStyle,
                             boxBackgroundOpacity = activeBoxSettings.boxBackgroundOpacity,
                             boxBorderOpacity = activeBoxSettings.boxBorderOpacity,
@@ -4065,7 +4217,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                         TimeUpOverlay(isLandscape = isLandscape) {
                             finished = false
                             hasStarted = false
-                            if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
+                            if (mode == "stopwatch") QuickTimerState.elapsedMillis = 0L else QuickTimerState.remainingMillis = countdownTotalMillis
                         }
                     }
 
@@ -4116,7 +4268,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                             isRunning = false
                                             finished = false
                                             hasStarted = false
-                                            if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
+                                            if (mode == "stopwatch") QuickTimerState.elapsedMillis = 0L else QuickTimerState.remainingMillis = countdownTotalMillis
                                         }
                                     }
                                     if (showTimeSetPanel) {
@@ -4166,7 +4318,7 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
                                         isRunning = false
                                         finished = false
                                         hasStarted = false
-                                        if (mode == "stopwatch") elapsedMillis = 0L else remainingMillis = countdownTotalMillis
+                                        if (mode == "stopwatch") QuickTimerState.elapsedMillis = 0L else QuickTimerState.remainingMillis = countdownTotalMillis
                                     }
                                 }
                                 if (showTimeSetPanel) {
@@ -4684,6 +4836,93 @@ private fun StudyHomeDialog(onDismiss: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Static, lightweight scene accents give every redesigned face a recognisable
+ * setting without creating a second timer/animation system. Star Light is
+ * deliberately excluded: its original PremiumStarfieldBackground is preserved.
+ */
+@Composable
+private fun ClockFaceAtmosphere(face: ClockFace, modifier: Modifier = Modifier) {
+    if (face == ClockFace.STARLIGHT_PREMIUM) return
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        if (w <= 0f || h <= 0f) return@Canvas
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float, color: Color, width: Float = 1f) =
+            drawLine(color, Offset(w * x1, h * y1), Offset(w * x2, h * y2), width)
+        when (face) {
+            ClockFace.CLASSIC -> { // Future Drive: road horizon + instrument rings.
+                drawCircle(Color(0xFF56CFFF).copy(alpha = .10f), w * .46f, Offset(w * .50f, h * .72f))
+                drawCircle(Color(0xFF9EEBFF).copy(alpha = .22f), w * .17f, Offset(w * .16f, h * .88f), style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+                drawCircle(Color(0xFF9EEBFF).copy(alpha = .22f), w * .17f, Offset(w * .84f, h * .88f), style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+                line(.50f, .38f, .15f, 1f, Color.White.copy(alpha = .12f), 3f)
+                line(.50f, .38f, .85f, 1f, Color.White.copy(alpha = .12f), 3f)
+            }
+            ClockFace.MINIMAL_PREMIUM -> { // Cyber City skyline + windows.
+                listOf(.16f, .29f, .22f, .36f, .26f, .42f, .20f).forEachIndexed { index, height ->
+                    val left = index * w / 7f
+                    drawRect(Color(0xFF101A32).copy(alpha = .72f), Offset(left, h * (1f - height)), androidx.compose.ui.geometry.Size(w / 7.4f, h * height))
+                    line((index + .25f) / 7f, .80f - height / 2, (index + .65f) / 7f, .80f - height / 2, Color(0xFF77EDFF).copy(alpha = .35f), 2f)
+                }
+            }
+            ClockFace.DARK_ELEGANT -> { // Study Desk: warm desktop, books and lamp pool.
+                drawRect(Color(0xFF2C180D).copy(alpha = .40f), Offset(0f, h * .72f), androidx.compose.ui.geometry.Size(w, h * .28f))
+                repeat(4) { i -> drawRoundRect(Color(0xFF8C5B32).copy(alpha = .6f), Offset(w * (.08f + i * .055f), h * .66f), androidx.compose.ui.geometry.Size(w * .043f, h * .12f), androidx.compose.ui.geometry.CornerRadius(4f)) }
+                drawCircle(Color(0xFFFFD38A).copy(alpha = .14f), w * .20f, Offset(w * .78f, h * .20f))
+                line(.78f, .08f, .78f, .40f, Color(0xFFFFD38A).copy(alpha = .55f), 3f)
+            }
+            ClockFace.GLASS_GLOSSY -> { // Cosmic: planet, orbit and distant stars.
+                drawCircle(Color(0xFF7C8DFF).copy(alpha = .22f), w * .19f, Offset(w * .18f, h * .22f))
+                drawOval(Color(0xFFBFCBFF).copy(alpha = .24f), Offset(w * .03f, h * .17f), androidx.compose.ui.geometry.Size(w * .34f, h * .10f), style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+                listOf(.12f to .58f, .78f to .17f, .88f to .74f, .43f to .10f).forEach { (x, y) -> drawCircle(Color.White.copy(alpha = .65f), 2.2f, Offset(w*x, h*y)) }
+            }
+            ClockFace.NEON -> { // Rainy Window: glass pane grid and drops.
+                line(.50f, 0f, .50f, 1f, Color.White.copy(alpha = .16f), 2f); line(0f, .48f, 1f, .48f, Color.White.copy(alpha = .16f), 2f)
+                listOf(.14f to .18f, .71f to .28f, .30f to .70f, .88f to .76f).forEach { (x, y) -> line(x, y, x - .025f, y + .10f, Color(0xFFCFEFFF).copy(alpha = .44f), 2.2f) }
+            }
+            ClockFace.DIGITAL_FUTURISTIC -> { // Ocean depth: light rays and bubbles.
+                repeat(5) { i -> line(.10f + i * .20f, 0f, .34f + i * .10f, 1f, Color(0xFF8DEBFF).copy(alpha = .08f), w * .035f) }
+                listOf(.13f to .76f, .84f to .61f, .73f to .86f).forEach { (x, y) -> drawCircle(Color(0xFF9EF3FF).copy(alpha = .20f), w * .018f, Offset(w*x, h*y), style = androidx.compose.ui.graphics.drawscope.Stroke(2f)) }
+            }
+            ClockFace.CLEAN_PRODUCTIVITY -> { // Mechanical: restrained gear silhouettes.
+                listOf(.15f to .20f, .85f to .78f).forEach { (x, y) ->
+                    drawCircle(Color(0xFFD4D8D4).copy(alpha = .12f), w * .14f, Offset(w*x, h*y), style = androidx.compose.ui.graphics.drawscope.Stroke(7f))
+                    repeat(8) { i -> line(x, y, x + kotlin.math.cos(i * .785f) * .15f, y + kotlin.math.sin(i * .785f) * .15f, Color(0xFFD4D8D4).copy(alpha = .13f), 5f) }
+                }
+            }
+            ClockFace.SOFT_STUDY -> { // Minimal Luxury: gold rules, no distraction.
+                line(.10f, .14f, .90f, .14f, Color(0xFFFFD88A).copy(alpha = .27f), 1.5f)
+                line(.10f, .86f, .90f, .86f, Color(0xFFFFD88A).copy(alpha = .27f), 1.5f)
+                drawCircle(Color(0xFFFFD88A).copy(alpha = .18f), w * .006f, Offset(w*.50f, h*.14f))
+            }
+            ClockFace.RETRO_DIGITAL -> { // Forest: tree trunks and soft leaf canopy.
+                repeat(5) { i -> line(.08f + i*.22f, 1f, .12f + i*.20f, .48f, Color(0xFF0A2212).copy(alpha = .35f), 10f) }
+                listOf(.13f to .35f, .38f to .21f, .68f to .32f, .90f to .18f).forEach { (x,y) -> drawCircle(Color(0xFFB2E481).copy(alpha = .12f), w*.14f, Offset(w*x,h*y)) }
+            }
+            ClockFace.MODERN_DASHBOARD -> { // Night city: road trails below the display.
+                line(.10f, .92f, .55f, .58f, Color(0xFF6EA6FF).copy(alpha=.28f), 3f)
+                line(.90f, .92f, .55f, .58f, Color(0xFFFFC16E).copy(alpha=.22f), 3f)
+                repeat(7) { i -> drawCircle(Color(0xFFCFE0FF).copy(alpha=.25f), 2f, Offset(w*(.08f+i*.14f),h*.26f)) }
+            }
+            ClockFace.FLIP_BOARD_INSPIRED -> { // Data grid: clean, technical not noisy.
+                repeat(7) { i -> line(i / 6f, 0f, i / 6f, 1f, Color(0xFF5AE5F5).copy(alpha=.09f)) }
+                repeat(9) { i -> line(0f, i / 8f, 1f, i / 8f, Color(0xFF5AE5F5).copy(alpha=.07f)) }
+                drawCircle(Color(0xFF6EF3FF).copy(alpha=.30f), 4f, Offset(w*.19f,h*.27f)); drawCircle(Color(0xFF6EF3FF).copy(alpha=.30f), 4f, Offset(w*.81f,h*.73f))
+            }
+            ClockFace.MONOCHROME -> { // Sunrise: sun over a calm horizon.
+                drawCircle(Color(0xFFFFE7A1).copy(alpha=.55f), w*.13f, Offset(w*.50f,h*.61f))
+                line(0f, .61f, 1f, .61f, Color(0xFFFFF0D3).copy(alpha=.5f), 2f)
+                repeat(6) { i -> line(.50f, .61f, .12f + i*.15f, .35f, Color(0xFFFFE4A8).copy(alpha=.20f), 1.5f) }
+            }
+            ClockFace.AMBIENT -> { // Library: orderly shelf and book-spine details.
+                repeat(3) { row -> line(.05f, .22f + row*.23f, .95f, .22f + row*.23f, Color(0xFFE2B969).copy(alpha=.22f), 3f) }
+                repeat(12) { i -> drawRect(Color(0xFFB97645).copy(alpha=.24f), Offset(w*(.06f+i*.075f),h*.23f), androidx.compose.ui.geometry.Size(w*.045f,h*.18f)) }
+            }
+            ClockFace.STARLIGHT_PREMIUM -> Unit
         }
     }
 }

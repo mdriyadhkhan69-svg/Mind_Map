@@ -7,11 +7,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /**
- * Shared with Timer settings so the AI affordance follows the same durable
- * preference mechanism as the rest of the timer controls.
+ * Mind Map owns the AI affordance preference. The legacy timer preference is
+ * read once so existing users retain visibility and saved drag position.
  */
 internal object AiFloatingSettingsState {
-    private const val PREFS = "timer_settings"
+    private const val PREFS = "mind_map_settings"
+    private const val LEGACY_PREFS = "timer_settings"
     private const val VISIBLE = "ai_floating_icon_visible"
     private const val X_RATIO = "ai_floating_icon_x_ratio"
     private const val Y_RATIO = "ai_floating_icon_y_ratio"
@@ -27,9 +28,13 @@ internal object AiFloatingSettingsState {
     fun ensureLoaded(context: Context) {
         if (loaded) return
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        enabled = prefs.getBoolean(VISIBLE, true)
-        xRatio = prefs.getFloat(X_RATIO, 0.84f).coerceIn(0f, 1f)
-        yRatio = prefs.getFloat(Y_RATIO, 0.78f).coerceIn(0f, 1f)
+        val source = if (prefs.contains(VISIBLE)) prefs else context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        enabled = source.getBoolean(VISIBLE, true)
+        xRatio = source.getFloat(X_RATIO, 0.84f).coerceIn(0f, 1f)
+        yRatio = source.getFloat(Y_RATIO, 0.78f).coerceIn(0f, 1f)
+        if (source !== prefs) {
+            prefs.edit().putBoolean(VISIBLE, enabled).putFloat(X_RATIO, xRatio).putFloat(Y_RATIO, yRatio).apply()
+        }
         loaded = true
     }
 

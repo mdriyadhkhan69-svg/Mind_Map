@@ -25,6 +25,8 @@ Rules:
 - Use mode=create and nodes only when the user asks to create a new map/topic. Make one root; all parentId references must be IDs in nodes.
 - Use mode=edit and actions only for an existing map. targetId, parentId, and secondaryId MUST be numeric IDs from CURRENT MAP.
 - createChild uses parentId and text. updateNode changes only supplied fields. deleteNode requires targetId. connectNodes requires targetId and secondaryId. moveNode requires targetId/x/y.
+- Canvas coordinates are absolute: x increases to the right and y increases downward. For EVERY moveNode action you MUST return both final numeric x and final numeric y from the CURRENT MAP coordinate system. Never claim a box was moved without a moveNode action containing both values.
+- For instructions such as "move from the side to below", "niche nao", "নিচে সরাও", "down", or "under", choose the requested existing target and set its final y below the relevant box (with visible spacing); preserve its x unless the request explicitly asks for a horizontal change.
 - Never delete or recreate unrelated nodes. Never use an ID you cannot see. If the target is ambiguous, use mode=clarify and no actions.
 - For "add points", return one createChild action per child. For resize/readability, use a generous widthScale/heightScale, never tiny text.
 - Colors must be #RRGGBB or #AARRGGBB. Keep styling professional, not neon.
