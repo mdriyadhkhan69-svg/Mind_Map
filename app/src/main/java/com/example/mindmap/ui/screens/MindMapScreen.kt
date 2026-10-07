@@ -84,6 +84,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.text.font.FontWeight
@@ -3314,6 +3315,8 @@ private fun recognisePdfText(bitmap: Bitmap, pageWidth: Int, pageHeight: Int): L
 @Composable
 private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val deviceIsLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val storedViewState = remember(media.uri) { loadPdfViewState(context, media.uri) }
     var requestedPage by remember(media.uri) { mutableIntStateOf(storedViewState.pageIndex) }
     var pagePreview by remember(media.uri) { mutableStateOf<PdfPagePreview?>(null) }
@@ -3343,6 +3346,17 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var pageDirection by remember(media.uri) { mutableIntStateOf(1) }
     var pageSwipeVersion by remember(media.uri) { mutableIntStateOf(0) }
     var skipPageAnimation by remember(media.uri) { mutableStateOf(false) }
+    LaunchedEffect(deviceIsLandscape, pagePreview?.pageWidth, pagePreview?.pageHeight) {
+        // Keep the rendered PDF in sync with the phone's current orientation.
+        // Old pan/swipe coordinates are invalid after a quarter turn.
+        val sourceIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
+        val deviceRotation = if (sourceIsPortrait == deviceIsLandscape) 90f else 0f
+        if (rotation != deviceRotation) {
+            rotation = deviceRotation
+            panOffset = Offset.Zero
+            swipeDistance = 0f
+        }
+    }
     val initialMarkerFabOffsetPx = with(LocalDensity.current) { Offset(0f, -64.dp.toPx()) }
     var markerFabOffset by remember(media.uri) { mutableStateOf(initialMarkerFabOffsetPx) }
     var markerFabPressed by remember(media.uri) { mutableStateOf(false) }
@@ -3361,10 +3375,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     // vertical and a quarter-turn swaps that direction.
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
+    val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
     val pageNavigationIsVertical = if (zoomLocked) {
         // পাতা visually লম্বা (tall) দেখাচ্ছে হলে swipe = left-right (false),
         // পাতা visually চওড়া (wide) দেখাচ্ছে হলে swipe = up-down (true)।
-        pageIsPortrait == isQuarterTurn
+        renderedPageIsLandscape
     } else {
         isQuarterTurn
     }
@@ -3512,6 +3527,13 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        DisposableEffect(dialogWindow) {
+            dialogWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            onDispose {
+                dialogWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+
         DisposableEffect(controlsVisible, dialogWindow) {
             val window = dialogWindow
             val controller = window?.let {
@@ -3747,7 +3769,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
                                                     val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
 
-                                                    if (zoomLocked) {
+                                                    if (zoomLocked && abs(currentZoom - 1f) <= 0.001f && !isPdfContentPannable(it, pageContainerSize, currentZoom, rotation)) {
                                                         // Locked: navigation axis (pageNavigationIsVertical, পাতা
                                                         // visually লম্বা না চওড়া তার উপর নির্ভর করে) সবসময় swipe করবে,
                                                         // তার লম্ব axis সবসময় pan করবে।

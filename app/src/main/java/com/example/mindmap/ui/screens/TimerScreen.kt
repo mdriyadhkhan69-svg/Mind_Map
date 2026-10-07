@@ -1944,8 +1944,32 @@ private fun FlipDigitCell(
 
         DigitTransitionStyle.SPLIT_FLAP -> {
             // IMPORTANT: this branch is PURELY VISUAL. `char` always comes from the
-            if (true) { Box(contentAlignment = Alignment.Center) { DigitGlyph(char); AnimatedContent(targetState = char, transitionSpec = { (fadeIn(tween(115)) + scaleIn(tween(115), initialScale = 0.94f)) togetherWith (fadeOut(tween(85)) + scaleOut(tween(85), targetScale = 1.04f)) }, label = "splitFlapDigit") { value -> Box(contentAlignment = Alignment.Center) { DigitGlyph(value); Box(modifier = Modifier.fillMaxWidth().height(1.dp).align(Alignment.Center).background(Color.Black.copy(alpha = 0.38f))) } } } } else {
+            if (true) {
+                // `char` is always the current clock/timer digit. The animation
+                // only reveals that digit; it never owns an old or replacement value.
+                val flapReveal = remember { Animatable(1f) }
+                LaunchedEffect(char) {
+                    flapReveal.snapTo(0.08f)
+                    flapReveal.animateTo(1f, tween(145, easing = FastOutSlowInEasing))
+                }
+                Box(contentAlignment = Alignment.Center) {
+                    DigitGlyph(
+                        char,
+                        modifier = Modifier.graphicsLayer {
+                            scaleY = flapReveal.value
+                            transformOrigin = TransformOrigin(0.5f, 0f)
+                        }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .align(Alignment.Center)
+                            .background(Color.Black.copy(alpha = 0.38f))
+                    )
+                }
             // real timer/clock state upstream (QuickTimerState/StudyTimerState/
+            } else {
             // LiveClockDisplay's formatted millis). This composable never writes
             // back into that state and never delays/holds it — the LaunchedEffect
             // below only starts a fire-and-forget visual animation whenever the
