@@ -3383,7 +3383,13 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var zoomLocked by remember(media.uri) { mutableStateOf(storedViewState.isLocked) }
     var controlsVisible by remember(media.uri) { mutableStateOf(true) }
     var brightnessSliderVisible by remember(media.uri) { mutableStateOf(false) }
-    var readerBrightness by remember(media.uri) { mutableFloatStateOf(1f) }
+    val initialReaderBrightness = remember {
+        (android.provider.Settings.System.getInt(
+            context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, 128
+        ) / 255f).coerceIn(0.05f, 1f)
+    }
+    var readerBrightness by remember { mutableFloatStateOf(initialReaderBrightness) }
+    var readerBrightnessTouched by remember { mutableStateOf(false) }
     val automaticRotateEnabled = remember {
         context.getSharedPreferences("pdf_library", android.content.Context.MODE_PRIVATE)
             .getBoolean("automatic_rotate", false)
@@ -3437,8 +3443,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
-    val markerLayoutIsVertical = renderedPageIsLandscape
-    val pageNavigationIsVertical = false
+    val markerLayoutIsVertical = !renderedPageIsLandscape
+    val pageNavigationIsVertical = renderedPageIsLandscape
     val currentZoom by rememberUpdatedState(zoom)
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
     val markerToolsPanelWidthPx = with(LocalDensity.current) { 210.dp.toPx() }
@@ -3457,7 +3463,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val pageSwipeThreshold = (
         if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
     ).toFloat().times(0.22f).coerceAtLeast(140f)
-
+    LaunchedEffect(pageNavigationIsVertical) { swipeDistance = 0f }
     fun changePage(nextPage: Int) {
         val totalPages = pagePreview?.pageCount ?: return
         val clampedPage = nextPage.coerceIn(0, totalPages - 1)
@@ -3588,14 +3594,20 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
             }
         }
 
-        DisposableEffect(dialogWindow, readerBrightness) {
+        DisposableEffect(dialogWindow) {
             val window = dialogWindow
-            val previousBrightness = window?.attributes?.screenBrightness
-            window?.attributes = window?.attributes?.apply {
-                screenBrightness = readerBrightness.coerceIn(0.05f, 1f)
-            }
+            val originalBrightness = window?.attributes?.screenBrightness
+                ?: android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             onDispose {
-                window?.attributes = window?.attributes?.apply { screenBrightness = previousBrightness ?: -1f }
+                window?.attributes = window?.attributes?.apply { screenBrightness = originalBrightness }
+            }
+        }
+        LaunchedEffect(dialogWindow, readerBrightness) {
+            if (readerBrightness != initialReaderBrightness) readerBrightnessTouched = true
+            if (readerBrightnessTouched) {
+                dialogWindow?.let { w ->
+                    w.attributes = w.attributes.apply { screenBrightness = readerBrightness.coerceIn(0.05f, 1f) }
+                }
             }
         }
 
@@ -3680,7 +3692,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 .pointerInput(media.uri, it.pageIndex, markerEnabled, zoom, panOffset) {
                                     detectTapGestures(
                                         onDoubleTap = {
-                                            if (zoom > 1.01f || panOffset != Offset.Zero) {
+                                            if (zoomLocked) {
+                                                // lock ON: double-tap-drag zoom-er jonno free rakha
+                                            } else if (zoom > 1.01f || panOffset != Offset.Zero) {
                                                 zoom = 1f
                                                 panOffset = Offset.Zero
                                             } else {
@@ -3695,10 +3709,32 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 ) {
                                     val longPressTimeoutMs = 350L
                                     val slop = viewConfiguration.touchSlop
+                                    var lastTapUpTime = 0L
+                                    var lastTapUpPos = Offset.Zero
+                                    val slop = viewConfiguration.touchSlop
 
                                     awaitEachGesture {
                                         val down = awaitFirstDown(requireUnconsumed = false)
                                         val downTime = System.currentTimeMillis()
+                                        if (zoomLocked && !markerEnabled &&
+                                            downTime - lastTapUpTime < 300L &&
+                                            (down.position - lastTapUpPos).getDistance() < 48.dp.toPx()
+                                        ) {
+                                            // double-tap + vertical drag = single-finger zoom (upore tanle zoom in)
+                                            lastTapUpTime = 0L
+                                            controlsVisible = !controlsVisible // prothom tap-er toggle undo
+                                            var lastY = down.position.y
+                                            drag(down.id) { change ->
+                                                change.consume()
+                                                val dy = change.position.y - lastY
+                                                lastY = change.position.y
+                                                zoom = (zoom * kotlin.math.exp(-dy / 400f)).coerceIn(0.7f, 5f)
+                                                panOffset = constrainPdfPan(
+                                                    panOffset, pdfPanBounds(it, pageContainerSize, zoom, rotation)
+                                                )
+                                            }
+                                            return@awaitEachGesture
+                                        }
                                         var multiTouch = false
                                         var becameDrag = false
                                         var longPressFired = false
@@ -3722,6 +3758,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
 
                                         when {
                                             released -> {
+                                                lastTapUpTime = System.currentTimeMillis()
+                                                lastTapUpPos = down.position
                                                 if (undoMarkerCandidate != null) {
                                                     undoMarkerCandidate = null
                                                 } else if (selectedTextForActions != null || selectedTextSelection != null) {
@@ -3827,50 +3865,31 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             else -> {
                                                 // ---- এক আঙুল: pan (zoom করা থাকলে) অথবা swipe (আগের মতোই, transition অপরিবর্তিত) ----
                                                 var lastPos = down.position
+                                                var navAxisLocked: Boolean? = null
                                                 drag(down.id) { change ->
                                                     val panChange = change.position - lastPos
                                                     lastPos = change.position
                                                     change.consume()
 
-                                                    val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
-                                                    val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
-                                                    val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
-                                                    val panBounds = pdfPanBounds(it, pageContainerSize, currentZoom, rotation)
-                                                    val primaryBound = if (pageNavigationIsVertical) panBounds.y else panBounds.x
-                                                    val currentPrimaryPan = if (pageNavigationIsVertical) panOffset.y else panOffset.x
-                                                    val swipeLimit = (
-                                                        if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
-                                                    ).toFloat().coerceAtLeast(1f) * 0.96f
-                                                    fun movePage() {
-                                                        swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
-                                                        pageSwipeVersion += 1
-                                                    }
-
                                                     if (zoomLocked) {
-                                                        // Lock keeps the axes deterministic: the page axis always
-                                                        // navigates and the cross axis continues to pan content.
-                                                        if (isPrimarySwipe) {
-                                                            movePage()
-                                                        } else {
-                                                            val crossAxisOnly = if (pageNavigationIsVertical) {
-                                                                Offset(panChange.x, 0f)
-                                                            } else {
-                                                                Offset(0f, panChange.y)
-                                                            }
-                                                            panOffset = constrainPdfPan(panOffset + crossAxisOnly, panBounds)
-                                                        }
+                                                        val panBounds = pdfPanBounds(it, pageContainerSize, currentZoom, rotation)
+                                                        panOffset = constrainPdfPan(panOffset + panChange, panBounds)
                                                         return@drag
                                                     }
 
-                                                    val atNavigationEdge = primaryBound <= 0.5f ||
-                                                        (primaryPan < 0f && currentPrimaryPan <= -primaryBound + 1f) ||
-                                                        (primaryPan > 0f && currentPrimaryPan >= primaryBound - 1f)
-                                                    if (isPrimarySwipe && atNavigationEdge) {
-                                                        // At a content edge, a deliberate swipe belongs to the pager
-                                                        // even after the user has zoomed or panned the page.
-                                                        movePage()
-                                                    } else {
-                                                        panOffset = constrainPdfPan(panOffset + panChange, panBounds)
+                                                    val total = change.position - down.position
+                                                    val primaryTotal = if (pageNavigationIsVertical) abs(total.y) else abs(total.x)
+                                                    val secondaryTotal = if (pageNavigationIsVertical) abs(total.x) else abs(total.y)
+                                                    if (navAxisLocked == null && (primaryTotal > slop || secondaryTotal > slop)) {
+                                                        navAxisLocked = primaryTotal > secondaryTotal
+                                                    }
+                                                    if (navAxisLocked == true) {
+                                                        val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
+                                                        val swipeLimit = (
+                                                                if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
+                                                                ).toFloat().coerceAtLeast(1f) * 0.96f
+                                                        swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
+                                                        pageSwipeVersion += 1
                                                     }
                                                 }
                                             }
