@@ -3365,6 +3365,7 @@ private fun recognisePdfText(bitmap: Bitmap, pageWidth: Int, pageHeight: Int): L
     }
 }.getOrDefault(emptyList())
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -4493,6 +4494,7 @@ private fun BrightnessThumb() {
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BrightnessTrack(state: SliderState) {
     val range = state.valueRange
@@ -4833,12 +4835,14 @@ fun SectionReorderList(
 ) {
     var localList by remember { mutableStateOf(sections) }
     val listState = rememberLazyListState()
-    val itemWidth = 152.dp
-    val itemWidthPx = with(LocalDensity.current) { itemWidth.toPx() }
-    val edgeScrollPx = with(LocalDensity.current) { 48.dp.toPx() }
-    val reorderScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val itemHeight = 44.dp
+    val itemHeightPx = with(density) { itemHeight.toPx() }
+    val edgeZonePx = with(density) { 40.dp.toPx() }
+    val maxScrollStepPx = with(density) { 14.dp.toPx() }
     var draggingSectionId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
+    var pointerY by remember { mutableStateOf(0f) }
     var orderChangedDuringDrag by remember { mutableStateOf(false) }
     var dragStartOrder by remember { mutableStateOf<List<SectionEntity>>(emptyList()) }
     var pressedSectionId by remember { mutableStateOf<Long?>(null) }
@@ -4847,13 +4851,52 @@ fun SectionReorderList(
         if (draggingSectionId == null) localList = sections
     }
 
-    // A LazyRow owns ordinary horizontal swipes.  Reorder only begins after a
-    // deliberate hold, so selection and scrolling never become drag gestures.
-    LazyRow(
+    fun reorderIfNeeded(id: Long) {
+        val currentIndex = localList.indexOfFirst { it.id == id }
+        if (currentIndex < 0) return
+        val direction = when {
+            dragOffset >= itemHeightPx / 2 && currentIndex < localList.lastIndex -> 1
+            dragOffset <= -itemHeightPx / 2 && currentIndex > 0 -> -1
+            else -> 0
+        }
+        if (direction != 0) {
+            val reordered = localList.toMutableList()
+            val moved = reordered.removeAt(currentIndex)
+            reordered.add(currentIndex + direction, moved)
+            localList = reordered
+            dragOffset -= direction * itemHeightPx
+            orderChangedDuringDrag = true
+        }
+    }
+
+    // Edge auto-scroll only while a long-press drag is active.
+    LaunchedEffect(draggingSectionId) {
+        val id = draggingSectionId ?: return@LaunchedEffect
+        while (draggingSectionId == id) {
+            val layout = listState.layoutInfo
+            val viewportHeight = (layout.viewportEndOffset - layout.viewportStartOffset).toFloat()
+            val step = when {
+                pointerY < edgeZonePx ->
+                    -maxScrollStepPx * ((edgeZonePx - pointerY) / edgeZonePx).coerceIn(0.2f, 1f)
+                pointerY > viewportHeight - edgeZonePx ->
+                    maxScrollStepPx * ((pointerY - (viewportHeight - edgeZonePx)) / edgeZonePx).coerceIn(0.2f, 1f)
+                else -> 0f
+            }
+            if (step != 0f) {
+                val consumed = listState.scrollBy(step)
+                if (consumed != 0f) {
+                    dragOffset += consumed
+                    reorderIfNeeded(id)
+                }
+            }
+            delay(16)
+        }
+    }
+
+    LazyColumn(
         state = listState,
-        modifier = Modifier.widthIn(max = 360.dp).height(52.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        modifier = Modifier.width(200.dp).heightIn(max = 264.dp),
+        contentPadding = PaddingValues(vertical = 4.dp)
     ) {
         items(localList, key = { it.id }) { section ->
             val isDragging = draggingSectionId == section.id
@@ -4869,22 +4912,25 @@ fun SectionReorderList(
             )
             Row(
                 modifier = Modifier
-                    .width(itemWidth)
-                    .fillMaxHeight()
+                    .fillMaxWidth()
+                    .height(itemHeight)
                     .zIndex(if (isDragging) 2f else 0f)
-                    .graphicsLayer { translationX = if (isDragging) dragOffset else 0f; scaleX = rowScale; scaleY = rowScale }
+                    .graphicsLayer { translationY = if (isDragging) dragOffset else 0f; scaleX = rowScale; scaleY = rowScale }
                     .clip(RoundedCornerShape(12.dp))
                     .background(rowBackground)
-                    .pointerInput(section.id, localList) {
+                    // Keyed by id only: keying by localList restarted the gesture on every reorder.
+                    .pointerInput(section.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
-                                val originIndex = localList.indexOfFirst { it.id == section.id }
-                                if (originIndex < 0) return@detectDragGesturesAfterLongPress
+                                if (localList.none { it.id == section.id }) return@detectDragGesturesAfterLongPress
                                 draggingSectionId = section.id
                                 dragStartOrder = localList
                                 dragOffset = 0f
                                 orderChangedDuringDrag = false
                                 pressedSectionId = section.id
+                                val itemOffset = listState.layoutInfo.visibleItemsInfo
+                                    .firstOrNull { it.key == section.id }?.offset ?: 0
+                                pointerY = itemOffset + itemHeightPx / 2f
                             },
                             onDragEnd = {
                                 if (draggingSectionId == section.id) {
@@ -4907,31 +4953,11 @@ fun SectionReorderList(
                         ) { change, amount ->
                             if (draggingSectionId != section.id) return@detectDragGesturesAfterLongPress
                             change.consume()
-                            dragOffset += amount.x
-                            val currentIndex = localList.indexOfFirst { it.id == section.id }
-                            val direction = when {
-                                dragOffset >= itemWidthPx / 2 && currentIndex < localList.lastIndex -> 1
-                                dragOffset <= -itemWidthPx / 2 && currentIndex > 0 -> -1
-                                else -> 0
-                            }
-                            if (direction != 0) {
-                                val reordered = localList.toMutableList()
-                                val moved = reordered.removeAt(currentIndex)
-                                reordered.add(currentIndex + direction, moved)
-                                localList = reordered
-                                dragOffset -= direction * itemWidthPx
-                                orderChangedDuringDrag = true
-                            }
-
-                            // Continue scrolling only while a deliberate reorder is active.
+                            dragOffset += amount.y
                             val itemOffset = listState.layoutInfo.visibleItemsInfo
                                 .firstOrNull { it.key == section.id }?.offset ?: 0
-                            val pointerX = itemOffset + change.position.x
-                            when {
-                                pointerX < edgeScrollPx -> reorderScope.launch { listState.scrollBy(-edgeScrollPx / 2f) }
-                                pointerX > listState.layoutInfo.viewportEndOffset - edgeScrollPx ->
-                                    reorderScope.launch { listState.scrollBy(edgeScrollPx / 2f) }
-                            }
+                            pointerY = itemOffset + dragOffset + change.position.y
+                            reorderIfNeeded(section.id)
                         }
                     }
                     .pointerInput(section.id) {
