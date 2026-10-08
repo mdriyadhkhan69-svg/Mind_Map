@@ -3711,7 +3711,6 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     val slop = viewConfiguration.touchSlop
                                     var lastTapUpTime = 0L
                                     var lastTapUpPos = Offset.Zero
-                                    val slop = viewConfiguration.touchSlop
 
                                     awaitEachGesture {
                                         val down = awaitFirstDown(requireUnconsumed = false)
