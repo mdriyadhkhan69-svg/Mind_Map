@@ -44,9 +44,11 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -56,6 +58,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -147,7 +150,7 @@ import androidx.compose.ui.layout.positionInWindow
 import kotlinx.coroutines.withTimeoutOrNull
 // ---- preset color swatches for node color / glow color pickers ----
 private val ColorSwatches = listOf(
-    0xFF64FFDAL, 0xFFBB86FCL, 0xFFFF6E6EL, 0xFFFFD166L,
+    0xFF38BDF8L, 0xFFBB86FCL, 0xFFFF6E6EL, 0xFFFFD166L,
     0xFF6EC6FFL, 0xFF4CAF50L, 0xFFFFFFFFL, 0xFFFF9F1CL
 )
 
@@ -199,7 +202,7 @@ private val WhiteColors = MindMapColors(
     barBg = Color(0xFFFFFFFF)
 )
 
-private val AccentCyan = Color(0xFF64FFDA)
+private val AccentCyan = Color(0xFF38BDF8)
 private val AccentPurple = Color(0xFFBB86FC)
 private val GlassDark1 = Color(0xFF23243A)
 private val GlassDark2 = Color(0xFF1A1B2E)
@@ -376,8 +379,11 @@ fun MindMapApp(
     val pendingImportPackageUri by com.example.mindmap.ImportMindMapState.pendingPackageUri
     LaunchedEffect(pendingImportPackageUri) {
         val value = pendingImportPackageUri ?: return@LaunchedEffect
-        importPackageUri = value
-        com.example.mindmap.ImportMindMapState.pendingPackageUri.value = null
+        if (importPackageUri != value) {
+            importPackageUri = value
+            activeHome = "mind_map"
+            homePreferences.edit().putString("last_home", "mind_map").apply()
+        }
     }
 
     fun openHome(home: String) {
@@ -386,6 +392,7 @@ fun MindMapApp(
     }
 
     val pendingExternalPdfUri by com.example.mindmap.ExternalOpenState.pendingPdfUri
+    val pendingExternalOpenError by com.example.mindmap.ExternalOpenState.pendingOpenError
     LaunchedEffect(pendingExternalPdfUri) {
         val uriString = pendingExternalPdfUri ?: return@LaunchedEffect
         val externalUri = Uri.parse(uriString)
@@ -564,7 +571,23 @@ fun MindMapApp(
                 sectionViewModel.selectSection(newSectionId)
                 openHome("mind_map")
             },
-            onDismiss = { importPackageUri = null }
+            onDismiss = {
+                com.example.mindmap.ImportMindMapState.complete(context, uriString)
+                importPackageUri = null
+            }
+        )
+    }
+
+    pendingExternalOpenError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { com.example.mindmap.ExternalOpenState.pendingOpenError.value = null },
+            title = { Text("Unable to open file") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { com.example.mindmap.ExternalOpenState.pendingOpenError.value = null }) {
+                    Text("OK")
+                }
+            }
         )
     }
 }
@@ -3282,6 +3305,36 @@ private fun isPdfContentPannable(
     return renderedWidth > targetWidth + 0.5f || renderedHeight > targetHeight + 0.5f
 }
 
+/** The screen-space pan range after the current scale and quarter-turn. */
+private fun pdfPanBounds(
+    preview: PdfPagePreview,
+    containerSize: IntSize,
+    zoom: Float,
+    rotation: Float
+): Offset {
+    if (containerSize == IntSize.Zero) return Offset.Zero
+    val isQuarterTurn = abs(rotation % 180f) > 45f
+    val fitWidth = if (isQuarterTurn) containerSize.height else containerSize.width
+    val fitHeight = if (isQuarterTurn) containerSize.width else containerSize.height
+    val scale = minOf(
+        fitWidth.toFloat() / preview.bitmap.width.coerceAtLeast(1),
+        fitHeight.toFloat() / preview.bitmap.height.coerceAtLeast(1)
+    ) * zoom
+    val unrotatedWidth = preview.bitmap.width * scale
+    val unrotatedHeight = preview.bitmap.height * scale
+    val displayedWidth = if (isQuarterTurn) unrotatedHeight else unrotatedWidth
+    val displayedHeight = if (isQuarterTurn) unrotatedWidth else unrotatedHeight
+    return Offset(
+        ((displayedWidth - containerSize.width).coerceAtLeast(0f) / 2f),
+        ((displayedHeight - containerSize.height).coerceAtLeast(0f) / 2f)
+    )
+}
+
+private fun constrainPdfPan(offset: Offset, bounds: Offset) = Offset(
+    offset.x.coerceIn(-bounds.x, bounds.x),
+    offset.y.coerceIn(-bounds.y, bounds.y)
+)
+
 private fun recognisePdfText(bitmap: Bitmap, pageWidth: Int, pageHeight: Int): List<PdfTextContent> = runCatching {
     val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
         com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
@@ -3328,6 +3381,12 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var panOffset by remember(media.uri) { mutableStateOf(Offset(storedViewState.panX, storedViewState.panY)) }
     var zoomLocked by remember(media.uri) { mutableStateOf(storedViewState.isLocked) }
     var controlsVisible by remember(media.uri) { mutableStateOf(true) }
+    var brightnessSliderVisible by remember(media.uri) { mutableStateOf(false) }
+    var readerBrightness by remember(media.uri) { mutableFloatStateOf(1f) }
+    val automaticRotateEnabled = remember {
+        context.getSharedPreferences("pdf_library", android.content.Context.MODE_PRIVATE)
+            .getBoolean("automatic_rotate", false)
+    }
     var markerEnabled by remember(media.uri) { mutableStateOf(false) }
     var markerColor by remember(media.uri) { mutableStateOf(Color(0xFFFFEB3B)) }
     var markerOpacity by remember(media.uri) { mutableFloatStateOf(0.38f) }
@@ -3346,15 +3405,16 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var pageDirection by remember(media.uri) { mutableIntStateOf(1) }
     var pageSwipeVersion by remember(media.uri) { mutableIntStateOf(0) }
     var skipPageAnimation by remember(media.uri) { mutableStateOf(false) }
-    LaunchedEffect(deviceIsLandscape, pagePreview?.pageWidth, pagePreview?.pageHeight) {
-        // Keep the rendered PDF in sync with the phone's current orientation.
-        // Old pan/swipe coordinates are invalid after a quarter turn.
-        val sourceIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
-        val deviceRotation = if (sourceIsPortrait == deviceIsLandscape) 90f else 0f
-        if (rotation != deviceRotation) {
-            rotation = deviceRotation
-            panOffset = Offset.Zero
-            swipeDistance = 0f
+    LaunchedEffect(automaticRotateEnabled, deviceIsLandscape, pagePreview?.pageWidth, pagePreview?.pageHeight) {
+        if (automaticRotateEnabled) {
+            // Follow the physical device only when the reader setting enables it.
+            // Keep page, zoom and pan state intact while the visual rotation changes.
+            val sourceIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
+            val deviceRotation = if (sourceIsPortrait == deviceIsLandscape) 90f else 0f
+            if (rotation != deviceRotation) {
+                rotation = deviceRotation
+                swipeDistance = 0f
+            }
         }
     }
     val initialMarkerFabOffsetPx = with(LocalDensity.current) { Offset(0f, -64.dp.toPx()) }
@@ -3370,19 +3430,13 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         isPdfDownloaded = withContext(Dispatchers.IO) { isPdfAlreadyDownloaded(context, media) }
     }
     val activePageIndex = pagePreview?.pageIndex ?: requestedPage
-    // Keep the existing unlocked gesture direction.  In lock mode, however,
-    // navigation follows the actual rendered page orientation: portrait is
-    // vertical and a quarter-turn swaps that direction.
+    // Page navigation always follows the visible page shape, regardless of lock
+    // or zoom state: portrait pages use horizontal swipes and landscape pages
+    // use vertical swipes.
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
-    val pageNavigationIsVertical = if (zoomLocked) {
-        // পাতা visually লম্বা (tall) দেখাচ্ছে হলে swipe = left-right (false),
-        // পাতা visually চওড়া (wide) দেখাচ্ছে হলে swipe = up-down (true)।
-        renderedPageIsLandscape
-    } else {
-        isQuarterTurn
-    }
+    val pageNavigationIsVertical = renderedPageIsLandscape
     val currentZoom by rememberUpdatedState(zoom)
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
     val markerToolsPanelWidthPx = with(LocalDensity.current) { 210.dp.toPx() }
@@ -3424,9 +3478,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     LaunchedEffect(pageSwipeVersion) {
         delay(100)
         val distance = swipeDistance
-        if (abs(distance) < 1f || (!zoomLocked && pagePreview?.let {
-                isPdfContentPannable(it, pageContainerSize, zoom, rotation)
-            } == true)) return@LaunchedEffect
+        if (abs(distance) < 1f) return@LaunchedEffect
         val currentPreview = pagePreview ?: return@LaunchedEffect
         val navigationSize = (
             if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
@@ -3531,6 +3583,17 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
             dialogWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             onDispose {
                 dialogWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+
+        DisposableEffect(dialogWindow, readerBrightness) {
+            val window = dialogWindow
+            val previousBrightness = window?.attributes?.screenBrightness
+            window?.attributes = window?.attributes?.apply {
+                screenBrightness = readerBrightness.coerceIn(0.05f, 1f)
+            }
+            onDispose {
+                window?.attributes = window?.attributes?.apply { screenBrightness = previousBrightness ?: -1f }
             }
         }
 
@@ -3662,6 +3725,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                 } else if (selectedTextForActions != null || selectedTextSelection != null) {
                                                     selectedTextForActions = null
                                                     selectedTextSelection = null
+                                                } else if (brightnessSliderVisible) {
+                                                    brightnessSliderVisible = false
                                                 } else {
                                                     controlsVisible = !controlsVisible
                                                 }
@@ -3751,7 +3816,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     val panChange = event.calculatePan()
                                                     if (!zoomLocked) {
                                                         zoom = (zoom * zoomChange).coerceIn(0.7f, 5f)
-                                                        panOffset += panChange
+                                                        panOffset = constrainPdfPan(panOffset + panChange, pdfPanBounds(it, pageContainerSize, zoom, rotation))
                                                     }
                                                     event.changes.forEach { c -> if (c.positionChanged()) c.consume() }
                                                 } while (event.changes.any { it.pressed })
@@ -3768,42 +3833,42 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                     val primaryPan = if (pageNavigationIsVertical) panChange.y else panChange.x
                                                     val secondaryPan = if (pageNavigationIsVertical) panChange.x else panChange.y
                                                     val isPrimarySwipe = abs(primaryPan) > abs(secondaryPan)
+                                                    val panBounds = pdfPanBounds(it, pageContainerSize, currentZoom, rotation)
+                                                    val primaryBound = if (pageNavigationIsVertical) panBounds.y else panBounds.x
+                                                    val currentPrimaryPan = if (pageNavigationIsVertical) panOffset.y else panOffset.x
+                                                    val swipeLimit = (
+                                                        if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
+                                                    ).toFloat().coerceAtLeast(1f) * 0.96f
+                                                    fun movePage() {
+                                                        swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
+                                                        pageSwipeVersion += 1
+                                                    }
 
-                                                    if (zoomLocked && abs(currentZoom - 1f) <= 0.001f && !isPdfContentPannable(it, pageContainerSize, currentZoom, rotation)) {
-                                                        // Locked: navigation axis (pageNavigationIsVertical, পাতা
-                                                        // visually লম্বা না চওড়া তার উপর নির্ভর করে) সবসময় swipe করবে,
-                                                        // তার লম্ব axis সবসময় pan করবে।
+                                                    if (zoomLocked) {
+                                                        // Lock keeps the axes deterministic: the page axis always
+                                                        // navigates and the cross axis continues to pan content.
                                                         if (isPrimarySwipe) {
-                                                            val swipeLimit = (
-                                                                    if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
-                                                                    ).toFloat().coerceAtLeast(1f) * 0.96f
-                                                            swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
-                                                            pageSwipeVersion += 1
+                                                            movePage()
                                                         } else {
-                                                            panOffset += if (pageNavigationIsVertical) {
+                                                            val crossAxisOnly = if (pageNavigationIsVertical) {
                                                                 Offset(panChange.x, 0f)
                                                             } else {
                                                                 Offset(0f, panChange.y)
                                                             }
+                                                            panOffset = constrainPdfPan(panOffset + crossAxisOnly, panBounds)
                                                         }
                                                         return@drag
                                                     }
 
-                                                    // Only the exact fit scale is a page-swipe state. Any pinch
-                                                    // transformed scale (in or out), or overflowed content, is pan.
-                                                    val canPanCanvas = abs(currentZoom - 1f) > 0.001f || isPdfContentPannable(
-                                                        it, pageContainerSize, currentZoom, rotation
-                                                    )
-                                                    if (canPanCanvas) {
-                                                        // A pannable rendered page owns every one-finger drag,
-                                                        // irrespective of whether the scale is above or below 1.
-                                                        panOffset += panChange
-                                                    } else if (isPrimarySwipe) {
-                                                        val swipeLimit = (
-                                                                if (pageNavigationIsVertical) pageContainerSize.height else pageContainerSize.width
-                                                                ).toFloat().coerceAtLeast(1f) * 0.96f
-                                                        swipeDistance = (swipeDistance + primaryPan).coerceIn(-swipeLimit, swipeLimit)
-                                                        pageSwipeVersion += 1
+                                                    val atNavigationEdge = primaryBound <= 0.5f ||
+                                                        (primaryPan < 0f && currentPrimaryPan <= -primaryBound + 1f) ||
+                                                        (primaryPan > 0f && currentPrimaryPan >= primaryBound - 1f)
+                                                    if (isPrimarySwipe && atNavigationEdge) {
+                                                        // At a content edge, a deliberate swipe belongs to the pager
+                                                        // even after the user has zoomed or panned the page.
+                                                        movePage()
+                                                    } else {
+                                                        panOffset = constrainPdfPan(panOffset + panChange, panBounds)
                                                     }
                                                 }
                                             }
@@ -3981,6 +4046,13 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f).padding(start = 4.dp)
                                 )
+                                IconButton(onClick = { brightnessSliderVisible = !brightnessSliderVisible }) {
+                                    Icon(
+                                        Icons.Default.WbSunny,
+                                        contentDescription = if (brightnessSliderVisible) "Hide brightness" else "Show brightness",
+                                        tint = if (brightnessSliderVisible) AccentCyan else SoftNeutral
+                                    )
+                                }
                                 if (!isPdfDownloaded) TextButton(
                                     enabled = !isPdfDownloading,
                                     onClick = {
@@ -4023,6 +4095,42 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 Spacer(Modifier.width(10.dp))
                                 Text("Downloading...", color = Color.White, fontSize = 13.sp)
                             }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = brightnessSliderVisible,
+                    enter = fadeIn(tween(160)) + scaleIn(tween(180)),
+                    exit = fadeOut(tween(140)) + scaleOut(tween(160)),
+                    modifier = Modifier
+                        .align(if (deviceIsLandscape) Alignment.CenterEnd else Alignment.TopCenter)
+                        .padding(top = if (deviceIsLandscape) 0.dp else 64.dp, end = if (deviceIsLandscape) 18.dp else 0.dp)
+                ) {
+                    Surface(
+                        color = Color(0xE8171A2B),
+                        shape = RoundedCornerShape(18.dp),
+                        shadowElevation = 10.dp,
+                        modifier = Modifier.pointerInput("brightness-slider") { detectTapGestures(onTap = {}) }
+                    ) {
+                        if (deviceIsLandscape) {
+                            Box(modifier = Modifier.width(46.dp).height(190.dp), contentAlignment = Alignment.Center) {
+                                Slider(
+                                    value = readerBrightness,
+                                    onValueChange = { readerBrightness = it },
+                                    valueRange = 0.05f..1f,
+                                    colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan, inactiveTrackColor = Color.White.copy(alpha = 0.22f)),
+                                    modifier = Modifier.width(166.dp).graphicsLayer { rotationZ = -90f }
+                                )
+                            }
+                        } else {
+                            Slider(
+                                value = readerBrightness,
+                                onValueChange = { readerBrightness = it },
+                                valueRange = 0.05f..1f,
+                                colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan, inactiveTrackColor = Color.White.copy(alpha = 0.22f)),
+                                modifier = Modifier.width(224.dp).padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
                         }
                     }
                 }
@@ -4259,7 +4367,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     // Vertical PDF: horizontal swatches, horizontal slider নিচে
                                     Column(modifier = Modifier.width(186.dp).padding(10.dp)) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
+                                            listOf(Color(0xFFFFEB3B), Color(0xFF38BDF8), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
                                                 Box(
                                                     modifier = Modifier
                                                         .size(24.dp)
@@ -4296,7 +4404,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            listOf(Color(0xFFFFEB3B), Color(0xFF64FFDA), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
+                                            listOf(Color(0xFFFFEB3B), Color(0xFF38BDF8), Color(0xFFFF80AB), Color(0xFFBB86FC), Color(0xFFFF9800)).forEach { color ->
                                                 Box(
                                                     modifier = Modifier
                                                         .size(24.dp)
@@ -4695,33 +4803,31 @@ fun SectionReorderList(
     themeColors: MindMapColors
 ) {
     var localList by remember { mutableStateOf(sections) }
-    val itemHeight = 44.dp
-    val itemHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { itemHeight.toPx() }
+    val listState = rememberLazyListState()
+    val itemWidth = 152.dp
+    val itemWidthPx = with(LocalDensity.current) { itemWidth.toPx() }
+    val edgeScrollPx = with(LocalDensity.current) { 48.dp.toPx() }
+    val reorderScope = rememberCoroutineScope()
     var draggingSectionId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
     var orderChangedDuringDrag by remember { mutableStateOf(false) }
     var dragStartOrder by remember { mutableStateOf<List<SectionEntity>>(emptyList()) }
-    val releaseOffset = remember { Animatable(0f) }
-    var settlingDrag by remember { mutableStateOf(false) }
-    var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    val dragScope = rememberCoroutineScope()
     var pressedSectionId by remember { mutableStateOf<Long?>(null) }
 
-    LaunchedEffect(sections, draggingSectionId, settlingDrag) {
-        if (draggingSectionId == null && !settlingDrag) {
-            localList = sections
-        }
+    LaunchedEffect(sections, draggingSectionId) {
+        if (draggingSectionId == null) localList = sections
     }
 
-    Column(modifier = Modifier.width(180.dp).heightIn(max = 320.dp)) {
-        localList.forEachIndexed { index, section ->
-            key(section.id) {
+    // A LazyRow owns ordinary horizontal swipes.  Reorder only begins after a
+    // deliberate hold, so selection and scrolling never become drag gestures.
+    LazyRow(
+        state = listState,
+        modifier = Modifier.widthIn(max = 360.dp).height(52.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        items(localList, key = { it.id }) { section ->
             val isDragging = draggingSectionId == section.id
-            val offsetY = when {
-                isDragging && settlingDrag -> releaseOffset.value
-                isDragging -> dragOffset
-                else -> 0f
-            }
             val rowScale by animateFloatAsState(
                 targetValue = if (pressedSectionId == section.id || isDragging) 0.97f else 1f,
                 animationSpec = tween(120),
@@ -4734,18 +4840,17 @@ fun SectionReorderList(
             )
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(itemHeight)
+                    .width(itemWidth)
+                    .fillMaxHeight()
                     .zIndex(if (isDragging) 2f else 0f)
-                    .graphicsLayer { translationY = offsetY; scaleX = rowScale; scaleY = rowScale }
+                    .graphicsLayer { translationX = if (isDragging) dragOffset else 0f; scaleX = rowScale; scaleY = rowScale }
+                    .clip(RoundedCornerShape(12.dp))
                     .background(rowBackground)
-                    .pointerInput(section.id) {
-                        detectDragGestures(
+                    .pointerInput(section.id, localList) {
+                        detectDragGesturesAfterLongPress(
                             onDragStart = {
-                                settleJob?.cancel()
-                                settlingDrag = false
                                 val originIndex = localList.indexOfFirst { it.id == section.id }
-                                if (originIndex < 0) return@detectDragGestures
+                                if (originIndex < 0) return@detectDragGesturesAfterLongPress
                                 draggingSectionId = section.id
                                 dragStartOrder = localList
                                 dragOffset = 0f
@@ -4753,78 +4858,69 @@ fun SectionReorderList(
                                 pressedSectionId = section.id
                             },
                             onDragEnd = {
-                                if (draggingSectionId != section.id) return@detectDragGestures
-                                if (orderChangedDuringDrag) onReorder(localList)
-                                settleJob = dragScope.launch {
-                                    releaseOffset.snapTo(dragOffset)
-                                    settlingDrag = true
-                                    releaseOffset.animateTo(0f, tween(120))
-                                    if (draggingSectionId == section.id) {
-                                        draggingSectionId = null
-                                        settlingDrag = false
-                                        dragOffset = 0f
-                                        orderChangedDuringDrag = false
-                                        pressedSectionId = null
-                                    }
+                                if (draggingSectionId == section.id) {
+                                    if (orderChangedDuringDrag) onReorder(localList)
+                                    draggingSectionId = null
+                                    dragOffset = 0f
+                                    orderChangedDuringDrag = false
+                                    pressedSectionId = null
                                 }
                             },
                             onDragCancel = {
-                                if (draggingSectionId != section.id) return@detectDragGestures
-                                localList = dragStartOrder
-                                settleJob = dragScope.launch {
-                                    releaseOffset.snapTo(dragOffset)
-                                    settlingDrag = true
-                                    releaseOffset.animateTo(0f, tween(140))
-                                    if (draggingSectionId == section.id) {
-                                        draggingSectionId = null
-                                        settlingDrag = false
-                                        dragOffset = 0f
-                                        orderChangedDuringDrag = false
-                                        pressedSectionId = null
-                                    }
+                                if (draggingSectionId == section.id) {
+                                    localList = dragStartOrder
+                                    draggingSectionId = null
+                                    dragOffset = 0f
+                                    orderChangedDuringDrag = false
+                                    pressedSectionId = null
                                 }
                             }
                         ) { change, amount ->
+                            if (draggingSectionId != section.id) return@detectDragGesturesAfterLongPress
                             change.consume()
-                            if (draggingSectionId != section.id) return@detectDragGestures
-                            dragOffset += amount.y
+                            dragOffset += amount.x
                             val currentIndex = localList.indexOfFirst { it.id == section.id }
                             val direction = when {
-                                dragOffset >= itemHeightPx / 2 && currentIndex < localList.lastIndex -> 1
-                                dragOffset <= -itemHeightPx / 2 && currentIndex > 0 -> -1
+                                dragOffset >= itemWidthPx / 2 && currentIndex < localList.lastIndex -> 1
+                                dragOffset <= -itemWidthPx / 2 && currentIndex > 0 -> -1
                                 else -> 0
                             }
                             if (direction != 0) {
                                 val reordered = localList.toMutableList()
-                                val movedSection = reordered.removeAt(currentIndex)
-                                reordered.add(currentIndex + direction, movedSection)
+                                val moved = reordered.removeAt(currentIndex)
+                                reordered.add(currentIndex + direction, moved)
                                 localList = reordered
-                                dragOffset -= direction * itemHeightPx
+                                dragOffset -= direction * itemWidthPx
                                 orderChangedDuringDrag = true
+                            }
+
+                            // Continue scrolling only while a deliberate reorder is active.
+                            val itemOffset = listState.layoutInfo.visibleItemsInfo
+                                .firstOrNull { it.key == section.id }?.offset ?: 0
+                            val pointerX = itemOffset + change.position.x
+                            when {
+                                pointerX < edgeScrollPx -> reorderScope.launch { listState.scrollBy(-edgeScrollPx / 2f) }
+                                pointerX > listState.layoutInfo.viewportEndOffset - edgeScrollPx ->
+                                    reorderScope.launch { listState.scrollBy(edgeScrollPx / 2f) }
                             }
                         }
                     }
-                    .padding(horizontal = 12.dp),
+                    .pointerInput(section.id) {
+                        detectTapGestures(
+                            onPress = {
+                                pressedSectionId = section.id
+                                tryAwaitRelease()
+                                if (draggingSectionId != section.id) pressedSectionId = null
+                            },
+                            onTap = { onSelect(section.id) }
+                        )
+                    }
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("≡", color = themeColors.textPrimary.copy(alpha = 0.45f), fontSize = 16.sp)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = section.title, color = themeColors.textPrimary, fontSize = 15.sp,
-                    modifier = Modifier
-                        .weight(1f)
-                        .pointerInput(section.id) {
-                            detectTapGestures(
-                                onPress = {
-                                    pressedSectionId = section.id
-                                    tryAwaitRelease()
-                                    pressedSectionId = null
-                                },
-                                onTap = { onSelect(section.id) }
-                            )
-                        }
-                )
-            }
+                Spacer(Modifier.width(7.dp))
+                Text(section.title, color = themeColors.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -5155,7 +5251,7 @@ private fun LineStyleDialog(
                 )
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = {
-                        selectedColor = 0xFF64FFDA
+                        selectedColor = 0xFF38BDF8
                         thickness = 4f
                         onUpdate(line.copy(colorArgb = selectedColor, strokeWidth = thickness))
                     }) { Text("Default", color = mutedColor) }
@@ -5175,7 +5271,7 @@ private fun LineStyleDialog(
             },
             allowReset = true,
             onReset = {
-                selectedColor = 0xFF64FFDA
+                selectedColor = 0xFF38BDF8
                 thickness = 4f
                 onUpdate(line.copy(colorArgb = selectedColor, strokeWidth = thickness))
                 showColorPicker = false
@@ -5199,7 +5295,7 @@ private fun BoxStyleDialog(
     val textColor = if (isWhiteTheme) Color(0xFF1A1A1A) else Color.White
     val mutedColor = if (isWhiteTheme) Color(0xFF5E5E68) else Color.LightGray
     val dialogBrush = if (isWhiteTheme) Brush.linearGradient(listOf(Color.White, Color(0xFFF0F1F6))) else Brush.linearGradient(listOf(GlassDark1, GlassDark2))
-    val displayColor = Color(selectedColor ?: 0xFF64FFDA)
+    val displayColor = Color(selectedColor ?: 0xFF38BDF8)
 
     fun updateStyle() = onStyleChange(selectedColor, node.textColorArgb, widthScale, heightScale)
 
@@ -5243,7 +5339,7 @@ private fun BoxStyleDialog(
 
     if (showBoxColorPicker) {
         ColorPickerDialog(
-            title = "Box color", initialColorArgb = selectedColor ?: 0xFF64FFDA,
+            title = "Box color", initialColorArgb = selectedColor ?: 0xFF38BDF8,
             onDismiss = { showBoxColorPicker = false },
             onSelect = { color -> selectedColor = color; updateStyle(); showBoxColorPicker = false },
             allowReset = false, onReset = {}
@@ -6522,6 +6618,7 @@ private fun PdfLibraryHomeDialog(
     var sectionTextColorFor by remember { mutableStateOf<PdfLibrarySection?>(null) }
     var sectionIconPickerFor by remember { mutableStateOf<PdfLibrarySection?>(null) }
     var libraryStyle by remember { mutableStateOf(loadPdfLibraryStyle(context)) }
+    var automaticRotateEnabled by remember { mutableStateOf(libraryPreferences.getBoolean("automatic_rotate", false)) }
     var draggingSectionId by remember { mutableStateOf<String?>(null) }
     val sectionReorderDistance = remember { mutableStateMapOf<String, Float>() }
     val currentSections by rememberUpdatedState(sections)
@@ -7063,6 +7160,11 @@ private fun PdfLibraryHomeDialog(
         PdfLibrarySettingsDialog(
             style = libraryStyle,
             onStyleChange = ::updateLibraryStyle,
+            automaticRotateEnabled = automaticRotateEnabled,
+            onAutomaticRotateChange = { enabled ->
+                automaticRotateEnabled = enabled
+                libraryPreferences.edit().putBoolean("automatic_rotate", enabled).apply()
+            },
             onDismiss = { showLibrarySettings = false }
         )
     }
@@ -7403,6 +7505,8 @@ private fun RemovePdfConfirmDialog(
 private fun PdfLibrarySettingsDialog(
     style: PdfLibraryStyle,
     onStyleChange: (PdfLibraryStyle) -> Unit,
+    automaticRotateEnabled: Boolean,
+    onAutomaticRotateChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     var picker by remember { mutableStateOf<String?>(null) }
@@ -7474,6 +7578,22 @@ private fun PdfLibrarySettingsDialog(
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isWhiteTheme) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f))
                     ) { Text("White", color = if (isWhiteTheme) Color.White else dialogMuted) }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automatic Rotate", fontWeight = FontWeight.SemiBold)
+                        Text("Adapt the PDF reader when the device rotates", color = dialogMuted, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = automaticRotateEnabled,
+                        onCheckedChange = onAutomaticRotateChange,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = AccentCyan,
+                            checkedTrackColor = AccentCyan.copy(alpha = 0.35f)
+                        )
+                    )
                 }
 
                 Spacer(Modifier.height(14.dp))

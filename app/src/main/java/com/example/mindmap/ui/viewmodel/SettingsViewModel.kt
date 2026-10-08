@@ -24,7 +24,7 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ThemeMode.DEFAULT)
 
     val glowColorArgb: StateFlow<Long> = repository.glowColorArgb
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0xFF64FFDA)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0xFF38BDF8)
 
     val zoomEnabled: StateFlow<Boolean> = repository.zoomEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)

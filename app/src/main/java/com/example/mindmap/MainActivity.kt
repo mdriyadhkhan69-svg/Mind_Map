@@ -11,6 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
+import com.example.mindmap.data.share.MindMapShareManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.room.Room
 import com.example.mindmap.data.AppDatabase
 import com.example.mindmap.data.LineRepository
@@ -35,6 +40,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.example.mindmap.ui.screens.FloatingPopupSettingsState.ensureLoaded(applicationContext)
+        ImportMindMapState.ensureLoaded(applicationContext)
         handleViewIntent(intent)
         val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "mindmap_db")
             .addMigrations(AppDatabase.MIGRATION_4_5)
@@ -83,6 +89,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        ImportMindMapState.ensureLoaded(applicationContext)
         handleViewIntent(intent)
     }
 
@@ -103,33 +110,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleViewIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            intent.data?.let { uri ->
-                runCatching {
-                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val incomingUris = linkedSetOf<android.net.Uri>()
+        when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data?.let(incomingUris::add)
+            Intent.ACTION_SEND -> {
+                androidx.core.content.IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    ?.let(incomingUris::add)
+                intent.clipData?.let { clip ->
+                    for (index in 0 until clip.itemCount) clip.getItemAt(index).uri?.let(incomingUris::add)
                 }
-                val isMindMapSharePackage = intent.type == com.example.mindmap.data.share.MindMapShareManager.SHARE_MIME_TYPE ||
-                        uri.lastPathSegment?.endsWith(
-                            ".${com.example.mindmap.data.share.MindMapShareManager.SHARE_FILE_EXTENSION}",
-                            ignoreCase = true
-                        ) == true
-                if (isMindMapSharePackage) {
-                    ImportMindMapState.pendingPackageUri.value = uri.toString()
-                } else {
-                    ExternalOpenState.pendingPdfUri.value = uri.toString()
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                androidx.core.content.IntentCompat.getParcelableArrayListExtra(
+                    intent, Intent.EXTRA_STREAM, android.net.Uri::class.java
+                )?.forEach(incomingUris::add)
+                intent.clipData?.let { clip ->
+                    for (index in 0 until clip.itemCount) clip.getItemAt(index).uri?.let(incomingUris::add)
                 }
             }
         }
-        if (intent?.action == Intent.ACTION_SEND &&
-            intent.type == com.example.mindmap.data.share.MindMapShareManager.SHARE_MIME_TYPE
-        ) {
-            androidx.core.content.IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, android.net.Uri::class.java)?.let { uri ->
-                runCatching {
-                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                ImportMindMapState.pendingPackageUri.value = uri.toString()
-            }
-        }
+        incomingUris.forEach(::routeIncomingFile)
+
         if (intent?.getBooleanExtra("open_timer", false) == true) {
             com.example.mindmap.TimerNavigationState.requestOpenTimer.value = true
         }
@@ -140,5 +141,38 @@ class MainActivity : ComponentActivity() {
             com.example.mindmap.ReminderNavigationState.pendingSectionId.value = intent.getLongExtra("reminder_section_id", 0L).takeIf { it != 0L }
             com.example.mindmap.ReminderNavigationState.pendingNodeId.value = intent.getLongExtra("reminder_node_id", 0L).takeIf { it != 0L }
         }
+    }
+
+    private fun routeIncomingFile(uri: android.net.Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        lifecycleScope.launch {
+            // Messaging providers frequently discard the original MIME type and filename.
+            // Validate the real ZIP/package content first, before considering a PDF fallback.
+            val packageFile = withContext(Dispatchers.IO) {
+                MindMapShareManager.prepareIncomingPackage(applicationContext, uri)
+            }
+            if (packageFile != null) {
+                ImportMindMapState.enqueue(applicationContext, uri.toString(), android.net.Uri.fromFile(packageFile).toString())
+            } else if (isPdfUri(uri)) {
+                ExternalOpenState.pendingPdfUri.value = uri.toString()
+            } else {
+                ExternalOpenState.pendingOpenError.value = "This file is not a valid Mind Map package or PDF."
+            }
+        }
+    }
+
+    private suspend fun isPdfUri(uri: android.net.Uri): Boolean = withContext(Dispatchers.IO) {
+        val mimeType = contentResolver.getType(uri)
+        if (mimeType.equals("application/pdf", ignoreCase = true)) return@withContext true
+        val filenameLooksPdf = uri.lastPathSegment?.substringBefore('?')?.endsWith(".pdf", ignoreCase = true) == true
+        if (filenameLooksPdf) return@withContext true
+        runCatching {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val header = ByteArray(5)
+                stream.read(header) == header.size && String(header, Charsets.US_ASCII) == "%PDF-"
+            } ?: false
+        }.getOrDefault(false)
     }
 }

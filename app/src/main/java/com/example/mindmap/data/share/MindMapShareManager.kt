@@ -16,6 +16,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FileInputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -148,21 +149,35 @@ object MindMapShareManager {
     fun shareUriForFile(context: Context, file: File): Uri =
         FileProvider.getUriForFile(context, "${context.packageName}.attachments", file)
 
-    /** Receiver side: copies the incoming (possibly content://) package into a local cache file for random-access reading. */
+    /** Receiver side: copies the incoming package into app-owned storage for reliable later preview/import. */
     fun materializePackageFile(context: Context, uri: Uri): File {
-        val cacheDir = File(context.cacheDir, "shared-files").apply { mkdirs() }
-        val target = File(cacheDir, "import_${System.currentTimeMillis()}.$SHARE_FILE_EXTENSION")
-        val resolver = context.contentResolver
-        val input = resolver.openInputStream(uri)
-            ?: resolver.openAssetFileDescriptor(uri, "r")?.createInputStream()
-            ?: resolver.openFileDescriptor(uri, "r")?.let {
-                android.os.ParcelFileDescriptor.AutoCloseInputStream(it)
-            }
-            ?: error("Unable to read shared package")
+        val importDir = File(context.filesDir, "incoming-share-packages").apply { mkdirs() }
+        val target = File(importDir, "import_${System.currentTimeMillis()}.$SHARE_FILE_EXTENSION")
+        val input = if (uri.scheme == "file") {
+            uri.path?.let(::File)?.takeIf(File::isFile)?.let(::FileInputStream)
+        } else {
+            val resolver = context.contentResolver
+            resolver.openInputStream(uri)
+                ?: resolver.openAssetFileDescriptor(uri, "r")?.createInputStream()
+                ?: resolver.openFileDescriptor(uri, "r")?.let {
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(it)
+                }
+        } ?: error("Unable to read shared package")
         input.use { source -> target.outputStream().use { dest -> source.copyTo(dest) } }
         return target
     }
-
+    /** Validates an external package while its provider grant is still active. */
+    fun prepareIncomingPackage(context: Context, uri: Uri): File? {
+        var materialized: File? = null
+        return runCatching {
+            materialized = materializePackageFile(context, uri)
+            readPackage(materialized!!)
+            materialized!!
+        }.getOrElse {
+            materialized?.takeIf { it.parentFile == File(context.filesDir, "incoming-share-packages") }?.delete()
+            null
+        }
+    }
     fun readPackage(file: File): SharePackageData {
         ZipFile(file).use { zipFile ->
             val entry = zipFile.getEntry(ENTRY_PACKAGE_JSON)

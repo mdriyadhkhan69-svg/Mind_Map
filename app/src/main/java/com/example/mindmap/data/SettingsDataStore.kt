@@ -54,7 +54,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     val glowColorArgb: Flow<Long> = context.settingsDataStore.data.map { prefs ->
-        prefs[GLOW_COLOR_KEY] ?: 0xFF64FFDA
+        prefs[GLOW_COLOR_KEY] ?: 0xFF38BDF8
     }
 
     val selectedSectionId: Flow<Long?> = context.settingsDataStore.data.map { prefs ->

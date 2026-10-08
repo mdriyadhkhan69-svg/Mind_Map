@@ -68,6 +68,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" android:mimeType="application/pdf" />
                 <data android:scheme="content" android:mimeType="application/octet-stream" />
+                <data android:scheme="content" android:mimeType="application/zip" />
+                <data android:scheme="content" android:mimeType="application/x-zip-compressed" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -75,6 +77,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="file" android:mimeType="application/pdf" />
                 <data android:scheme="file" android:mimeType="application/octet-stream" />
+                <data android:scheme="file" android:mimeType="application/zip" />
+                <data android:scheme="file" android:mimeType="application/x-zip-compressed" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -108,8 +112,10 @@
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/vnd.mindmap.mmsection" />
+                <!-- WhatsApp/Telegram may expose the package as octet-stream or */*. -->
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
     </application>
