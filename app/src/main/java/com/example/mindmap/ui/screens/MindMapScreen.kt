@@ -3436,7 +3436,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
-    val pageNavigationIsVertical = renderedPageIsLandscape
+    val markerLayoutIsVertical = renderedPageIsLandscape
+    val pageNavigationIsVertical = false
     val currentZoom by rememberUpdatedState(zoom)
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
     val markerToolsPanelWidthPx = with(LocalDensity.current) { 210.dp.toPx() }
@@ -3986,8 +3987,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     val popupPaddingPx = with(popupDensity) { 12.dp.toPx() }
                     val undoSizePx = undoPopupSize.takeIf { it.width > 0 && it.height > 0 }
                         ?: IntSize(with(popupDensity) { 64.dp.roundToPx() }, with(popupDensity) { 32.dp.roundToPx() })
-                    val footprintWidth = if (pageNavigationIsVertical) undoSizePx.height else undoSizePx.width
-                    val footprintHeight = if (pageNavigationIsVertical) undoSizePx.width else undoSizePx.height
+                    val footprintWidth = if (markerLayoutIsVertical) undoSizePx.height else undoSizePx.width
+                    val footprintHeight = if (markerLayoutIsVertical) undoSizePx.width else undoSizePx.height
                     val desiredCenterX = popupPosition.x + popupPaddingPx - 32f + undoSizePx.width / 2f
                     val desiredCenterY = popupPosition.y + popupPaddingPx - 50f + undoSizePx.height / 2f
                     val halfFootprintWidth = footprintWidth / 2f
@@ -4119,6 +4120,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     value = readerBrightness,
                                     onValueChange = { readerBrightness = it },
                                     valueRange = 0.05f..1f,
+                                    thumb = { BrightnessThumb() },
+                                    track = { BrightnessTrack(it) },
                                     colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan, inactiveTrackColor = Color.White.copy(alpha = 0.22f)),
                                     modifier = Modifier.width(166.dp).graphicsLayer { rotationZ = -90f }
                                 )
@@ -4128,6 +4131,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 value = readerBrightness,
                                 onValueChange = { readerBrightness = it },
                                 valueRange = 0.05f..1f,
+                                thumb = { BrightnessThumb() },
+                                track = { BrightnessTrack(it) },
                                 colors = SliderDefaults.colors(thumbColor = AccentCyan, activeTrackColor = AccentCyan, inactiveTrackColor = Color.White.copy(alpha = 0.22f)),
                                 modifier = Modifier.width(224.dp).padding(horizontal = 12.dp, vertical = 4.dp)
                             )
@@ -4175,7 +4180,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     val toolsDensity = LocalDensity.current
                     val toolsGapPx = with(toolsDensity) { 8.dp.toPx() }
                     val toolsSizePx = markerToolsPanelSize.takeIf { it.width > 0 && it.height > 0 }
-                        ?: if (pageNavigationIsVertical) {
+                        ?: if (markerLayoutIsVertical) {
                             IntSize(with(toolsDensity) { 202.dp.roundToPx() }, with(toolsDensity) { 44.dp.roundToPx() })
                         } else {
                             IntSize(with(toolsDensity) { 52.dp.roundToPx() }, with(toolsDensity) { 184.dp.roundToPx() })
@@ -4216,7 +4221,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             toolsAbsTop - (readerSize.height - toolsSizePx.height)
                         )
                     }
-                    val targetToolsOffset = if (pageNavigationIsVertical) targetHorizontalToolsOffset else targetVerticalToolsOffset
+                    val targetToolsOffset = if (markerLayoutIsVertical) targetHorizontalToolsOffset else targetVerticalToolsOffset
                     val animatedToolsOffset by animateOffsetAsState(
                         targetValue = targetToolsOffset,
                         animationSpec = tween(220),
@@ -4280,7 +4285,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     ) { Text("Save", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
                                 }
                             }
-                            if (pageNavigationIsVertical) {
+                            if (markerLayoutIsVertical) {
                                 Row(
                                     modifier = Modifier
                                         .widthIn(max = 320.dp)
@@ -4302,13 +4307,13 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     if (markerToolsVisible) {
                         val localDensity = LocalDensity.current
                         val paletteSizePx = colorPalettePanelSize.takeIf { it.width > 0 && it.height > 0 }
-                            ?: if (pageNavigationIsVertical) {
+                            ?: if (markerLayoutIsVertical) {
                                 IntSize(with(localDensity) { 92.dp.roundToPx() }, with(localDensity) { 168.dp.roundToPx() })
                             } else {
                                 IntSize(with(localDensity) { 206.dp.roundToPx() }, with(localDensity) { 134.dp.roundToPx() })
                             }
                         val gapPx = with(localDensity) { 10.dp.toPx() }
-                        val targetPaletteOffset = if (pageNavigationIsVertical) {
+                        val targetPaletteOffset = if (markerLayoutIsVertical) {
                             val swatchAbsLeft = colorSwatchPositionInWindow.x - readerPositionInWindow.x
                             val swatchAbsTop = colorSwatchPositionInWindow.y - readerPositionInWindow.y
                             val fitsAbove = swatchAbsTop - gapPx - paletteSizePx.height >= 0f
@@ -4363,7 +4368,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 shadowElevation = 10.dp,
                                 modifier = Modifier.onGloballyPositioned { colorPalettePanelSize = it.size }
                             ) {
-                                if (!pageNavigationIsVertical) {
+                                if (!markerLayoutIsVertical) {
                                     // Vertical PDF: horizontal swatches, horizontal slider নিচে
                                     Column(modifier = Modifier.width(186.dp).padding(10.dp)) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -4477,7 +4482,31 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
         }
     }
 }
+@Composable
+private fun BrightnessThumb() {
+    Box(
+        Modifier
+            .size(14.dp)
+            .shadow(2.dp, CircleShape)
+            .background(Color.White, CircleShape)
+            .border(1.dp, AccentCyan.copy(alpha = 0.7f), CircleShape)
+    )
+}
 
+@Composable
+private fun BrightnessTrack(state: SliderState) {
+    val range = state.valueRange
+    val fraction = ((state.value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(3.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.22f))
+    ) {
+        Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(AccentCyan))
+    }
+}
 @Composable
 private fun PdfReaderControl(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     val controlWidth = when {
