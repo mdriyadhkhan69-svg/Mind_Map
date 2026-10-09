@@ -3329,7 +3329,35 @@ private fun pdfPanBounds(
         ((displayedHeight - containerSize.height).coerceAtLeast(0f) / 2f)
     )
 }
-
+/**
+ * Real pan range for locked scrolling. It uses the same geometry the page is actually
+ * drawn with (Image Fit inside the unrotated container, then scaled/rotated about its
+ * centre) measured against the full reader viewport, so the true page edges are reachable.
+ */
+private fun pdfLockedScrollRange(
+    preview: PdfPagePreview,
+    containerSize: IntSize,
+    viewportSize: IntSize,
+    zoom: Float,
+    rotation: Float
+): Offset {
+    if (containerSize == IntSize.Zero) return Offset.Zero
+    val isQuarterTurn = abs(rotation % 180f) > 45f
+    val fit = minOf(
+        containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
+        containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
+    )
+    val scaledWidth = preview.bitmap.width * fit * zoom
+    val scaledHeight = preview.bitmap.height * fit * zoom
+    val displayedWidth = if (isQuarterTurn) scaledHeight else scaledWidth
+    val displayedHeight = if (isQuarterTurn) scaledWidth else scaledHeight
+    val viewWidth = if (viewportSize.width > 0) viewportSize.width.toFloat() else containerSize.width.toFloat()
+    val viewHeight = if (viewportSize.height > 0) viewportSize.height.toFloat() else containerSize.height.toFloat()
+    return Offset(
+        ((displayedWidth - viewWidth) / 2f).coerceAtLeast(0f),
+        ((displayedHeight - viewHeight) / 2f).coerceAtLeast(0f)
+    )
+}
 private fun constrainPdfPan(offset: Offset, bounds: Offset) = Offset(
     offset.x.coerceIn(-bounds.x, bounds.x),
     offset.y.coerceIn(-bounds.y, bounds.y)
@@ -3443,12 +3471,16 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
-    val markerLayoutIsVertical = !renderedPageIsLandscape
+    val markerLayoutIsVertical = deviceIsLandscape
     // Page navigation is always horizontal now (portrait AND landscape pages),
     // so landscape uses the exact same gesture rules as portrait.
     val pageNavigationIsVertical = isQuarterTurn
     val currentZoom by rememberUpdatedState(zoom)
     val currentPan by rememberUpdatedState(panOffset)
+    val currentReaderSize by rememberUpdatedState(readerSize)
+    val currentControlsVisible by rememberUpdatedState(controlsVisible)
+    val lockedBarInsetTopPx = with(LocalDensity.current) { 64.dp.toPx() }
+    val lockedBarInsetBottomPx = with(LocalDensity.current) { 56.dp.toPx() }
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
     val markerToolsPanelWidthPx = with(LocalDensity.current) { 210.dp.toPx() }
     val markerPalettePanelHeightPx = with(LocalDensity.current) { 232.dp.toPx() }
@@ -3900,10 +3932,22 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                                     panOffset.y
                                                                 )
                                                             } else {
-                                                                val lockedMaxY = maxOf(baseBounds.y, pageContainerSize.height * 0.5f)
+                                                                val lockedUsesFullViewport = deviceIsLandscape || renderedPageIsLandscape
+                                                                val lockedRange = pdfLockedScrollRange(it, pageContainerSize, currentReaderSize, currentZoom, rotation)
+                                                                val lockedOverflows = lockedUsesFullViewport && lockedRange.y > 0f
+                                                                val lockedMaxDown = if (lockedUsesFullViewport) {
+                                                                    lockedRange.y + (if (lockedOverflows && currentControlsVisible) lockedBarInsetTopPx else 0f)
+                                                                } else {
+                                                                    maxOf(baseBounds.y, pageContainerSize.height * 0.5f)
+                                                                }
+                                                                val lockedMaxUp = if (lockedUsesFullViewport) {
+                                                                    lockedRange.y + (if (lockedOverflows && currentControlsVisible) lockedBarInsetBottomPx else 0f)
+                                                                } else {
+                                                                    maxOf(baseBounds.y, pageContainerSize.height * 0.5f)
+                                                                }
                                                                 panOffset = Offset(
                                                                     panOffset.x,
-                                                                    (panOffset.y + panChange.y).coerceIn(-lockedMaxY, lockedMaxY)
+                                                                    (panOffset.y + panChange.y).coerceIn(-lockedMaxUp, lockedMaxDown)
                                                                 )
                                                             }
                                                         } else {
@@ -4048,8 +4092,8 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                     val popupPaddingPx = with(popupDensity) { 12.dp.toPx() }
                     val undoSizePx = undoPopupSize.takeIf { it.width > 0 && it.height > 0 }
                         ?: IntSize(with(popupDensity) { 64.dp.roundToPx() }, with(popupDensity) { 32.dp.roundToPx() })
-                    val footprintWidth = if (markerLayoutIsVertical) undoSizePx.height else undoSizePx.width
-                    val footprintHeight = if (markerLayoutIsVertical) undoSizePx.width else undoSizePx.height
+                    val footprintWidth = if (!renderedPageIsLandscape) undoSizePx.height else undoSizePx.width
+                    val footprintHeight = if (!renderedPageIsLandscape) undoSizePx.width else undoSizePx.height
                     val desiredCenterX = popupPosition.x + popupPaddingPx - 32f + undoSizePx.width / 2f
                     val desiredCenterY = popupPosition.y + popupPaddingPx - 50f + undoSizePx.height / 2f
                     val halfFootprintWidth = footprintWidth / 2f
