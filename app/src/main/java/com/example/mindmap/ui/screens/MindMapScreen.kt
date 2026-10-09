@@ -30,6 +30,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateOffsetAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.Canvas
@@ -3471,7 +3472,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val isQuarterTurn = abs(rotation % 180f) > 45f
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
-    val markerLayoutIsVertical = deviceIsLandscape
+    val markerLayoutIsVertical = deviceIsLandscape || renderedPageIsLandscape
     // Page navigation is always horizontal now (portrait AND landscape pages),
     // so landscape uses the exact same gesture rules as portrait.
     val pageNavigationIsVertical = isQuarterTurn
@@ -3488,10 +3489,10 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val markerFabTopPx = readerSize.height - markerFabSizePx + markerFabOffset.y
     val markerToolsPanelFitsLeft = markerFabLeftPx >= markerToolsPanelWidthPx
     val markerPalettePanelFitsAbove = markerFabTopPx >= markerPalettePanelHeightPx
-    var colorPalettePanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
+    var colorPalettePanelSize by remember(media.uri, markerLayoutIsVertical) { mutableStateOf(IntSize.Zero) }
     var colorSwatchPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
     var colorSwatchSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
-    var markerToolsPanelSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
+    var markerToolsPanelSize by remember(media.uri, markerLayoutIsVertical) { mutableStateOf(IntSize.Zero) }
     var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
     var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
     var undoPopupSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
@@ -4326,10 +4327,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                             toolsAbsTop - (readerSize.height - toolsSizePx.height)
                         )
                     }
-                    val targetToolsOffset = if (markerLayoutIsVertical) targetHorizontalToolsOffset else targetVerticalToolsOffset
-                    val animatedToolsOffset by animateOffsetAsState(
+                    val targetToolsOffset = if (markerLayoutIsVertical) targetHorizontalToolsOffset else targetVerticalToolsOffset;                    val animatedToolsOffset by animateOffsetAsState(
                         targetValue = targetToolsOffset,
-                        animationSpec = tween(220),
+                        animationSpec = if (markerToolsPanelSize.width > 0) tween(220) else snap(),
                         label = "markerToolsOffset"
                     )
                     AnimatedVisibility(
