@@ -3897,16 +3897,20 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                         if (navAxisLocked == null && (abs(firstTotal.x) > slop || abs(firstTotal.y) > slop)) {
                                                             val leftFitState = abs(currentZoom - 1f) > 0.01f || currentPan != Offset.Zero
                                                             // page swipe only: unlocked + still at fit-to-screen + horizontal-dominant drag
-                                                            navAxisLocked = !zoomLocked && !leftFitState && abs(firstTotal.x) > abs(firstTotal.y)
+                                                            val horizontalDominant = abs(firstTotal.x) > abs(firstTotal.y)
+                                                            // lock ON: horizontal swipe always navigates pages (any zoom state)
+                                                            // lock OFF: page swipe only at fit-to-screen (unchanged)
+                                                            navAxisLocked = if (zoomLocked) horizontalDominant else (!leftFitState && horizontalDominant)
                                                         }
                                                         if (navAxisLocked == null) return@drag
                                                         if (navAxisLocked == false) {
                                                             val baseBounds = pdfPanBounds(it, pageContainerSize, currentZoom, rotation)
                                                             if (zoomLocked) {
                                                                 // lock ON: vertical movement only, no horizontal movement, no page change
-                                                                panOffset = constrainPdfPan(
-                                                                    Offset(panOffset.x, panOffset.y + panChange.y),
-                                                                    baseBounds
+                                                                val lockedMaxY = maxOf(baseBounds.y, pageContainerSize.height * 0.5f)
+                                                                panOffset = Offset(
+                                                                    panOffset.x,
+                                                                    (panOffset.y + panChange.y).coerceIn(-lockedMaxY, lockedMaxY)
                                                                 )
                                                             } else {
                                                                 // lock OFF, zoomed in/out/moved: free canvas pan, no page change
