@@ -3936,12 +3936,12 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                                 val lockedRange = pdfLockedScrollRange(it, pageContainerSize, currentReaderSize, currentZoom, rotation)
                                                                 val lockedOverflows = lockedUsesFullViewport && lockedRange.y > 0f
                                                                 val lockedMaxDown = if (lockedUsesFullViewport) {
-                                                                    lockedRange.y + (if (lockedOverflows && currentControlsVisible) lockedBarInsetTopPx else 0f)
+                                                                    lockedRange.y + (if (lockedOverflows) 12.dp.toPx() else 0f) + (if (lockedOverflows && currentControlsVisible) lockedBarInsetTopPx else 0f)
                                                                 } else {
                                                                     maxOf(baseBounds.y, pageContainerSize.height * 0.5f)
                                                                 }
                                                                 val lockedMaxUp = if (lockedUsesFullViewport) {
-                                                                    lockedRange.y + (if (lockedOverflows && currentControlsVisible) lockedBarInsetBottomPx else 0f)
+                                                                    lockedRange.y + (if (lockedOverflows) 12.dp.toPx() else 0f) + (if (lockedOverflows && currentControlsVisible) lockedBarInsetBottomPx else 0f)
                                                                 } else {
                                                                     maxOf(baseBounds.y, pageContainerSize.height * 0.5f)
                                                                 }
