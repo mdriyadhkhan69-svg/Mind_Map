@@ -3444,7 +3444,9 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     val pageIsPortrait = pagePreview?.let { it.pageHeight >= it.pageWidth } ?: true
     val renderedPageIsLandscape = pageIsPortrait == isQuarterTurn
     val markerLayoutIsVertical = !renderedPageIsLandscape
-    val pageNavigationIsVertical = renderedPageIsLandscape
+    // Page navigation is always horizontal now (portrait AND landscape pages),
+    // so landscape uses the exact same gesture rules as portrait.
+    val pageNavigationIsVertical = false
     val currentZoom by rememberUpdatedState(zoom)
     val currentPan by rememberUpdatedState(panOffset)
     val markerFabSizePx = with(LocalDensity.current) { 44.dp.toPx() }
@@ -4234,7 +4236,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                 zoomLocked = !zoomLocked
                                 if (!zoomLocked) clearPdfViewState(context, media.uri)
                             }
-                            PdfReaderControl("Rotate", enabled = !zoomLocked) { togglePageOrientation() }
+                            PdfReaderControl("Rotate") { togglePageOrientation() }
                             PdfReaderControl(if (markerEnabled) "Marker on" else "Marker") {
                                 markerEnabled = !markerEnabled
                                 markerToolsVisible = markerEnabled
