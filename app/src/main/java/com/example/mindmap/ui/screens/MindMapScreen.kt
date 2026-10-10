@@ -3315,11 +3315,9 @@ private fun pdfPanBounds(
 ): Offset {
     if (containerSize == IntSize.Zero) return Offset.Zero
     val isQuarterTurn = abs(rotation % 180f) > 45f
-    val fitWidth = if (isQuarterTurn) containerSize.height else containerSize.width
-    val fitHeight = if (isQuarterTurn) containerSize.width else containerSize.height
     val scale = minOf(
-        fitWidth.toFloat() / preview.bitmap.width.coerceAtLeast(1),
-        fitHeight.toFloat() / preview.bitmap.height.coerceAtLeast(1)
+        containerSize.width.toFloat() / preview.bitmap.width.coerceAtLeast(1),
+        containerSize.height.toFloat() / preview.bitmap.height.coerceAtLeast(1)
     ) * zoom
     val unrotatedWidth = preview.bitmap.width * scale
     val unrotatedHeight = preview.bitmap.height * scale
@@ -3927,7 +3925,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                                         if (zoomLocked) {
                                                             // lock ON: move only along the scroll axis, no free pan, no page change
                                                             if (pageNavigationIsVertical) {
-                                                                val lockedMaxX = maxOf(baseBounds.x, pageContainerSize.width * 0.5f)
+                                                                val lockedRangeX = pdfLockedScrollRange(it, pageContainerSize, currentReaderSize, currentZoom, rotation).x
+                                                                val lockedMaxX = maxOf(
+                                                                    maxOf(baseBounds.x, pageContainerSize.width * 0.5f),
+                                                                    lockedRangeX + 12.dp.toPx()
+                                                                )
                                                                 panOffset = Offset(
                                                                     (panOffset.x + panChange.x).coerceIn(-lockedMaxX, lockedMaxX),
                                                                     panOffset.y
