@@ -318,7 +318,7 @@ internal object TimerBoxLiveSettingsState {
 internal enum class ClockFace {
     CLASSIC, MINIMAL_PREMIUM, DARK_ELEGANT, GLASS_GLOSSY, NEON, DIGITAL_FUTURISTIC,
     CLEAN_PRODUCTIVITY, SOFT_STUDY, RETRO_DIGITAL, MODERN_DASHBOARD, FLIP_BOARD_INSPIRED,
-    MONOCHROME, AMBIENT, STARLIGHT_PREMIUM
+    MONOCHROME, AMBIENT, STARLIGHT_PREMIUM, DEFAULT_PLAIN
 }
 
 private fun clockFaceLabel(face: ClockFace): String = when (face) {
@@ -338,6 +338,7 @@ private fun clockFaceLabel(face: ClockFace): String = when (face) {
     // This is the existing final Star Light face. It intentionally retains its
     // prior label, style and starfield renderer without any redesign.
     ClockFace.STARLIGHT_PREMIUM -> "Star Light"
+    ClockFace.DEFAULT_PLAIN -> "Default"
 }
 
 private data class ClockFaceStyle(
@@ -482,6 +483,14 @@ private fun clockFaceStyle(face: ClockFace): ClockFaceStyle = when (face) {
         splitDigitGapDp = 7.dp,
         hasCutMask = true
     )
+    ClockFace.DEFAULT_PLAIN -> ClockFaceStyle(
+        screenBackground = Brush.linearGradient(listOf(TimerBg, TimerBg)),
+        cardBackground = TimerCardBg, digitColor = TimerDigit, cornerRadius = 34.dp,
+        borderColor = Color.Transparent, borderWidth = 0.dp,
+        dividerColor = Color.Black.copy(alpha = 0.75f), labelColor = Color.White.copy(alpha = 0.78f),
+        glowColor = Color.Transparent, glowAlpha = 0f, digitWeight = FontWeight.Black,
+        splitDigitGapDp = 0.dp, hasCutMask = false
+    )
 }
 
 private data class PremiumStarSpec(
@@ -535,8 +544,8 @@ private fun PremiumStarfieldBackground(modifier: Modifier = Modifier) {
 
 private fun loadClockFace(context: Context): ClockFace {
     val name = context.getSharedPreferences("timer_settings", Context.MODE_PRIVATE)
-        .getString("clock_face", ClockFace.CLASSIC.name)
-    return ClockFace.entries.firstOrNull { it.name == name } ?: ClockFace.CLASSIC
+        .getString("clock_face", ClockFace.DEFAULT_PLAIN.name)
+    return ClockFace.entries.firstOrNull { it.name == name } ?: ClockFace.DEFAULT_PLAIN
 }
 
 private fun saveClockFace(context: Context, face: ClockFace) {
@@ -1943,100 +1952,8 @@ private fun FlipDigitCell(
         }
 
         DigitTransitionStyle.SPLIT_FLAP -> {
-            // IMPORTANT: this branch is PURELY VISUAL. `char` always comes from the
-            if (true) {
-                // `char` is always the current clock/timer digit. The animation
-                // only reveals that digit; it never owns an old or replacement value.
-                val flapReveal = remember { Animatable(1f) }
-                LaunchedEffect(char) {
-                    flapReveal.snapTo(0.08f)
-                    flapReveal.animateTo(1f, tween(145, easing = FastOutSlowInEasing))
-                }
-                Box(contentAlignment = Alignment.Center) {
-                    DigitGlyph(
-                        char,
-                        modifier = Modifier.graphicsLayer {
-                            scaleY = flapReveal.value
-                            transformOrigin = TransformOrigin(0.5f, 0f)
-                        }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .align(Alignment.Center)
-                            .background(Color.Black.copy(alpha = 0.38f))
-                    )
-                }
-            // real timer/clock state upstream (QuickTimerState/StudyTimerState/
-            } else {
-            // LiveClockDisplay's formatted millis). This composable never writes
-            // back into that state and never delays/holds it — the LaunchedEffect
-            // below only starts a fire-and-forget visual animation whenever the
-            // upstream `char` changes. If the animation is still mid-flight when
-            // `char` changes again, LaunchedEffect(char) cancels and restarts it
-            // immediately with the new target — the actual timer is never blocked.
-            // Keep only the prior source digit for the outgoing visual flap.  The
-            // two static halves below deliberately render `char` itself, never an
-            // animation-owned value.  That makes the real clock/stopwatch/countdown
-            // value visible immediately, even if a prior flap coroutine is
-            // cancelled by a newer timer tick.
-            var priorSourceChar by remember { mutableStateOf(char) }
-            var flipTopFrom by remember { mutableStateOf<Char?>(null) }
-            val topRotation = remember { Animatable(0f) }
-
-            LaunchedEffect(char) {
-                if (char != priorSourceChar) {
-                    val oldChar = priorSourceChar
-                    // Store the latest input before starting any animation. A
-                    // cancelled effect can therefore never feed an old digit back
-                    // into the displayed timer state.
-                    priorSourceChar = char
-                    flipTopFrom = null
-                    topRotation.snapTo(0f)
-                    flipTopFrom = oldChar
-                    // One outgoing flap reveals the live new digit without a
-                    // second layer that can stall lower-powered devices.
-                    topRotation.animateTo(-90f, tween(90, easing = FastOutLinearInEasing))
-                    flipTopFrom = null
-
-                }
-            }
-
-            Box(contentAlignment = Alignment.Center) {
-                // This is the authoritative, unmasked live digit. It is drawn
-                // exactly once and is never replaced by an animation state. The
-                // clipped layers below are only short-lived decorative flaps.
-                // Keeping the source digit whole here also avoids nested clip
-                // bounds changing a glyph's measured size between timer ticks.
-                DigitGlyph(char)
-
-                flipTopFrom?.let { oldTop ->
-                    Box(
-                        modifier = Modifier
-                            .clip(TopHalfShape)
-                            .graphicsLayer {
-                                rotationX = topRotation.value
-                                cameraDistance = 24f * density
-                                transformOrigin = TransformOrigin(0.5f, 1f)
-                                alpha = if (kotlin.math.abs(topRotation.value) < 89.5f) 1f else 0f
-                            }
-                    ) { DigitGlyph(oldTop) }
-                }
-
-
-                // fold-line shadow for a more mechanical split-flap look
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .align(Alignment.Center)
-                        .background(Color.Black.copy(alpha = 0.35f))
-                )
-            }
-            }
+            DigitGlyph(char)
         }
-
     }
     }
 }
@@ -4947,6 +4864,7 @@ private fun ClockFaceAtmosphere(face: ClockFace, modifier: Modifier = Modifier) 
                 repeat(12) { i -> drawRect(Color(0xFFB97645).copy(alpha=.24f), Offset(w*(.06f+i*.075f),h*.23f), androidx.compose.ui.geometry.Size(w*.045f,h*.18f)) }
             }
             ClockFace.STARLIGHT_PREMIUM -> Unit
+            ClockFace.DEFAULT_PLAIN -> Unit
         }
     }
 }

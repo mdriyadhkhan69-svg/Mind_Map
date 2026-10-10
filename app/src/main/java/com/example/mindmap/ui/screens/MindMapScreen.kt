@@ -84,6 +84,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -3475,6 +3476,11 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     // so landscape uses the exact same gesture rules as portrait.
     val pageNavigationIsVertical = isQuarterTurn
     val currentZoom by rememberUpdatedState(zoom)
+    val animatedRotation by animateFloatAsState(
+        targetValue = rotation,
+        animationSpec = tween(350),
+        label = "pdfRotation"
+    )
     val currentPan by rememberUpdatedState(panOffset)
     val currentReaderSize by rememberUpdatedState(readerSize)
     val currentControlsVisible by rememberUpdatedState(controlsVisible)
@@ -3490,7 +3496,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
     var colorPalettePanelSize by remember(media.uri, markerLayoutIsVertical) { mutableStateOf(IntSize.Zero) }
     var colorSwatchPositionInWindow by remember(media.uri) { mutableStateOf(Offset.Zero) }
     var colorSwatchSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
-    var markerToolsPanelSize by remember(media.uri, markerLayoutIsVertical) { mutableStateOf(IntSize.Zero) }
+    var markerToolsPanelSize by remember(media.uri, markerLayoutIsVertical, isQuarterTurn) { mutableStateOf(IntSize.Zero) }
     var undoMarkerCandidate by remember(media.uri) { mutableStateOf<Pair<Int, PdfMarkerSelection>?>(null) }
     var undoMarkerPopupPosition by remember(media.uri) { mutableStateOf<Offset?>(null) }
     var undoPopupSize by remember(media.uri) { mutableStateOf(IntSize.Zero) }
@@ -3989,7 +3995,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                     scaleY = zoom
                                     translationX = panOffset.x + if (!pageNavigationIsVertical) swipeDistance else 0f
                                     translationY = panOffset.y + if (pageNavigationIsVertical) swipeDistance else 0f
-                                    rotationZ = rotation
+                                    rotationZ = animatedRotation
                                 }
                         ) {
                             Image(
@@ -4373,7 +4379,7 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             markerSelections = markerSelections + (activePageIndex to selections.dropLast(1))
                                             markerRedoSelections = markerRedoSelections + (activePageIndex to (markerRedoSelections[activePageIndex].orEmpty() + lastSelection))
                                         }
-                                    ) { Text("Undo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+                                    ) { Text("Undo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, modifier = Modifier.graphicsLayer { rotationZ = rotation }) }
                                     TextButton(
                                         enabled = markerRedoSelections[activePageIndex].orEmpty().isNotEmpty(),
                                         onClick = {
@@ -4382,14 +4388,14 @@ private fun PdfViewerDialog(media: MediaEntity, onDismiss: () -> Unit) {
                                             markerSelections = markerSelections + (activePageIndex to (markerSelections[activePageIndex].orEmpty() + restoredSelection))
                                             markerRedoSelections = markerRedoSelections + (activePageIndex to selections.dropLast(1))
                                         }
-                                    ) { Text("Redo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+                                    ) { Text("Redo", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, modifier = Modifier.graphicsLayer { rotationZ = rotation }) }
                                     TextButton(
                                         enabled = markerSelections.values.any { it.isNotEmpty() },
                                         onClick = {
                                             savePdfMarkers(context, media.uri, markerSelections)
                                             copyNotice = "Saved"
                                         }
-                                    ) { Text("Save", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false) }
+                                    ) { Text("Save", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, modifier = Modifier.graphicsLayer { rotationZ = rotation }) }
                                 }
                             }
                             if (markerLayoutIsVertical) {
