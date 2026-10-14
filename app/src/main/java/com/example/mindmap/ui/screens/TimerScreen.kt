@@ -47,6 +47,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.TransformOrigin
@@ -1952,7 +1954,63 @@ private fun FlipDigitCell(
         }
 
         DigitTransitionStyle.SPLIT_FLAP -> {
-            DigitGlyph(char)
+            var shownChar by remember { mutableStateOf(char) }
+            var oldChar by remember { mutableStateOf(char) }
+            val flapProgress = remember { Animatable(1f) }
+            // Boolean state: frame-by-frame recomposition hoy na, shudhu flip shuru/majhkhane/shesh-e hoy
+            val isFlipping by remember { derivedStateOf { flapProgress.value < 1f } }
+            val secondHalf by remember { derivedStateOf { flapProgress.value >= 0.5f } }
+
+            LaunchedEffect(char) {
+                if (char != shownChar) {
+                    oldChar = shownChar
+                    shownChar = char
+                    flapProgress.snapTo(0f)
+                    flapProgress.animateTo(1f, tween(220, easing = LinearEasing))
+                }
+            }
+
+            val topHalf = Modifier.drawWithContent {
+                clipRect(bottom = size.height / 2f) { this@drawWithContent.drawContent() }
+            }
+            val bottomHalf = Modifier.drawWithContent {
+                clipRect(top = size.height / 2f) { this@drawWithContent.drawContent() }
+            }
+
+            if (!isFlipping) {
+                // Idle: ager moto shudhu ekta Text
+                DigitGlyph(shownChar)
+            } else {
+                Box(contentAlignment = Alignment.Center) {
+                    // upor-er static ordhek: notun digit
+                    DigitGlyph(shownChar, topHalf)
+                    // niche-r static ordhek: prothom ordhe purono, tarpor notun
+                    DigitGlyph(if (secondHalf) shownChar else oldChar, bottomHalf)
+                    if (!secondHalf) {
+                        // purono digit-er upor ordhek niche-r dike bhenge poRe
+                        DigitGlyph(
+                            oldChar,
+                            Modifier
+                                .graphicsLayer {
+                                    rotationX = flapProgress.value * 2f * 90f
+                                    cameraDistance = 16f * density
+                                }
+                                .then(topHalf)
+                        )
+                    } else {
+                        // notun digit-er niche-r ordhek nome ese dhake
+                        DigitGlyph(
+                            shownChar,
+                            Modifier
+                                .graphicsLayer {
+                                    rotationX = -90f * (1f - (flapProgress.value - 0.5f) * 2f)
+                                    cameraDistance = 16f * density
+                                }
+                                .then(bottomHalf)
+                        )
+                    }
+                }
+            }
         }
     }
     }
@@ -3192,6 +3250,7 @@ fun TimerHomeDialog(
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                                 DropdownMenuItem(text = { Text("Calendar") }, onClick = { showMenu = false; onNavigateToCalendar() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
+                                DropdownMenuItem(text = { Text("Focus") }, onClick = { showMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true })
                             }
                         }
                     }

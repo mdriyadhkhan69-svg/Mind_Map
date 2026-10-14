@@ -241,6 +241,7 @@ fun CalendarHomeDialog(
                             DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
                             DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                             DropdownMenuItem(text = { Text("Timer") }, onClick = { showMenu = false; onNavigateToTimer() })
+                            DropdownMenuItem(text = { Text("Focus") }, onClick = { showMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true })
                             DropdownMenuItem(text = { Text("Calendar Settings") }, onClick = { showMenu = false; showSettings = true })
                         }
                     }

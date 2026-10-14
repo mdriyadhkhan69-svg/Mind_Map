@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Timer
@@ -82,7 +83,7 @@ private fun saveProductivityStyle(context: android.content.Context, style: Produ
 }
 
 private fun loadProductivityCardOrder(context: android.content.Context): List<String> {
-    val defaultOrder = listOf("mindmap", "files", "calendar", "timer")
+    val defaultOrder = listOf("mindmap", "files", "calendar", "timer", "focus")
     val prefs = context.getSharedPreferences("productivity_home", android.content.Context.MODE_PRIVATE)
     val saved = prefs.getString("card_order", null) ?: return defaultOrder
     val savedList = saved.split(",").filter { it.isNotBlank() && it in defaultOrder }
@@ -105,7 +106,8 @@ fun ProductivityHomeScreen(
     onOpenMindMap: () -> Unit,
     onOpenFiles: () -> Unit,
     onOpenTimer: () -> Unit,
-    onOpenCalendar: () -> Unit
+    onOpenCalendar: () -> Unit,
+    onOpenFocus: () -> Unit
 ) {
     val prodContext = LocalContext.current
     var productivityStyle by remember { mutableStateOf(loadProductivityStyle(prodContext)) }
@@ -170,6 +172,17 @@ fun ProductivityHomeScreen(
                                 ?: if (todayEvent?.hasTimer == true) "Reminder set for today" else "No events today",
                             color = ProdTextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
+                    }
+                },
+                "focus" to {
+                    com.example.mindmap.FocusStore.ensureLoaded(prodContext)
+                    val focusActiveCount = com.example.mindmap.FocusStore.configs.count { it.isActive }
+                    ProductivityCard(title = "Focus", icon = Icons.Default.CenterFocusStrong, accent = Color(0xFF7CE38B), cardColor = effectiveCardColor, onClick = onOpenFocus) {
+                        Text(
+                            if (focusActiveCount > 0) "$focusActiveCount app${if (focusActiveCount > 1) "s" else ""} blocked" else "No apps blocked",
+                            color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+                        )
+                        Text("Block distracting apps", color = ProdTextMuted, fontSize = 12.sp)
                     }
                 },
                 "timer" to {

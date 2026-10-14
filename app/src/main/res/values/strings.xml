@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Productivity</string>
+    <string name="focus_accessibility_description">Focus uses this service only to detect when an app you chose to block is opened, then shows the Focus blocking screen. It does not read or collect your screen content.</string>
 </resources>

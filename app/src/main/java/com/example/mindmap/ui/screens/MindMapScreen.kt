@@ -410,6 +410,13 @@ fun MindMapApp(
         com.example.mindmap.ExternalOpenState.pendingPdfUri.value = null
     }
 
+    val requestOpenFocus by com.example.mindmap.FocusNavigationState.requestOpen
+    LaunchedEffect(requestOpenFocus) {
+        if (requestOpenFocus) {
+            openHome("focus")
+            com.example.mindmap.FocusNavigationState.requestOpen.value = false
+        }
+    }
     val requestOpenTimer by com.example.mindmap.TimerNavigationState.requestOpenTimer
     LaunchedEffect(requestOpenTimer) {
         if (requestOpenTimer) {
@@ -533,6 +540,8 @@ fun MindMapApp(
             onNavigateToFiles = { openHome("pdf_library") },
             onNavigateToTimer = { openHome("timer") }
         )
+    } else if (activeHome == "focus") {
+        FocusHomeDialog(onDismiss = { openHome("productivity") })
     } else if (activeHome == "mind_map") {
         androidx.activity.compose.BackHandler { openHome("productivity") }
         MindMapScreen(
@@ -547,6 +556,7 @@ fun MindMapApp(
         )
     } else {
         ProductivityHomeScreen(
+            onOpenFocus = { openHome("focus") },
             mindMapViewModel = viewModel,
             sectionViewModel = sectionViewModel,
             calendarViewModel = calendarViewModel,
@@ -1563,6 +1573,10 @@ fun MindMapScreen(
                 DropdownMenuItem(
                     text = { Text("Calendar", color = themeColors.textPrimary) },
                     onClick = { showMainMenu = false; onOpenCalendar() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Focus", color = themeColors.textPrimary) },
+                    onClick = { showMainMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true }
                 )
             }
         }
