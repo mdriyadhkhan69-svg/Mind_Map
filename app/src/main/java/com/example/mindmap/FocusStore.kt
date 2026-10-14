@@ -140,6 +140,25 @@ object FocusStore {
             .generateSecret(PBEKeySpec(pw.toCharArray(), salt, ITERATIONS, 256)).encoded
 
     fun hasPassword(ctx: Context): Boolean = prefs(ctx).contains("pw_hash")
+    fun clearPassword(ctx: Context) {
+        prefs(ctx).edit().remove("pw_hash").remove("pw_salt").commit()
+    }
+
+    private const val RESET_COOLDOWN_MS = 24L * 60L * 60L * 1000L
+    private const val KEY_RESET_COOLDOWN_START = "reset_cooldown_start"
+
+    /** 0 = reset allowed. Otherwise the milliseconds left in the cooldown. */
+    fun resetCooldownRemainingMs(ctx: Context): Long {
+        val start = prefs(ctx).getLong(KEY_RESET_COOLDOWN_START, 0L)
+        if (start <= 0L) return 0L
+        val elapsed = System.currentTimeMillis() - start
+        if (elapsed >= RESET_COOLDOWN_MS) return 0L
+        return (RESET_COOLDOWN_MS - elapsed).coerceIn(0L, RESET_COOLDOWN_MS)
+    }
+
+    fun startResetCooldown(ctx: Context) {
+        prefs(ctx).edit().putLong(KEY_RESET_COOLDOWN_START, System.currentTimeMillis()).commit()
+    }
 
     fun setPassword(ctx: Context, pw: String) {
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }

@@ -26,6 +26,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -59,6 +62,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 
 private val FocusBg = Color(0xFF0B0B12)
 private val FocusCard = Color(0xFF171826)
@@ -76,6 +86,19 @@ private data class FocusAppEntry(val pkg: String, val label: String)
 
 private fun focusToast(context: Context, msg: String) =
     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+
+private fun formatCooldown(ms: Long): String {
+    val totalMinutes = ((ms + 59_999L) / 60_000L).coerceAtLeast(1L)
+    val h = totalMinutes / 60
+    val m = totalMinutes % 60
+    val hText = "$h hour${if (h == 1L) "" else "s"}"
+    val mText = "$m minute${if (m == 1L) "" else "s"}"
+    return when {
+        h > 0 && m > 0 -> "$hText $mText"
+        h > 0 -> hText
+        else -> mText
+    }
+}
 
 private fun openAccessibilitySettings(context: Context) {
     runCatching {
@@ -202,8 +225,14 @@ private fun PanelPrimaryButton(label: String, onClick: () -> Unit) {
     ) { Text(label, color = FocusBg, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
 }
 
+
 @Composable
-private fun PanelBottomBar(onCancel: () -> Unit, onDone: () -> Unit, doneLabel: String? = null) {
+private fun PanelBottomBar(
+    onCancel: () -> Unit,
+    onDone: () -> Unit,
+    doneLabel: String? = null,
+    blueDone: Boolean = false
+) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -218,9 +247,20 @@ private fun PanelBottomBar(onCancel: () -> Unit, onDone: () -> Unit, doneLabel: 
             PanelPrimaryButton(doneLabel, onDone)
         } else {
             Box(
-                Modifier.size(44.dp).pressableSurface(CircleShape, FocusAccent, Color.Transparent, onDone),
+                Modifier.size(44.dp).pressableSurface(
+                    CircleShape,
+                    if (blueDone) FocusBlue else FocusAccent,
+                    Color.Transparent,
+                    onDone
+                ),
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.Default.Check, contentDescription = "Done", tint = FocusBg) }
+            ) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = "Done",
+                    tint = if (blueDone) Color.White else FocusBg
+                )
+            }
         }
     }
 }
@@ -231,7 +271,7 @@ private fun PanelBackButton(onClick: () -> Unit) {
         Modifier.height(36.dp).pressableSurface(CapsuleShape, Color.Transparent, Color.Transparent, onClick)
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center
-    ) { Text("Back", color = FocusAccent, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
+    ) { Text("Back", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
 }
 
 @Composable
@@ -247,6 +287,7 @@ private fun PanelError(text: String?) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FocusPasswordField(
     value: String,
@@ -255,25 +296,54 @@ private fun FocusPasswordField(
     last: Boolean = false,
     onDone: () -> Unit = {}
 ) {
-    OutlinedTextField(
+    val interactionSource = remember { MutableInteractionSource() }
+    val fieldShape = RoundedCornerShape(16.dp)
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+        focusedBorderColor = Color.White, unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
+        focusedLabelColor = Color.White, unfocusedLabelColor = Color.LightGray,
+        cursorColor = Color.White
+    )
+    BasicTextField(
         value = value,
         onValueChange = onChange,
-        label = { Text(label) },
         singleLine = true,
+        textStyle = LocalTextStyle.current.copy(color = Color.White),
+        cursorBrush = SolidColor(Color.White),
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Password,
             imeAction = if (last) ImeAction.Done else ImeAction.Next
         ),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
-        shape = RoundedCornerShape(16.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-            focusedBorderColor = FocusAccent, unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-            focusedLabelColor = FocusAccent, unfocusedLabelColor = Color.LightGray,
-            cursorColor = FocusAccent
-        ),
-        modifier = Modifier.fillMaxWidth()
+        interactionSource = interactionSource,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .defaultMinSize(minHeight = 56.dp),
+        decorationBox = { innerTextField ->
+            OutlinedTextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = innerTextField,
+                enabled = true,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                interactionSource = interactionSource,
+                label = { Text(label) },
+                colors = fieldColors,
+                container = {
+                    OutlinedTextFieldDefaults.Container(
+                        enabled = true,
+                        isError = false,
+                        interactionSource = interactionSource,
+                        colors = fieldColors,
+                        shape = fieldShape,
+                        focusedBorderThickness = 1.dp,
+                        unfocusedBorderThickness = 0.75.dp
+                    )
+                }
+            )
+        }
     )
 }
 
@@ -353,7 +423,7 @@ private fun MiniWheel(range: IntRange, initial: Int, onChange: (Int) -> Unit) {
                 Box(Modifier.fillMaxWidth().height(itemHeight), contentAlignment = Alignment.Center) {
                     Text(
                         "%02d".format(value),
-                        color = if (isCenter) Color.White else Color.White.copy(alpha = if (abs(index - centered) == 1) 0.38f else 0.15f),
+                        color = if (isCenter) Color(0xFFD0D0D8) else Color.White.copy(alpha = if (abs(index - centered) == 1) 0.38f else 0.15f),
                         fontSize = if (isCenter) 19.sp else 14.sp,
                         fontWeight = if (isCenter) FontWeight.Black else FontWeight.Normal
                     )
@@ -435,7 +505,7 @@ private fun TimerStage(
             PanelBottomBar(onCancel, onDone = {
                 val total = hours * 60 + minutes
                 if (total <= 0) error = "Set a duration greater than zero." else onConfirm(total)
-            })
+            }, doneBlue = true)
         }
     ) {
         Spacer(Modifier.height(18.dp))
@@ -446,7 +516,7 @@ private fun TimerStage(
         ) {
             MiniWheel(0..72, hours) { hours = it; error = null }
             Spacer(Modifier.width(6.dp))
-            Text("H", color = FocusMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("h", color = FocusMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(Modifier.width(10.dp))
             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Box(Modifier.size(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.75f)))
@@ -455,7 +525,7 @@ private fun TimerStage(
             Spacer(Modifier.width(10.dp))
             MiniWheel(0..59, minutes) { minutes = it; error = null }
             Spacer(Modifier.width(6.dp))
-            Text("M", color = FocusMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("m", color = FocusMuted, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
         PanelError(error)
         Spacer(Modifier.height(6.dp))
@@ -527,7 +597,7 @@ private fun PasswordSetupStage(onCancel: () -> Unit, onDone: (String) -> Unit) {
             else -> onDone(newPw)
         }
     }
-    PanelFrame(bottom = { PanelBottomBar(onCancel, { submit() }) }) {
+    PanelFrame(bottom = { PanelBottomBar(onCancel, { submit() }, blueDone = true) }) {
         PanelTitle("Set Low Priority Password")
         Spacer(Modifier.height(14.dp))
         FocusPasswordField(newPw, { newPw = it; error = null }, "New Password")
@@ -543,7 +613,7 @@ private fun ConfigPanel(app: FocusAppEntry, existing: FocusAppConfig?, onClose: 
     var stage by remember { mutableStateOf("options") }
     var minutes by remember { mutableStateOf<Int?>(existing?.durationMinutes) }
     var priority by remember { mutableStateOf<String?>(existing?.priority) }
-    var draftPriority by remember { mutableStateOf<String?>(null) }
+    var draftPriority by remember { mutableStateOf<String?>(existing?.priority) }
 
     AnimatedContent(
         targetState = stage,
@@ -603,6 +673,8 @@ private fun ConfigPanel(app: FocusAppEntry, existing: FocusAppConfig?, onClose: 
                     val p = priority
                     when {
                         m == null || m <= 0 || p == null -> focusToast(context, "Set a timer and a priority first.")
+                        existing?.isActive == true && existing.expiresAt > System.currentTimeMillis() ->
+                            focusToast(context, "Turn off the block before changing this app.")
                         p == FocusStore.PRIORITY_LOW && !FocusStore.hasPassword(context) ->
                             focusToast(context, "Set a Low Priority password first.")
                         else -> {
@@ -619,7 +691,7 @@ private fun ConfigPanel(app: FocusAppEntry, existing: FocusAppConfig?, onClose: 
 /* ---------------- other panels ---------------- */
 
 @Composable
-private fun SettingsPanel(onReset: () -> Unit, onClose: () -> Unit) {
+private fun SettingsPanel(onReset: () -> Unit, onChange: () -> Unit, onClose: () -> Unit) {
     PanelFrame(
         bottom = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -633,37 +705,43 @@ private fun SettingsPanel(onReset: () -> Unit, onClose: () -> Unit) {
     ) {
         PanelTitle("Focus Settings")
         Spacer(Modifier.height(16.dp))
-        OptionCapsule("Reset Low Priority Password", null, onReset)
+        OptionCapsule("Reset Password", null, onReset)
+        Spacer(Modifier.height(10.dp))
+        OptionCapsule("Change Password", null, onChange)
     }
 }
 
 @Composable
-private fun ResetPasswordPanel(onClose: () -> Unit) {
+private fun ChangePasswordPanel(onClose: () -> Unit) {
     val context = LocalContext.current
     var current by remember { mutableStateOf("") }
     var newPw by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    fun fail(message: String) {
+        error = message
+        focusToast(context, message)
+    }
     fun submit() {
         when {
-            !FocusStore.verifyPassword(context, current) -> error = "Current password is incorrect."
-            newPw.isBlank() || confirm.isBlank() -> error = "Both new password fields are required."
-            newPw != confirm -> error = "Passwords do not match."
+            !FocusStore.verifyPassword(context, current) -> fail("Current password is incorrect.")
+            newPw.isBlank() || confirm.isBlank() -> fail("Both new password fields are required.")
+            newPw != confirm -> fail("Passwords do not match.")
             else -> {
                 FocusStore.setPassword(context, newPw)
-                focusToast(context, "Low Priority password has been reset.")
+                focusToast(context, "Password changed successfully.")
                 onClose()
             }
         }
     }
-    PanelFrame(bottom = { PanelBottomBar(onClose, { submit() }) }) {
-        PanelTitle("Reset Low Priority Password")
+    PanelFrame(bottom = { PanelBottomBar(onClose, { submit() }, blueDone = true) }) {
+        PanelTitle("Change Password")
         Spacer(Modifier.height(14.dp))
         FocusPasswordField(current, { current = it; error = null }, "Current Password")
         Spacer(Modifier.height(10.dp))
         FocusPasswordField(newPw, { newPw = it; error = null }, "New Password")
         Spacer(Modifier.height(10.dp))
-        FocusPasswordField(confirm, { confirm = it; error = null }, "Confirm Password", last = true, onDone = { submit() })
+        FocusPasswordField(confirm, { confirm = it; error = null }, "Confirm New Password", last = true, onDone = { submit() })
         PanelError(error)
     }
 }
@@ -677,7 +755,7 @@ private fun UnblockPanel(appName: String, onCancel: () -> Unit, onVerified: () -
         if (FocusStore.verifyPassword(context, pw)) onVerified()
         else error = "Incorrect password. The block stays active."
     }
-    PanelFrame(bottom = { PanelBottomBar(onCancel, { submit() }) }) {
+    PanelFrame(bottom = { PanelBottomBar(onCancel, { submit() }, blueDone = true) }) {
         PanelTitle("Turn off $appName block")
         Spacer(Modifier.height(14.dp))
         FocusPasswordField(pw, { pw = it; error = null }, "Password", last = true, onDone = { submit() })
@@ -705,15 +783,25 @@ private fun MessagePanel(message: String, buttonLabel: String, onCancel: (() -> 
 /* ---------------- main screen pieces ---------------- */
 
 @Composable
-private fun FocusAppRow(cfg: FocusAppConfig, now: Long, onToggle: (FocusAppConfig) -> Unit) {
+private fun FocusAppRow(cfg: FocusAppConfig, now: Long, onToggle: (FocusAppConfig) -> Unit, onOpenConfig: (FocusAppConfig) -> Unit) {
     val active = cfg.isActive && cfg.expiresAt > now
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        FocusAppIcon(cfg.packageName, 40.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
+        Row(
+            Modifier.weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = true, color = Color.White),
+                    onClick = { onOpenConfig(cfg) }
+                ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FocusAppIcon(cfg.packageName, 40.dp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
             Text(cfg.appName, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 if (active) "Blocked · ${FocusStore.formatRemaining(cfg.expiresAt - now)} left"
@@ -721,10 +809,12 @@ private fun FocusAppRow(cfg: FocusAppConfig, now: Long, onToggle: (FocusAppConfi
                     cfg.durationMinutes / 60, cfg.durationMinutes % 60,
                     if (cfg.priority == FocusStore.PRIORITY_HIGH) "High Priority" else "Low Priority"
                 ),
-                color = if (active) FocusAccent else FocusMuted,
+                color = if (active) Color.White else FocusMuted,
                 fontSize = 12.sp
             )
+            }
         }
+        Spacer(Modifier.width(10.dp))
         FocusSwitch(checked = active, onToggle = { onToggle(cfg) })
     }
 }
@@ -763,6 +853,38 @@ private fun AppPickRow(app: FocusAppEntry, configured: Boolean, onClick: () -> U
         }
     }
 }
+@Composable
+private fun FocusSearchBar(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(CapsuleShape)
+            .background(FocusCard)
+            .border(1.dp, FocusLine, CapsuleShape)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.Search, contentDescription = null, tint = FocusMuted, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            singleLine = true,
+            textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+            cursorBrush = SolidColor(Color.White),
+            modifier = Modifier.weight(1f).focusRequester(focusRequester),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) Text("Search apps", color = FocusMuted, fontSize = 15.sp)
+                    inner()
+                }
+            }
+        )
+    }
+}
 
 /* ---------------- entry point ---------------- */
 
@@ -781,6 +903,20 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
     var serviceEnabled by remember { mutableStateOf(FocusStore.isServiceEnabled(context)) }
     var apps by remember { mutableStateOf<List<FocusAppEntry>>(emptyList()) }
     var appsLoading by remember { mutableStateOf(false) }
+    var searchVisible by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var lastResetTapAt by remember { mutableLongStateOf(0L) }
+    val focusManager = LocalFocusManager.current
+    val visibleConfigs = remember(configs, searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) configs
+        else configs.filter { it.appName.contains(q, ignoreCase = true) || it.packageName.contains(q, ignoreCase = true) }
+    }
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredApps = remember(apps, searchQuery) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -791,6 +927,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
         }
     }
     LaunchedEffect(screen) {
+        if (screen != "apps") searchQuery = ""
         if (screen == "apps") {
             appsLoading = apps.isEmpty()
             apps = withContext(Dispatchers.IO) { loadLaunchableApps(context) }
@@ -844,9 +981,27 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                         }
                         Text(
                             if (screen == "apps") "Select App" else "Focus",
-                            Modifier.weight(1f).padding(start = if (screen == "apps") 0.dp else 8.dp),
+                            Modifier.padding(start = if (screen == "apps") 0.dp else 8.dp),
                             fontSize = 24.sp, fontWeight = FontWeight.Bold
                         )
+                        if (screen == "main") {
+                            IconButton(onClick = {
+                                if (searchVisible) {
+                                    searchVisible = false
+                                    searchQuery = ""
+                                    focusManager.clearFocus()
+                                } else {
+                                    searchVisible = true
+                                }
+                            }) {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = "Search apps",
+                                    tint = if (searchVisible) FocusAccent else Color.White
+                                )
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
                         Box {
                             IconButton(onClick = { showMenu = true }) {
                                 Icon(Icons.Default.MoreVert, contentDescription = "Focus menu", tint = Color.White)
@@ -859,6 +1014,18 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                             }
                         }
                     }
+                    AnimatedVisibility(
+                        visible = searchVisible && screen == "main",
+                        enter = expandVertically(tween(200)) + fadeIn(tween(200)),
+                        exit = shrinkVertically(tween(180)) + fadeOut(tween(150))
+                    ) {
+                        FocusSearchBar(
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                        )
+                    }
+
 
                     // ---- content ----
                     AnimatedContent(
@@ -889,7 +1056,17 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                 }
                                 Spacer(Modifier.height(10.dp))
                                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
-                                    items(configs, key = { it.packageName }) { cfg ->
+                                    if (visibleConfigs.isEmpty() && searchQuery.isNotBlank()) {
+                                        item {
+                                            Text(
+                                                "No apps found",
+                                                color = FocusMuted,
+                                                fontSize = 14.sp,
+                                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp)
+                                            )
+                                        }
+                                    }
+                                    items(visibleConfigs, key = { it.packageName }) { cfg ->
                                         FocusAppRow(cfg, now, onToggle)
                                     }
                                 }
@@ -900,8 +1077,44 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                     CircularProgressIndicator(color = FocusAccent)
                                 }
                             } else {
-                                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
-                                    items(apps, key = { it.pkg }) { app ->
+                                Column(Modifier.fillMaxSize()) {
+                                    Row(
+                                        Modifier
+                                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                                            .fillMaxWidth()
+                                            .height(42.dp)
+                                            .clip(CapsuleShape)
+                                            .background(Color.White.copy(alpha = 0.06f))
+                                            .border(1.dp, FocusLine, CapsuleShape)
+                                            .padding(horizontal = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Default.Search, contentDescription = null, tint = FocusMuted, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        BasicTextField(
+                                            value = searchQuery,
+                                            onValueChange = { searchQuery = it },
+                                            singleLine = true,
+                                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+                                            cursorBrush = SolidColor(FocusAccent),
+                                            modifier = Modifier.weight(1f),
+                                            decorationBox = { inner ->
+                                                Box(contentAlignment = Alignment.CenterStart) {
+                                                    if (searchQuery.isEmpty()) {
+                                                        Text("Search apps", color = FocusMuted.copy(alpha = 0.7f), fontSize = 14.sp)
+                                                    }
+                                                    inner()
+                                                }
+                                            }
+                                        )
+                                    }
+                                    if (filteredApps.isEmpty()) {
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                                            Text("No apps found", color = FocusMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 28.dp))
+                                        }
+                                    }
+                                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
+                                        items(filteredApps, key = { it.pkg }) { app ->
                                         val existing = configs.firstOrNull { it.packageName == app.pkg }
                                         AppPickRow(app, configured = existing != null) {
                                             if (existing?.isActive == true && existing.expiresAt > System.currentTimeMillis()) {
@@ -910,6 +1123,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                                 configApp = app
                                                 activePanel = "config"
                                             }
+                                        }
                                         }
                                     }
                                 }
@@ -934,17 +1148,54 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                 PanelHost(visible = activePanel == "settings", onScrim = { activePanel = null }) {
                     SettingsPanel(
                         onReset = {
-                            if (FocusStore.hasPassword(context)) activePanel = "reset"
-                            else {
+                            val tapAt = System.currentTimeMillis()
+                            if (tapAt - lastResetTapAt >= 1000L) {
+                                lastResetTapAt = tapAt
+                                val remaining = FocusStore.resetCooldownRemainingMs(context)
+                                if (remaining > 0L) {
+                                    activePanel = null
+                                    focusToast(
+                                        context,
+                                        "You can reset your password again in ${formatCooldown(remaining)}."
+                                    )
+                                } else {
+                                    FocusStore.startResetCooldown(context)
+                                    if (FocusStore.hasPassword(context)) {
+                                        activePanel = "resetConfirm"
+                                    } else {
+                                        activePanel = null
+                                        focusToast(context, "No password has been set yet.")
+                                    }
+                                }
+                            }
+                        },
+                        onChange = {
+                            if (FocusStore.hasPassword(context)) {
+                                activePanel = "change"
+                            } else {
                                 activePanel = null
-                                focusToast(context, "No Low Priority password has been set yet.")
+                                focusToast(context, "No password has been set yet.")
                             }
                         },
                         onClose = { activePanel = null }
                     )
                 }
-                PanelHost(visible = activePanel == "reset", onScrim = null) {
-                    ResetPasswordPanel(onClose = { activePanel = null })
+                PanelHost(visible = activePanel == "resetConfirm", onScrim = null) {
+                    MessagePanel(
+                        message = "Reset your Low Priority password? The current password will be removed and you will need to set a new one.",
+                        buttonLabel = "Reset",
+                        onCancel = { activePanel = null },
+                        onOk = {
+                            if (activePanel == "resetConfirm") {
+                                FocusStore.clearPassword(context)
+                                activePanel = null
+                                focusToast(context, "Password has been reset successfully.")
+                            }
+                        }
+                    )
+                }
+                PanelHost(visible = activePanel == "change", onScrim = null) {
+                    ChangePasswordPanel(onClose = { activePanel = null })
                 }
                 PanelHost(visible = activePanel == "unblock", onScrim = null) {
                     unblockCfg?.let { cfg ->
