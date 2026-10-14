@@ -97,7 +97,9 @@ object FocusStore {
         ensureLoaded(ctx)
         val now = System.currentTimeMillis()
         persist(ctx, configs.map {
-            if (it.packageName == pkg) it.copy(
+            if (it.packageName == pkg &&
+                (it.priority == PRIORITY_HIGH || (it.priority == PRIORITY_LOW && hasPassword(ctx)))
+            ) it.copy(
                 isActive = true,
                 startAt = now,
                 expiresAt = now + it.durationMinutes * 60_000L
@@ -159,11 +161,29 @@ object FocusStore {
     fun startResetCooldown(ctx: Context) {
         prefs(ctx).edit().putLong(KEY_RESET_COOLDOWN_START, System.currentTimeMillis()).commit()
     }
+    fun wasPasswordReset(ctx: Context): Boolean = prefs(ctx).getBoolean("pw_reset_flag", false)
 
+    /** Confirmed reset: removes the password, clears all Low Priority apps, starts the 24h cooldown. */
+    @Synchronized
+    fun confirmPasswordReset(ctx: Context): Boolean {
+        ensureLoaded(ctx)
+        if (!hasPassword(ctx)) return false
+        if (resetCooldownRemainingMs(ctx) > 0L) return false
+        persist(ctx, configs.map {
+            if (it.priority == PRIORITY_LOW) it.copy(priority = "", isActive = false, startAt = 0L, expiresAt = 0L) else it
+        })
+        return prefs(ctx).edit()
+            .remove("pw_hash")
+            .remove("pw_salt")
+            .putBoolean("pw_reset_flag", true)
+            .putLong(KEY_RESET_COOLDOWN_START, System.currentTimeMillis())
+            .commit()
+    }
     fun setPassword(ctx: Context, pw: String) {
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
         prefs(ctx).edit()
             .putString("pw_salt", Base64.encodeToString(salt, Base64.NO_WRAP))
+            .remove("pw_reset_flag")
             .putString("pw_hash", Base64.encodeToString(hash(pw, salt), Base64.NO_WRAP))
             .apply()
     }

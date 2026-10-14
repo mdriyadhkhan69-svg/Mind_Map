@@ -67,6 +67,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 
 private val FocusBg = Color(0xFF0B0B12)
 private val FocusCard = Color(0xFF171826)
@@ -83,7 +86,7 @@ private data class FocusAppEntry(val pkg: String, val label: String)
 /* ---------------- helpers ---------------- */
 
 private fun focusToast(context: Context, msg: String) =
-    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+    Toast.makeText(context, msg, if (msg.length > 60) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
 
 private fun formatCooldown(ms: Long): String {
     val totalMinutes = ((ms + 59_999L) / 60_000L).coerceAtLeast(1L)
@@ -215,12 +218,13 @@ private fun PanelFrame(
 }
 
 @Composable
-private fun PanelPrimaryButton(label: String, onClick: () -> Unit) {
+private fun PanelPrimaryButton(label: String, onClick: () -> Unit, blue: Boolean = false) {
     Box(
-        Modifier.height(44.dp).pressableSurface(CapsuleShape, FocusAccent, Color.Transparent, onClick)
+        Modifier.height(44.dp)
+            .pressableSurface(CapsuleShape, if (blue) FocusBlue else FocusAccent, Color.Transparent, onClick)
             .padding(horizontal = 22.dp),
         contentAlignment = Alignment.Center
-    ) { Text(label, color = FocusBg, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+    ) { Text(label, color = if (blue) Color(0xFFFFFFFF) else FocusBg, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
 }
 
 
@@ -242,7 +246,7 @@ private fun PanelBottomBar(
             contentAlignment = Alignment.Center
         ) { Text("Cancel", color = FocusMuted, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
         if (doneLabel != null) {
-            PanelPrimaryButton(doneLabel, onDone)
+            PanelPrimaryButton(doneLabel, onDone, blue = blueDone)
         } else {
             Box(
                 Modifier.size(44.dp).pressableSurface(
@@ -403,13 +407,17 @@ private fun MiniWheel(range: IntRange, initial: Int, onChange: (Int) -> Unit) {
     Box(
         Modifier
             .width(52.dp)
-            .height(itemHeight * 3)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, FocusLine, RoundedCornerShape(14.dp)),
+            .height(itemHeight * 3),
         contentAlignment = Alignment.Center
     ) {
-        Box(Modifier.fillMaxWidth().height(itemHeight).background(FocusAccent.copy(alpha = 0.12f)))
+        Box(
+            Modifier
+                .width(46.dp)
+                .height(itemHeight)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = 0.06f))
+                .border(1.dp, Color.White.copy(alpha = 0.38f), RoundedCornerShape(8.dp))
+        )
         LazyColumn(
             state = listState,
             flingBehavior = fling,
@@ -421,9 +429,9 @@ private fun MiniWheel(range: IntRange, initial: Int, onChange: (Int) -> Unit) {
                 Box(Modifier.fillMaxWidth().height(itemHeight), contentAlignment = Alignment.Center) {
                     Text(
                         "%02d".format(value),
-                        color = if (isCenter) Color(0xFFD0D0D8) else Color.White.copy(alpha = if (abs(index - centered) == 1) 0.38f else 0.15f),
+                        color = if (isCenter) Color(0xFFFFFFFF) else Color.White.copy(alpha = if (abs(index - centered) == 1) 0.38f else 0.15f),
                         fontSize = if (isCenter) 19.sp else 14.sp,
-                        fontWeight = if (isCenter) FontWeight.Black else FontWeight.Normal
+                        fontWeight = if (isCenter) FontWeight.Bold else FontWeight.Normal
                     )
                 }
             }
@@ -464,7 +472,7 @@ private fun OptionsStage(
         }
         Spacer(Modifier.height(18.dp))
         OptionCapsule(
-            label = if (minutes != null) "%02d H : %02d M".format(minutes / 60, minutes % 60) else "Set Timer",
+            label = if (minutes != null) "%dh %dm".format(minutes / 60, minutes % 60) else "Set Timer",
             trailing = null,
             onClick = onTimer
         )
@@ -610,8 +618,11 @@ private fun ConfigPanel(app: FocusAppEntry, existing: FocusAppConfig?, onClose: 
     val context = LocalContext.current
     var stage by remember { mutableStateOf("options") }
     var minutes by remember { mutableStateOf<Int?>(existing?.durationMinutes) }
-    var priority by remember { mutableStateOf<String?>(existing?.priority) }
-    var draftPriority by remember { mutableStateOf<String?>(existing?.priority) }
+    val initialPriority = existing?.priority?.takeIf {
+        it == FocusStore.PRIORITY_HIGH || (it == FocusStore.PRIORITY_LOW && FocusStore.hasPassword(context))
+    }
+    var priority by remember { mutableStateOf<String?>(initialPriority) }
+    var draftPriority by remember { mutableStateOf<String?>(initialPriority) }
 
     AnimatedContent(
         targetState = stage,
@@ -773,14 +784,20 @@ private fun UnblockPanel(appName: String, onCancel: () -> Unit, onVerified: () -
 }
 
 @Composable
-private fun MessagePanel(message: String, buttonLabel: String, onCancel: (() -> Unit)?, onOk: () -> Unit) {
+private fun MessagePanel(
+    message: String,
+    buttonLabel: String,
+    onCancel: (() -> Unit)?,
+    onOk: () -> Unit,
+    blueButton: Boolean = false
+) {
     PanelFrame(
         bottom = {
             if (onCancel != null) {
-                PanelBottomBar(onCancel, onOk, doneLabel = buttonLabel)
+                PanelBottomBar(onCancel, onOk, doneLabel = buttonLabel, blueDone = blueButton)
             } else {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    PanelPrimaryButton(buttonLabel, onOk)
+                    PanelPrimaryButton(buttonLabel, onOk, blue = blueButton)
                 }
             }
         }
@@ -813,15 +830,27 @@ private fun FocusAppRow(cfg: FocusAppConfig, now: Long, onToggle: (FocusAppConfi
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
             Text(cfg.appName, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                if (active) "Blocked · ${FocusStore.formatRemaining(cfg.expiresAt - now)} left"
-                else "%02d H : %02d M · %s".format(
-                    cfg.durationMinutes / 60, cfg.durationMinutes % 60,
-                    if (cfg.priority == FocusStore.PRIORITY_HIGH) "High Priority" else "Low Priority"
-                ),
-                color = if (active) Color.White else FocusMuted,
-                fontSize = 12.sp
-            )
+                Text(
+                    text = buildAnnotatedString {
+                        if (active) {
+                            append("Blocked · ${FocusStore.formatRemaining(cfg.expiresAt - now)} left")
+                        } else {
+                            withStyle(SpanStyle(color = Color(0xFFFFFFFF))) {
+                                append("%02dh %02dm".format(cfg.durationMinutes / 60, cfg.durationMinutes % 60))
+                            }
+                            append(" · ")
+                            append(
+                                when (cfg.priority) {
+                                    FocusStore.PRIORITY_HIGH -> "High Priority"
+                                    FocusStore.PRIORITY_LOW -> "Low Priority"
+                                    else -> "No Priority"
+                                }
+                            )
+                        }
+                    },
+                    color = if (active) Color.White else FocusMuted,
+                    fontSize = 12.sp
+                )
             }
         }
         Spacer(Modifier.width(10.dp))
@@ -952,7 +981,11 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
     val onToggle: (FocusAppConfig) -> Unit = { cfg ->
         val active = cfg.isActive && cfg.expiresAt > System.currentTimeMillis()
         if (!active) {
-            if (!FocusStore.isServiceEnabled(context)) {
+            val hasValidPriority = cfg.priority == FocusStore.PRIORITY_HIGH ||
+                    (cfg.priority == FocusStore.PRIORITY_LOW && FocusStore.hasPassword(context))
+            if (!hasValidPriority) {
+                focusToast(context, "Please set a priority before turning this app on.")
+            } else if (!FocusStore.isServiceEnabled(context)) {
                 activePanel = "permission"
             } else {
                 FocusStore.activate(context, cfg.packageName)
@@ -1176,20 +1209,19 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                             val tapAt = System.currentTimeMillis()
                             if (tapAt - lastResetTapAt >= 1000L) {
                                 lastResetTapAt = tapAt
-                                val remaining = FocusStore.resetCooldownRemainingMs(context)
-                                if (remaining > 0L) {
+                                if (!FocusStore.hasPassword(context)) {
                                     activePanel = null
-                                    focusToast(
-                                        context,
-                                        "You can reset your password again in ${formatCooldown(remaining)}."
-                                    )
+                                    focusToast(context, "No password has been set yet.")
                                 } else {
-                                    FocusStore.startResetCooldown(context)
-                                    if (FocusStore.hasPassword(context)) {
-                                        activePanel = "resetConfirm"
-                                    } else {
+                                    val remaining = FocusStore.resetCooldownRemainingMs(context)
+                                    if (remaining > 0L) {
                                         activePanel = null
-                                        focusToast(context, "No password has been set yet.")
+                                        focusToast(
+                                            context,
+                                            "Your password was recently reset. Please wait until the 24-hour cooldown expires before resetting it again. (${formatCooldown(remaining)} remaining)"
+                                        )
+                                    } else {
+                                        activePanel = "resetConfirm"
                                     }
                                 }
                             }
@@ -1199,7 +1231,11 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                 activePanel = "change"
                             } else {
                                 activePanel = null
-                                focusToast(context, "No password has been set yet.")
+                                if (FocusStore.wasPasswordReset(context)) {
+                                    focusToast(context, "Your password has been reset. Please set a new password to use Low Priority again.")
+                                } else {
+                                    focusToast(context, "No password has been set yet.")
+                                }
                             }
                         },
                         onClose = { activePanel = null }
@@ -1207,14 +1243,18 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                 }
                 PanelHost(visible = activePanel == "resetConfirm", onScrim = null) {
                     MessagePanel(
-                        message = "Reset your Low Priority password? The current password will be removed and you will need to set a new one.",
+                        message = "Resetting your password will permanently remove your current password. Your Low Priority selections will be cleared, and you will need to set a new password before using Low Priority again. This action cannot be undone.",
                         buttonLabel = "Reset",
+                        blueButton = true,
                         onCancel = { activePanel = null },
                         onOk = {
                             if (activePanel == "resetConfirm") {
-                                FocusStore.clearPassword(context)
                                 activePanel = null
-                                focusToast(context, "Password has been reset successfully.")
+                                if (FocusStore.confirmPasswordReset(context)) {
+                                    focusToast(context, "Password reset successfully. Set a new password to use Low Priority again.")
+                                } else {
+                                    focusToast(context, "Password could not be reset right now.")
+                                }
                             }
                         }
                     )
@@ -1239,6 +1279,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                     MessagePanel(
                         message = "You set high priority. You cannot open this app until the timer ends.",
                         buttonLabel = "OK",
+                        blueButton = true,
                         onCancel = null,
                         onOk = { activePanel = null }
                     )
