@@ -579,6 +579,7 @@ private fun FloatingTimerPopupContent(
     LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
+            QuickTimerState.completeCountdownIfDue(context, now)
             delay(500)
         }
     }

@@ -3897,11 +3897,36 @@ internal object QuickTimerState {
                 (if (mode == "stopwatch") elapsedMillis else countdownTotalMillis - remainingMillis)
         isRunning = true
     }
+
+    /**
+     * Advances the countdown and completes it once. This is shared by the full-screen
+     * timer and its floating popup so both paths produce the same completion event.
+     */
+    fun completeCountdownIfDue(context: Context, now: Long = System.currentTimeMillis()): Boolean {
+        if (mode != "countdown" || !isRunning || timeUp) return false
+
+        val remaining = (countdownTotalMillis - (now - startTimestamp)).coerceAtLeast(0L)
+        remainingMillis = remaining
+        if (remaining > 0L) return false
+
+        isRunning = false
+        timeUp = true
+        playRawSound(context, "timer_up")
+
+        // A timer can finish while only its floating popup is visible. Keep the
+        // existing completion UI by opening the already-established timer route
+        // when the app is next foregrounded; do not launch an activity from a
+        // background service.
+        com.example.mindmap.TimerNavigationState.requestOpenSection.value = "quick"
+        com.example.mindmap.TimerNavigationState.requestOpenTimer.value = true
+        return true
+    }
 }
 
 /** Keeps the high-frequency timer state out of the full-screen composition. */
 @Composable
 private fun QuickTimerTicker() {
+    val context = LocalContext.current
     val isRunning = QuickTimerState.isRunning
     val mode = QuickTimerState.mode
     LaunchedEffect(isRunning, mode) {
@@ -3920,11 +3945,7 @@ private fun QuickTimerTicker() {
                 if (QuickTimerState.mode == "stopwatch") {
                     QuickTimerState.elapsedMillis = visibleMillis
                 } else {
-                    QuickTimerState.remainingMillis = visibleMillis
-                    if (visibleMillis <= 0L) {
-                        QuickTimerState.isRunning = false
-                        QuickTimerState.timeUp = true
-                    }
+                    QuickTimerState.completeCountdownIfDue(context, now)
                 }
             }
             delay(100)
@@ -3985,11 +4006,6 @@ private fun QuickTimerDialog(onDismiss: () -> Unit) {
         }
     }
 
-    LaunchedEffect(finished) {
-        if (finished) {
-            playRawSound(context, "timer_up")
-        }
-    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         ImmersiveSystemBars(controlsVisible)
         KeepScreenOn()
