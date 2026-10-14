@@ -62,11 +62,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 
@@ -505,7 +502,7 @@ private fun TimerStage(
             PanelBottomBar(onCancel, onDone = {
                 val total = hours * 60 + minutes
                 if (total <= 0) error = "Set a duration greater than zero." else onConfirm(total)
-            }, doneBlue = true)
+            }, blueDone = true)
         }
     ) {
         Spacer(Modifier.height(18.dp))
@@ -912,7 +909,6 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
         if (q.isEmpty()) configs
         else configs.filter { it.appName.contains(q, ignoreCase = true) || it.packageName.contains(q, ignoreCase = true) }
     }
-    var searchQuery by remember { mutableStateOf("") }
     val filteredApps = remember(apps, searchQuery) {
         val q = searchQuery.trim()
         if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
@@ -1067,7 +1063,14 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                         }
                                     }
                                     items(visibleConfigs, key = { it.packageName }) { cfg ->
-                                        FocusAppRow(cfg, now, onToggle)
+                                        FocusAppRow(cfg, now, onToggle) { c ->
+                                            if (c.isActive && c.expiresAt > System.currentTimeMillis()) {
+                                                focusToast(context, "Turn off the block before changing this app.")
+                                            } else {
+                                                configApp = FocusAppEntry(c.packageName, c.appName)
+                                                activePanel = "config"
+                                            }
+                                        }
                                     }
                                 }
                             }
