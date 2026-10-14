@@ -63,6 +63,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
@@ -455,7 +456,7 @@ private fun OptionsStage(
     onCancel: () -> Unit,
     onDone: () -> Unit
 ) {
-    PanelFrame(bottom = { PanelBottomBar(onCancel, onDone) }) {
+    PanelFrame(bottom = { PanelBottomBar(onCancel, onDone, blueDone = true) }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FocusAppIcon(app.pkg, 36.dp)
             Spacer(Modifier.width(12.dp))
@@ -572,7 +573,7 @@ private fun PriorityStage(
                 PanelTitle("Set Priority")
             }
         },
-        bottom = { PanelBottomBar(onCancel, onDone) }
+        bottom = { PanelBottomBar(onCancel, onDone, blueDone = true) }
     ) {
         Spacer(Modifier.height(18.dp))
         PriorityCapsule("Low Priority", selected == FocusStore.PRIORITY_LOW, onTapLow)
@@ -720,15 +721,26 @@ private fun ChangePasswordPanel(onClose: () -> Unit) {
         focusToast(context, message)
     }
     fun submit() {
-        when {
-            !FocusStore.verifyPassword(context, current) -> fail("Current password is incorrect.")
-            newPw.isBlank() || confirm.isBlank() -> fail("Both new password fields are required.")
-            newPw != confirm -> fail("Passwords do not match.")
-            else -> {
-                FocusStore.setPassword(context, newPw)
-                focusToast(context, "Password changed successfully.")
-                onClose()
+        val message: String? = try {
+            when {
+                current.isBlank() -> "Please enter your current password."
+                !FocusStore.verifyPassword(context, current) -> "Incorrect password. Please try again."
+                newPw.isBlank() -> "Please enter a new password."
+                confirm.isBlank() -> "Please confirm your new password."
+                newPw != confirm -> "Passwords do not match."
+                else -> {
+                    FocusStore.setPassword(context, newPw)
+                    null
+                }
             }
+        } catch (e: Exception) {
+            "Something went wrong. Please try again."
+        }
+        if (message != null) {
+            fail(message)
+        } else {
+            focusToast(context, "Password changed successfully.")
+            onClose()
         }
     }
     PanelFrame(bottom = { PanelBottomBar(onClose, { submit() }, blueDone = true) }) {
@@ -783,7 +795,7 @@ private fun MessagePanel(message: String, buttonLabel: String, onCancel: (() -> 
 private fun FocusAppRow(cfg: FocusAppConfig, now: Long, onToggle: (FocusAppConfig) -> Unit, onOpenConfig: (FocusAppConfig) -> Unit) {
     val active = cfg.isActive && cfg.expiresAt > now
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
@@ -793,7 +805,8 @@ private fun FocusAppRow(cfg: FocusAppConfig, now: Long, onToggle: (FocusAppConfi
                     interactionSource = remember { MutableInteractionSource() },
                     indication = ripple(bounded = true, color = Color.White),
                     onClick = { onOpenConfig(cfg) }
-                ),
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             FocusAppIcon(cfg.packageName, 40.dp)
@@ -826,9 +839,9 @@ private fun AddAppCapsule(onClick: () -> Unit) {
     ) {
         Text("Add Your Distracted App", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Box(
-            Modifier.size(38.dp).clip(CircleShape).background(FocusAccent.copy(alpha = 0.16f)),
+            Modifier.size(38.dp).clip(CircleShape).background(FocusBlue),
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Default.Add, contentDescription = "Add", tint = FocusAccent) }
+        ) { Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White) }
     }
 }
 
@@ -851,8 +864,8 @@ private fun AppPickRow(app: FocusAppEntry, configured: Boolean, onClick: () -> U
     }
 }
 @Composable
-private fun FocusSearchBar(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
-    val focusRequester = remember { FocusRequester() }
+private fun FocusSearchBar(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {    val focusRequester = remember { FocusRequester() }
+    var searchFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     Row(
         modifier
@@ -860,7 +873,11 @@ private fun FocusSearchBar(query: String, onQueryChange: (String) -> Unit, modif
             .height(48.dp)
             .clip(CapsuleShape)
             .background(FocusCard)
-            .border(1.dp, FocusLine, CapsuleShape)
+            .border(
+                if (searchFocused) 0.75.dp else 1.dp,
+                if (searchFocused) Color.White else FocusLine,
+                CapsuleShape
+            )
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -872,7 +889,7 @@ private fun FocusSearchBar(query: String, onQueryChange: (String) -> Unit, modif
             singleLine = true,
             textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
             cursorBrush = SolidColor(Color.White),
-            modifier = Modifier.weight(1f).focusRequester(focusRequester),
+            modifier = Modifier.weight(1f).focusRequester(focusRequester).onFocusChanged { searchFocused = it.isFocused },
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (query.isEmpty()) Text("Search apps", color = FocusMuted, fontSize = 15.sp)
@@ -902,6 +919,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
     var appsLoading by remember { mutableStateOf(false) }
     var searchVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var appSearchFocused by remember { mutableStateOf(false) }
     var lastResetTapAt by remember { mutableLongStateOf(0L) }
     val focusManager = LocalFocusManager.current
     val visibleConfigs = remember(configs, searchQuery) {
@@ -993,7 +1011,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                 Icon(
                                     Icons.Default.Search,
                                     contentDescription = "Search apps",
-                                    tint = if (searchVisible) FocusAccent else Color.White
+                                    tint = if (searchVisible) Color(0xFF9E9E9E) else Color.White
                                 )
                             }
                         }
@@ -1088,7 +1106,11 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                             .height(42.dp)
                                             .clip(CapsuleShape)
                                             .background(Color.White.copy(alpha = 0.06f))
-                                            .border(1.dp, FocusLine, CapsuleShape)
+                                            .border(
+                                                if (appSearchFocused) 0.75.dp else 1.dp,
+                                                if (appSearchFocused) Color.White else FocusLine,
+                                                CapsuleShape
+                                            )
                                             .padding(horizontal = 14.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1099,8 +1121,8 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                             onValueChange = { searchQuery = it },
                                             singleLine = true,
                                             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
-                                            cursorBrush = SolidColor(FocusAccent),
-                                            modifier = Modifier.weight(1f),
+                                            cursorBrush = SolidColor(Color.White),
+                                            modifier = Modifier.weight(1f).onFocusChanged { appSearchFocused = it.isFocused },
                                             decorationBox = { inner ->
                                                 Box(contentAlignment = Alignment.CenterStart) {
                                                     if (searchQuery.isEmpty()) {

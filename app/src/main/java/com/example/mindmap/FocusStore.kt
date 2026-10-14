@@ -169,13 +169,16 @@ object FocusStore {
     }
 
     fun verifyPassword(ctx: Context, pw: String): Boolean {
-        val p = prefs(ctx)
-        val salt = p.getString("pw_salt", null) ?: return false
-        val stored = p.getString("pw_hash", null) ?: return false
-        return MessageDigest.isEqual(
-            Base64.decode(stored, Base64.NO_WRAP),
-            hash(pw, Base64.decode(salt, Base64.NO_WRAP))
-        )
+        if (pw.isEmpty()) return false
+        return runCatching {
+            val p = prefs(ctx)
+            val salt = p.getString("pw_salt", null) ?: return@runCatching false
+            val stored = p.getString("pw_hash", null) ?: return@runCatching false
+            MessageDigest.isEqual(
+                Base64.decode(stored, Base64.NO_WRAP),
+                hash(pw, Base64.decode(salt, Base64.NO_WRAP))
+            )
+        }.getOrDefault(false)
     }
 
     /* ---------- accessibility service state ---------- */
