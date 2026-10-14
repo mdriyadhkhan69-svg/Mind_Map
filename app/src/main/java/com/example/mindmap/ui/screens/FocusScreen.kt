@@ -1215,6 +1215,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                 }
                 PanelHost(visible = activePanel == "settings", onScrim = { activePanel = null }) {
                     SettingsPanel(
+                        cooldownMs = resetCooldownMs,
                         onReset = {
                             val tapAt = System.currentTimeMillis()
                             if (tapAt - lastResetTapAt >= 1000L) {
