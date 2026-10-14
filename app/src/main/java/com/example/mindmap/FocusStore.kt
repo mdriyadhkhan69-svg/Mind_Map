@@ -141,7 +141,10 @@ object FocusStore {
         SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
             .generateSecret(PBEKeySpec(pw.toCharArray(), salt, ITERATIONS, 256)).encoded
 
-    fun hasPassword(ctx: Context): Boolean = prefs(ctx).contains("pw_hash")
+    fun hasPassword(ctx: Context): Boolean {
+        val p = prefs(ctx)
+        return !p.getString("pw_hash", null).isNullOrEmpty() && !p.getString("pw_salt", null).isNullOrEmpty()
+    }
     fun clearPassword(ctx: Context) {
         prefs(ctx).edit().remove("pw_hash").remove("pw_salt").commit()
     }
@@ -169,15 +172,17 @@ object FocusStore {
         ensureLoaded(ctx)
         if (!hasPassword(ctx)) return false
         if (resetCooldownRemainingMs(ctx) > 0L) return false
-        persist(ctx, configs.map {
-            if (it.priority == PRIORITY_LOW) it.copy(priority = "", isActive = false, startAt = 0L, expiresAt = 0L) else it
-        })
-        return prefs(ctx).edit()
+        val committed = prefs(ctx).edit()
             .remove("pw_hash")
             .remove("pw_salt")
             .putBoolean("pw_reset_flag", true)
             .putLong(KEY_RESET_COOLDOWN_START, System.currentTimeMillis())
             .commit()
+        if (!committed) return false
+        persist(ctx, configs.map {
+            if (it.priority == PRIORITY_LOW) it.copy(priority = "", isActive = false, startAt = 0L, expiresAt = 0L) else it
+        })
+        return true
     }
     fun setPassword(ctx: Context, pw: String) {
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
@@ -185,7 +190,7 @@ object FocusStore {
             .putString("pw_salt", Base64.encodeToString(salt, Base64.NO_WRAP))
             .remove("pw_reset_flag")
             .putString("pw_hash", Base64.encodeToString(hash(pw, salt), Base64.NO_WRAP))
-            .apply()
+            .commit()
     }
 
     fun verifyPassword(ctx: Context, pw: String): Boolean {

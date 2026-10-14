@@ -101,6 +101,11 @@ private fun formatCooldown(ms: Long): String {
     }
 }
 
+private fun formatCooldownShort(ms: Long): String {
+    val totalMinutes = ((ms + 59_999L) / 60_000L).coerceAtLeast(1L)
+    return "${totalMinutes / 60}h ${totalMinutes % 60}m"
+}
+
 private fun openAccessibilitySettings(context: Context) {
     runCatching {
         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -700,7 +705,7 @@ private fun ConfigPanel(app: FocusAppEntry, existing: FocusAppConfig?, onClose: 
 /* ---------------- other panels ---------------- */
 
 @Composable
-private fun SettingsPanel(onReset: () -> Unit, onChange: () -> Unit, onClose: () -> Unit) {
+private fun SettingsPanel(cooldownMs: Long, onReset: () -> Unit, onChange: () -> Unit, onClose: () -> Unit) {
     PanelFrame(
         bottom = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -714,7 +719,11 @@ private fun SettingsPanel(onReset: () -> Unit, onChange: () -> Unit, onClose: ()
     ) {
         PanelTitle("Focus Settings")
         Spacer(Modifier.height(16.dp))
-        OptionCapsule("Reset Password", null, onReset)
+        OptionCapsule(
+            "Reset Password",
+            if (cooldownMs > 0L) "Available in ${formatCooldownShort(cooldownMs)}" else null,
+            onReset
+        )
         Spacer(Modifier.height(10.dp))
         OptionCapsule("Change Password", null, onChange)
     }
@@ -951,6 +960,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
     var appSearchFocused by remember { mutableStateOf(false) }
     var lastResetTapAt by remember { mutableLongStateOf(0L) }
     val focusManager = LocalFocusManager.current
+    val resetCooldownMs = remember(now) { FocusStore.resetCooldownRemainingMs(context) }
     val visibleConfigs = remember(configs, searchQuery) {
         val q = searchQuery.trim()
         if (q.isEmpty()) configs
@@ -1128,7 +1138,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                         } else {
                             if (appsLoading) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = FocusAccent)
+                                    CircularProgressIndicator(color = FocusBlue)
                                 }
                             } else {
                                 Column(Modifier.fillMaxSize()) {
@@ -1209,20 +1219,15 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                             val tapAt = System.currentTimeMillis()
                             if (tapAt - lastResetTapAt >= 1000L) {
                                 lastResetTapAt = tapAt
-                                if (!FocusStore.hasPassword(context)) {
+                                val remaining = FocusStore.resetCooldownRemainingMs(context)
+                                if (remaining > 0L) {
+                                    activePanel = null
+                                    focusToast(context, "You can reset your password again in ${formatCooldown(remaining)}.")
+                                } else if (!FocusStore.hasPassword(context)) {
                                     activePanel = null
                                     focusToast(context, "No password has been set yet.")
                                 } else {
-                                    val remaining = FocusStore.resetCooldownRemainingMs(context)
-                                    if (remaining > 0L) {
-                                        activePanel = null
-                                        focusToast(
-                                            context,
-                                            "Your password was recently reset. Please wait until the 24-hour cooldown expires before resetting it again. (${formatCooldown(remaining)} remaining)"
-                                        )
-                                    } else {
-                                        activePanel = "resetConfirm"
-                                    }
+                                    activePanel = "resetConfirm"
                                 }
                             }
                         },
@@ -1231,11 +1236,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                 activePanel = "change"
                             } else {
                                 activePanel = null
-                                if (FocusStore.wasPasswordReset(context)) {
-                                    focusToast(context, "Your password has been reset. Please set a new password to use Low Priority again.")
-                                } else {
-                                    focusToast(context, "No password has been set yet.")
-                                }
+                                focusToast(context, "No current password is set. Please set a new password first.")
                             }
                         },
                         onClose = { activePanel = null }
@@ -1288,6 +1289,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                     MessagePanel(
                         message = "Focus needs Accessibility access to detect when a blocked app opens and show the blocking screen. It is used only for this purpose. Focus does not read or collect anything on your screen.",
                         buttonLabel = "Open Settings",
+                        blueButton = true,
                         onCancel = { activePanel = null },
                         onOk = {
                             activePanel = null
