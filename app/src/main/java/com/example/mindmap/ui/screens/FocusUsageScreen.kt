@@ -99,18 +99,11 @@ internal fun FocusUsageDashboard() {
     val today = days.firstOrNull() ?: LocalDate.now()
 
     // Ekta-i selected date + ekta-i chart-expanded state
-    var selectedDate by remember { mutableStateOf<LocalDate?>(null) }
     var chartExpanded by remember { mutableStateOf(false) }
     var visibleDays by remember { mutableIntStateOf(7) }
-    val selected = selectedDate?.takeIf { it in data } ?: today
+    var expandedDate by remember { mutableStateOf<LocalDate?>(null) }
+    val selected = today
     val selectedApps = data[selected].orEmpty()
-
-    fun select(date: LocalDate) {
-        if (date != selected) {
-            selectedDate = date
-            chartExpanded = false
-        }
-    }
 
     LazyColumn(
         state = listState,
@@ -122,11 +115,7 @@ internal fun FocusUsageDashboard() {
             UsageSummaryCard(
                 date = selected,
                 today = today,
-                apps = selectedApps,
-                canPrev = selected.minusDays(1) in data,
-                canNext = selected.plusDays(1) in data,
-                onPrev = { select(selected.minusDays(1)) },
-                onNext = { select(selected.plusDays(1)) }
+                apps = selectedApps
             )
         }
         item(key = "charts") {
@@ -142,9 +131,8 @@ internal fun FocusUsageDashboard() {
             )
         }
         items(days.take(visibleDays), key = { it.toEpochDay() }) { date ->
-            UsageTimelineDay(date, today, data[date].orEmpty(), date == selected) {
-                select(date)
-                scope.launch { listState.animateScrollToItem(0) }
+            UsageTimelineDay(date, today, data[date].orEmpty(), date == expandedDate) {
+                expandedDate = if (expandedDate == date) null else date
             }
         }
         if (visibleDays < days.size) {
@@ -159,11 +147,7 @@ internal fun FocusUsageDashboard() {
 private fun UsageSummaryCard(
     date: LocalDate,
     today: LocalDate,
-    apps: List<FocusAppDayUsage>,
-    canPrev: Boolean,
-    canNext: Boolean,
-    onPrev: () -> Unit,
-    onNext: () -> Unit
+    apps: List<FocusAppDayUsage>
 ) {
     val total = apps.sumOf { it.millis }
     val maxMs = apps.maxOfOrNull { it.millis } ?: 0L
@@ -173,27 +157,12 @@ private fun UsageSummaryCard(
             .fillMaxWidth()
             .clip(shape)
             .background(UsageCard)
-            .border(1.dp, UsageLine, shape)
             .animateContentSize()
             .padding(16.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onPrev, enabled = canPrev) {
-                Icon(
-                    Icons.Default.ChevronLeft, contentDescription = "Previous day",
-                    tint = if (canPrev) Color.White else Color.White.copy(alpha = 0.25f)
-                )
-            }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(usageDate(date), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text(dayLabel(date, today), color = UsageBlueSoft, fontSize = 12.sp)
-            }
-            IconButton(onClick = onNext, enabled = canNext) {
-                Icon(
-                    Icons.Default.ChevronRight, contentDescription = "Next day",
-                    tint = if (canNext) Color.White else Color.White.copy(alpha = 0.25f)
-                )
-            }
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(usageDate(date), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(dayLabel(date, today), color = UsageBlueSoft, fontSize = 12.sp)
         }
         Spacer(Modifier.height(10.dp))
         if (apps.isEmpty()) {
@@ -263,7 +232,6 @@ private fun UsageChartsCard(apps: List<FocusAppDayUsage>, expanded: Boolean, onT
             .fillMaxWidth()
             .clip(shape)
             .background(UsageCard)
-            .border(1.dp, UsageLine, shape)
             .animateContentSize()
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
@@ -366,40 +334,49 @@ private fun UsageTimelineDay(
     date: LocalDate,
     today: LocalDate,
     apps: List<FocusAppDayUsage>,
-    isSelected: Boolean,
-    onSelect: () -> Unit
+    expanded: Boolean,
+    onToggle: () -> Unit
 ) {
-    val shape = RoundedCornerShape(16.dp)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(UsageCard)
-            .border(if (isSelected) 1.5.dp else 1.dp, if (isSelected) UsageBlue else UsageLine, shape)
-            .clickable(onClick = onSelect)
-            .padding(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(usageDate(date), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Text(dayLabel(date, today), color = UsageBlueSoft, fontSize = 12.sp)
+    val angle by animateFloatAsState(if (expanded) 180f else 0f, tween(250), label = "timelineChevron")
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 8.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(usageDate(date), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            if (date == today || date == today.minusDays(1)) {
+                Spacer(Modifier.width(10.dp))
+                Text(dayLabel(date, today), color = UsageBlueSoft, fontSize = 12.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            Icon(
+                Icons.Default.ExpandMore, contentDescription = null,
+                tint = UsageBlueSoft, modifier = Modifier.rotate(angle)
+            )
         }
-        if (apps.isEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Text("No blocking activity", color = UsageMuted, fontSize = 13.sp)
-        } else {
-            apps.forEach { app ->
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    FocusAppIcon(app.pkg, 28.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            app.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
-                        Text(countLabel(app), color = UsageMuted, fontSize = 11.sp)
+        AnimatedVisibility(visible = expanded) {
+            Column(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
+                if (apps.isEmpty()) {
+                    Text("No blocked apps on this date", color = UsageMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
+                } else {
+                    apps.forEach { app ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            FocusAppIcon(app.pkg, 32.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    app.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text(countLabel(app), color = UsageMuted, fontSize = 11.sp)
+                            }
+                            Text(formatUsageDuration(app.millis), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
-                    Text(formatUsageDuration(app.millis), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -408,19 +385,14 @@ private fun UsageTimelineDay(
 
 @Composable
 private fun UsageSeeMore(onClick: () -> Unit) {
-    Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
-        Row(
-            Modifier
-                .clip(RoundedCornerShape(50))
-                .background(UsageBlue.copy(alpha = 0.18f))
-                .border(1.dp, UsageBlue.copy(alpha = 0.5f), RoundedCornerShape(50))
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+        Text(
+            "See more",
+            color = UsageBlueSoft, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
                 .clickable(onClick = onClick)
-                .padding(horizontal = 22.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("See more", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(6.dp))
-            Icon(Icons.Default.ExpandMore, contentDescription = null, tint = UsageBlueSoft, modifier = Modifier.size(18.dp))
-        }
+                .padding(horizontal = 8.dp, vertical = 12.dp)
+        )
     }
 }

@@ -67,6 +67,19 @@ object FocusUsageStore {
 
     private fun effectiveEnd(s: FocusSession, now: Long): Long =
         if (s.end > 0L) s.end else minOf(now, maxOf(s.planned, s.start))
+    private const val KEY_TRACK_START = "tracking_start_epoch_day"
+
+    private fun trackingStart(ctx: Context, zone: ZoneId): LocalDate {
+        val p = prefs(ctx)
+        val saved = p.getLong(KEY_TRACK_START, Long.MIN_VALUE)
+        if (saved != Long.MIN_VALUE) return LocalDate.ofEpochDay(saved)
+        val installed = runCatching {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).firstInstallTime
+        }.getOrDefault(System.currentTimeMillis())
+        val day = Instant.ofEpochMilli(installed).atZone(zone).toLocalDate()
+        p.edit().putLong(KEY_TRACK_START, day.toEpochDay()).apply()
+        return day
+    }
 
     private fun windowStartMs(zone: ZoneId): Long =
         LocalDate.now(zone).minusDays(HISTORY_DAYS - 1L).atStartOfDay(zone).toInstant().toEpochMilli()
@@ -115,7 +128,7 @@ object FocusUsageStore {
         if (prune(list, now)) save(ctx, list)
 
         val today = LocalDate.now(zone)
-        val firstDay = today.minusDays(HISTORY_DAYS - 1L)
+        val firstDay = minOf(today, maxOf(today.minusDays(HISTORY_DAYS - 1L), trackingStart(ctx, zone)))
         val ms = HashMap<Pair<LocalDate, String>, Long>()
         val cnt = HashMap<Pair<LocalDate, String>, Int>()
         val names = LinkedHashMap<String, String>()
