@@ -89,6 +89,7 @@ object FocusStore {
 
     fun saveConfigured(ctx: Context, cfg: FocusAppConfig) {
         ensureLoaded(ctx)
+        FocusUsageStore.recordEnd(ctx, cfg.packageName, System.currentTimeMillis())
         val without = configs.filterNot { it.packageName == cfg.packageName }
         persist(ctx, without + cfg.copy(isActive = false, startAt = 0L, expiresAt = 0L))
     }
@@ -105,10 +106,13 @@ object FocusStore {
                 expiresAt = now + it.durationMinutes * 60_000L
             ) else it
         })
+        configs.firstOrNull { it.packageName == pkg && it.isActive && it.startAt == now }
+            ?.let { FocusUsageStore.recordStart(ctx, it) }
     }
 
     fun deactivate(ctx: Context, pkg: String) {
         ensureLoaded(ctx)
+        FocusUsageStore.recordEnd(ctx, pkg, System.currentTimeMillis())
         persist(ctx, configs.map {
             if (it.packageName == pkg) it.copy(isActive = false, startAt = 0L, expiresAt = 0L) else it
         })
@@ -118,6 +122,8 @@ object FocusStore {
         ensureLoaded(ctx)
         val now = System.currentTimeMillis()
         if (configs.any { it.isActive && it.expiresAt <= now }) {
+            configs.filter { it.isActive && it.expiresAt <= now }
+                .forEach { FocusUsageStore.recordEnd(ctx, it.packageName, it.expiresAt) }
             persist(ctx, configs.map {
                 if (it.isActive && it.expiresAt <= now) it.copy(isActive = false, startAt = 0L, expiresAt = 0L) else it
             })
@@ -179,6 +185,8 @@ object FocusStore {
             .putLong(KEY_RESET_COOLDOWN_START, System.currentTimeMillis())
             .commit()
         if (!committed) return false
+        configs.filter { it.priority == PRIORITY_LOW && it.isActive }
+            .forEach { FocusUsageStore.recordEnd(ctx, it.packageName, System.currentTimeMillis()) }
         persist(ctx, configs.map {
             if (it.priority == PRIORITY_LOW) it.copy(priority = "", isActive = false, startAt = 0L, expiresAt = 0L) else it
         })

@@ -3250,7 +3250,9 @@ fun TimerHomeDialog(
                                 DropdownMenuItem(text = { Text("Files") }, onClick = { showMenu = false; onNavigateToFiles() })
                                 DropdownMenuItem(text = { Text("Calendar") }, onClick = { showMenu = false; onNavigateToCalendar() })
                                 DropdownMenuItem(text = { Text("Mind map") }, onClick = { showMenu = false; onNavigateToMindMap() })
-                                DropdownMenuItem(text = { Text("Focus") }, onClick = { showMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true })
+                                if (com.example.mindmap.FocusFeature.ENABLED) {
+                                    DropdownMenuItem(text = { Text("Focus") }, onClick = { showMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true })
+                                }
                             }
                         }
                     }
@@ -3865,6 +3867,7 @@ internal object QuickTimerState {
     var startTimestamp by mutableStateOf(0L)
     var hasStarted by mutableStateOf(false)
     var timeUp by mutableStateOf(false)
+    var timeUpSoundPlayed = false
     private var stateLoaded = false
 
     // App শুরুতে একবার persisted state ফিরিয়ে আনে — reset নয়, আগের paused time
@@ -3952,7 +3955,19 @@ private fun QuickTimerTicker() {
         }
     }
 }
-
+/** Timer dialog open na thakleo (popup/onno screen) countdown shesh hole ekbar TIME UP + sound trigger kore. */
+@Composable
+internal fun QuickTimerCompletionWatcher() {
+    val context = LocalContext.current
+    val isRunning = QuickTimerState.isRunning
+    val mode = QuickTimerState.mode
+    LaunchedEffect(isRunning, mode) {
+        while (QuickTimerState.isRunning && QuickTimerState.mode == "countdown") {
+            if (QuickTimerState.completeCountdownIfDue(context)) break
+            delay(200)
+        }
+    }
+}
 @Composable
 private fun QuickTimerTimeDisplay(
     modifier: Modifier,

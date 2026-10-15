@@ -83,7 +83,11 @@ private fun saveProductivityStyle(context: android.content.Context, style: Produ
 }
 
 private fun loadProductivityCardOrder(context: android.content.Context): List<String> {
-    val defaultOrder = listOf("mindmap", "files", "calendar", "timer", "focus")
+    val defaultOrder = if (com.example.mindmap.FocusFeature.ENABLED) {
+        listOf("mindmap", "files", "calendar", "timer", "focus")
+    } else {
+        listOf("mindmap", "files", "calendar", "timer")
+    }
     val prefs = context.getSharedPreferences("productivity_home", android.content.Context.MODE_PRIVATE)
     val saved = prefs.getString("card_order", null) ?: return defaultOrder
     val savedList = saved.split(",").filter { it.isNotBlank() && it in defaultOrder }
@@ -191,9 +195,13 @@ fun ProductivityHomeScreen(
                     }
                 }
             )
-            val orderedCardIds = cardOrder.filter { it in cardComposables.keys }.let { ordered ->
-                ordered + cardComposables.keys.filterNot { it in ordered }
-            }
+            val orderedCardIds = cardOrder
+                .filter { it in cardComposables.keys && (com.example.mindmap.FocusFeature.ENABLED || it != "focus") }
+                .let { ordered ->
+                    ordered + cardComposables.keys.filterNot {
+                        it in ordered || (!com.example.mindmap.FocusFeature.ENABLED && it == "focus")
+                    }
+                }
 
             Column(
                 modifier = Modifier

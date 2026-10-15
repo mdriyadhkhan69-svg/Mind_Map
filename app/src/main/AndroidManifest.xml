@@ -11,7 +11,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -60,6 +65,7 @@
             android:taskAffinity=""
             android:excludeFromRecents="true"
             android:theme="@style/Theme.MindMap" />
+
         <receiver android:name=".CalendarAlarmReceiver" android:exported="false" />
         <receiver android:name=".MindMapReminderReceiver" android:exported="false" />
         <activity

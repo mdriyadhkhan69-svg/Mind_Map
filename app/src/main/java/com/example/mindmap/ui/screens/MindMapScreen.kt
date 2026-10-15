@@ -413,7 +413,7 @@ fun MindMapApp(
     val requestOpenFocus by com.example.mindmap.FocusNavigationState.requestOpen
     LaunchedEffect(requestOpenFocus) {
         if (requestOpenFocus) {
-            openHome("focus")
+            if (com.example.mindmap.FocusFeature.ENABLED) openHome("focus")
             com.example.mindmap.FocusNavigationState.requestOpen.value = false
         }
     }
@@ -483,6 +483,7 @@ fun MindMapApp(
             }
         }
     }
+    QuickTimerCompletionWatcher()
     if (activeHome == "pdf_library") {
         PdfLibraryHomeDialog(
             onDismiss = { openHome("productivity") },
@@ -1574,10 +1575,12 @@ fun MindMapScreen(
                     text = { Text("Calendar", color = themeColors.textPrimary) },
                     onClick = { showMainMenu = false; onOpenCalendar() }
                 )
-                DropdownMenuItem(
-                    text = { Text("Focus", color = themeColors.textPrimary) },
-                    onClick = { showMainMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true }
-                )
+                if (com.example.mindmap.FocusFeature.ENABLED) {
+                    DropdownMenuItem(
+                        text = { Text("Focus", color = themeColors.textPrimary) },
+                        onClick = { showMainMenu = false; com.example.mindmap.FocusNavigationState.requestOpen.value = true }
+                    )
+                }
             }
         }
 

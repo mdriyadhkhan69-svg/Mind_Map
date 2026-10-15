@@ -27,6 +27,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material3.*
@@ -151,7 +155,7 @@ private object FocusIconCache {
 }
 
 @Composable
-private fun FocusAppIcon(pkg: String, size: Dp) {
+internal fun FocusAppIcon(pkg: String, size: Dp) {
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(FocusIconCache.map[pkg], pkg) {
         if (value == null) {
@@ -947,6 +951,8 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
     val configs = FocusStore.configs
 
     var screen by remember { mutableStateOf("main") }
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val pagerScope = rememberCoroutineScope()
     var showMenu by remember { mutableStateOf(false) }
     var activePanel by remember { mutableStateOf<String?>(null) }
     var configApp by remember { mutableStateOf<FocusAppEntry?>(null) }
@@ -1013,6 +1019,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
             when {
                 activePanel != null -> activePanel = null
                 screen == "apps" -> screen = "main"
+                pagerState.currentPage == 1 -> pagerScope.launch { pagerState.animateScrollToPage(0) }
                 else -> onDismiss()
             }
         },
@@ -1037,11 +1044,11 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                             Spacer(Modifier.width(4.dp))
                         }
                         Text(
-                            if (screen == "apps") "Select App" else "Focus",
+                            if (screen == "apps") "Select App" else if (pagerState.currentPage == 1) "Usage" else "Focus",
                             Modifier.padding(start = if (screen == "apps") 0.dp else 8.dp),
                             fontSize = 24.sp, fontWeight = FontWeight.Bold
                         )
-                        if (screen == "main") {
+                        if (screen == "main" && pagerState.currentPage == 0) {
                             IconButton(onClick = {
                                 if (searchVisible) {
                                     searchVisible = false
@@ -1055,6 +1062,19 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                     Icons.Default.Search,
                                     contentDescription = "Search apps",
                                     tint = if (searchVisible) Color(0xFF9E9E9E) else Color.White
+                                )
+                            }
+                        }
+                        if (screen == "main") {
+                            IconButton(onClick = {
+                                pagerScope.launch {
+                                    pagerState.animateScrollToPage(if (pagerState.currentPage == 0) 1 else 0)
+                                }
+                            }) {
+                                Icon(
+                                    Icons.Default.BarChart,
+                                    contentDescription = "Usage",
+                                    tint = if (pagerState.currentPage == 1) Color(0xFF3B82F6) else Color.White
                                 )
                             }
                         }
@@ -1072,7 +1092,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                         }
                     }
                     AnimatedVisibility(
-                        visible = searchVisible && screen == "main",
+                        visible = searchVisible && screen == "main" && pagerState.currentPage == 0,
                         enter = expandVertically(tween(200)) + fadeIn(tween(200)),
                         exit = shrinkVertically(tween(180)) + fadeOut(tween(150))
                     ) {
@@ -1085,9 +1105,17 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
 
 
                     // ---- content ----
-                    AnimatedContent(
+                    HorizontalPager(
+                        state = pagerState,
+                        userScrollEnabled = screen == "main",
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    ) { pageIndex ->
+                        if (pageIndex == 1) {
+                            FocusUsageDashboard()
+                        } else
+                            AnimatedContent(
                         targetState = screen,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                                modifier = Modifier.fillMaxSize(),
                         transitionSpec = {
                             if (targetState == "apps") {
                                 (slideInHorizontally(tween(260)) { it / 5 } + fadeIn(tween(260))) togetherWith
@@ -1197,6 +1225,7 @@ fun FocusHomeDialog(onDismiss: () -> Unit) {
                                 }
                             }
                         }
+                            }
                     }
                 }
 
