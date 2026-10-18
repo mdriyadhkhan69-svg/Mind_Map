@@ -45,6 +45,11 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 private val UsageCard = Color(0xFF13203B)
 private val UsageBlue = Color(0xFF3B82F6)
@@ -227,19 +232,26 @@ private fun UsageAppRow(app: FocusAppDayUsage, maxMs: Long) {
 private fun UsageChartsCard(apps: List<FocusAppDayUsage>, expanded: Boolean, onToggle: () -> Unit) {
     val angle by animateFloatAsState(if (expanded) 180f else 0f, tween(250), label = "chartsChevron")
     val shape = RoundedCornerShape(20.dp)
+    val collapseInteraction = remember { MutableInteractionSource() }
     Column(
         Modifier
             .fillMaxWidth()
             .clip(shape)
             .background(UsageCard)
+            .then(if (!expanded) Modifier.clickable(onClick = onToggle) else Modifier)
             .animateContentSize()
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onToggle)
+                .then(
+                    if (expanded) Modifier.clickable(
+                        interactionSource = collapseInteraction,
+                        indication = null,
+                        onClick = onToggle
+                    ) else Modifier
+                )
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -269,13 +281,40 @@ private fun UsageDonut(apps: List<FocusAppDayUsage>) {
     }
     val progress = remember(items) { Animatable(0f) }
     LaunchedEffect(items) { progress.animateTo(1f, tween(800)) }
+    var selectedPkg by remember(items) { mutableStateOf<String?>(null) }
 
     Column(
         Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(Modifier.size(190.dp), contentAlignment = Alignment.Center) {
-            Canvas(Modifier.fillMaxSize()) {
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(items, total) {
+                        detectTapGestures { tap ->
+                            val strokePx = 30.dp.toPx()
+                            val tolerance = 8.dp.toPx()
+                            val dx = tap.x - size.width / 2f
+                            val dy = tap.y - size.height / 2f
+                            val dist = sqrt(dx * dx + dy * dy)
+                            val outer = size.width / 2f
+                            val inner = outer - strokePx
+                            if (dist < inner - tolerance || dist > outer + tolerance) return@detectTapGestures
+                            var tapAngle = Math.toDegrees(atan2(dy, dx).toDouble()).toFloat() + 90f
+                            if (tapAngle < 0f) tapAngle += 360f
+                            if (tapAngle >= 360f) tapAngle -= 360f
+                            var cumulative = 0f
+                            var hit: FocusAppDayUsage? = null
+                            for (app in items) {
+                                cumulative += 360f * app.millis / total
+                                if (tapAngle < cumulative) { hit = app; break }
+                            }
+                            val targetPkg = (hit ?: items.last()).pkg
+                            selectedPkg = if (selectedPkg == targetPkg) null else targetPkg
+                        }
+                    }
+            ) {
                 val stroke = 30.dp.toPx()
                 val inset = stroke / 2f
                 val arcSize = Size(size.width - stroke, size.height - stroke)
@@ -295,9 +334,16 @@ private fun UsageDonut(apps: List<FocusAppDayUsage>) {
                     start += sweep
                 }
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(formatUsageDuration(total), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                Text("blocked", color = UsageMuted, fontSize = 12.sp)
+            val shownPkg = selectedPkg
+            if (shownPkg != null) {
+                Box(Modifier.size(64.dp).clip(CircleShape)) {
+                    FocusAppIcon(shownPkg, 64.dp)
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(formatUsageDuration(total), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Text("blocked", color = UsageMuted, fontSize = 12.sp)
+                }
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -328,7 +374,6 @@ private fun UsageDonut(apps: List<FocusAppDayUsage>) {
         }
     }
 }
-
 @Composable
 private fun UsageTimelineDay(
     date: LocalDate,
